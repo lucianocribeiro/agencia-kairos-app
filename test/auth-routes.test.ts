@@ -24,6 +24,12 @@ describe("POST /api/auth/logout (F-05)", () => {
     expect((await logout(post("/api/auth/logout", "x", "multipart/form-data; boundary=x"), {})).status).toBe(415);
   });
 
+  it("JSON malformado (con Content-Type application/json) → 400 y NO borra la cookie", async () => {
+    const res = await logout(post("/api/auth/logout", "{no es json", "application/json"), {});
+    expect(res.status).toBe(400);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
   it("JSON → 200, borra la cookie y devuelve /login", async () => {
     const res = await logout(post("/api/auth/logout", "{}", "application/json"), {});
     expect(res.status).toBe(200);

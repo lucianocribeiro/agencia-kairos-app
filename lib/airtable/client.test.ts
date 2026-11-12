@@ -214,3 +214,63 @@ describe("AirtableError", () => {
     expect(e.cause).toBeUndefined();
   });
 });
+
+describe("reintentos en escrituras (F-06)", () => {
+  const ok = (call: Call) => {
+    const body = call.init.body ? JSON.parse(String(call.init.body)) : null;
+    if (call.init.method === "DELETE") {
+      return json({ records: new URL(call.url).searchParams.getAll("records[]").map((i) => ({ id: i, deleted: true })) });
+    }
+    return json({ records: (body?.records ?? []).map((r: { id?: string; fields: Record<string, unknown> }, i: number) => rec(r.id ?? id(i), r.fields)) });
+  };
+
+  it("create: 429 NO se reintenta (la doc no garantiza que no se aplicó)", async () => {
+    const { client, calls } = setup([json({}, 429, { "retry-after": "30" })]);
+    await expect(client.create(U.id, [{ [U.fields.nombre]: "x" }])).rejects.toMatchObject({ code: "rate_limited" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("create: 5xx NO se reintenta", async () => {
+    const { client, calls } = setup([json({}, 503)]);
+    await expect(client.create(U.id, [{ [U.fields.nombre]: "x" }])).rejects.toMatchObject({ code: "server_error" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("create: error de red NO se reintenta", async () => {
+    const { client, calls } = setup([new TypeError("fetch failed")]);
+    await expect(client.create(U.id, [{ [U.fields.nombre]: "x" }])).rejects.toMatchObject({ code: "network_error" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("update: reintenta 429 y 5xx", async () => {
+    const { client, calls } = setup([json({}, 429), json({}, 502), ok]);
+    const out = await client.update(U.id, [{ id: id(1), fields: { [U.fields.sigla]: "LR" } }]);
+    expect(out).toHaveLength(1);
+    expect(calls).toHaveLength(3);
+    expect(calls.every((c) => c.init.method === "PATCH")).toBe(true);
+  });
+
+  it("update: error de red no se reintenta", async () => {
+    const { client, calls } = setup([new TypeError("fetch failed")]);
+    await expect(client.update(U.id, [{ id: id(1), fields: { [U.fields.sigla]: "LR" } }])).rejects.toMatchObject({
+      code: "network_error",
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("delete: reintenta 429 y 5xx, hasta 3 veces", async () => {
+    const { client, calls } = setup([json({}, 500), json({}, 429), ok]);
+    expect(await client.delete(H.id, [id(1)])).toEqual([id(1)]);
+    expect(calls).toHaveLength(3);
+
+    const giveUp = setup([json({}, 500), json({}, 500), json({}, 500), json({}, 500)]);
+    await expect(giveUp.client.delete(H.id, [id(1)])).rejects.toMatchObject({ code: "server_error" });
+    expect(giveUp.calls).toHaveLength(4);
+  });
+
+  it("lecturas: sin cambios (reintentan 429, 5xx y red)", async () => {
+    const { client, calls } = setup([new TypeError("fetch failed"), json({}, 429), json({}, 500), json({ records: [] })]);
+    expect(await client.list(U.id, { fields: [U.fields.nombre] })).toEqual([]);
+    expect(calls).toHaveLength(4);
+  });
+});

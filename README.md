@@ -2,7 +2,7 @@
 
 App interna de Agencia Kairos. Next.js (App Router) + TypeScript + Tailwind CSS, con Airtable como base de datos. Se deploya en Vercel.
 
-> Estado: **Fase 1 · CC-F1-01 (scaffold y base técnica)**. Todavía no hay login, usuarios, maestros, horas ni dashboard: las pantallas muestran "En construcción".
+> Estado: **Fase 1 · CC-F1-02 (auth, sesión, bloqueo, primer Admin)**. Hay login, cambio de contraseña y guards por rol. Usuarios, maestros, horas y dashboard todavía muestran "En construcción".
 
 ## Requisitos
 
@@ -19,7 +19,9 @@ cp .env.example .env.local   # y completá los valores
 npm run dev                  # http://localhost:3000
 ```
 
-En desarrollo, `/` muestra una vista previa de los menús de cada rol (Admin y Empleado). Es temporal y se elimina cuando llegue el login (CC-F1-02).
+`/` redirige según la sesión: a `/login`, a `/cambiar-password` si hay que cambiar la contraseña, o al inicio del rol (`/dashboard` para Admin, `/mis-horas` para Empleado).
+
+> En desarrollo, Next 16 valida la "navegación instantánea" de cada página y muestra un aviso en el overlay ("Could not validate `instant`…") cuando un guard redirige a propósito (por ejemplo, a `/cambiar-password`). Es esperado, solo pasa en `next dev` y no afecta el build.
 
 ## Variables de entorno
 
@@ -30,6 +32,7 @@ Todas son **solo del servidor** (ninguna lleva `NEXT_PUBLIC_`) y son obligatoria
 | `AIRTABLE_TOKEN`   | Token personal de Airtable con acceso de lectura/escritura a la base. |
 | `AIRTABLE_BASE_ID` | ID de la base de Airtable (empieza con `app`).                     |
 | `SESSION_SECRET`   | Secreto para firmar sesiones (mínimo 32 caracteres).               |
+| `BOOTSTRAP_ADMIN_PASSWORD` | **Solo local.** Contraseña inicial del primer Admin (`npm run bootstrap:admin`). Nunca se carga en Vercel. |
 
 Para generar `SESSION_SECRET`:
 
@@ -37,7 +40,9 @@ Para generar `SESSION_SECRET`:
 openssl rand -base64 32
 ```
 
-**En Vercel, las variables las carga Luciano** en la configuración del proyecto (Production y Preview). No se suben al repo: `.env.example` va sin valores y `.env*` está en `.gitignore`.
+**En Vercel, las variables las carga Luciano** en la configuración del proyecto (Production y Preview): `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID` y `SESSION_SECRET`. `BOOTSTRAP_ADMIN_PASSWORD` no va en Vercel.
+
+El token de Airtable necesita `data.records:read` y `data.records:write`; para correr `npm run setup:intentos-login` también `schema.bases:read` y `schema.bases:write`. No se suben al repo: `.env.example` va sin valores y `.env*` está en `.gitignore`.
 
 ## Scripts
 
@@ -50,8 +55,40 @@ openssl rand -base64 32
 | `npm run typecheck`     | Chequeo de tipos con TypeScript.                                         |
 | `npm test`              | Tests unitarios (Vitest).                                                |
 | `npm run check:bundle`  | Después del build, busca en `.next/static` los nombres y valores de los secretos. Falla si aparece alguno. |
+| `npm run setup:intentos-login` | Verifica la tabla "Intentos de login" contra `lib/airtable/schema.ts` (tipos e IDs); si no existe, la crea, muestra los IDs nuevos y sale con error hasta que actualices `schema.ts`. Con `-- --verify` solo lee. |
+| `npm run bootstrap:admin` | **Solo local.** Crea el primer Admin si no existe (ver abajo). |
 
 Antes de abrir un PR tienen que pasar: `lint`, `build`, `test` y `check:bundle`. GitHub Actions los corre en cada PR (`.github/workflows/ci.yml`).
+
+## Autenticación
+
+- **Login** (`/login` → `POST /api/auth/login`): email, contraseña y la casilla «No soy un robot». Contraseñas con bcrypt (costo 12). Una contraseña de más de 72 bytes cuenta como intento fallido (nunca se trunca).
+- **IP del cliente** (para el bloqueo por IP): `x-vercel-forwarded-for` (la fuente que documenta Vercel: [request headers](https://vercel.com/docs/headers/request-headers#x-vercel-forwarded-for)), si no `x-real-ip`, si no el primer valor de `x-forwarded-for`, si no "desconocida".
+- **Bloqueo temporal** (tabla "Intentos de login"): 5 fallidos por email en 15 minutos (contando solo los posteriores al último ingreso exitoso) o 20 fallidos por IP en 15 minutos → 429 durante 15 minutos. Si no se puede leer la tabla, el login falla cerrado (503).
+- **Sesión**: cookie `kairos_session` httpOnly, `Secure` en producción, `SameSite=Lax`, 12 h sin renovación. Es un JWT HS256 (jose) con el ID del usuario, la fecha de emisión y una huella del hash de la contraseña: si la contraseña cambia, las sesiones viejas dejan de valer. En cada request se vuelve a leer el usuario (caché de 30 s por instancia): la sesión se invalida si el usuario no existe, está Inactivo o cambió la contraseña.
+- **Contraseñas nuevas**: mínimo 10 caracteres y máximo 72 bytes UTF-8 (los caracteres con tilde ocupan 2 bytes, los emojis 4). Las reglas están en `lib/auth/password-policy.ts` (las usa también el formulario) y todo hash sale de `hashNewPassword()` en `lib/auth/password-hash.ts`.
+- **Cambiar contraseña** (`/cambiar-password` → `POST /api/auth/password`): distinta de la actual. Usa el mismo bloqueo que el login (mismo contador por email e IP): una contraseña actual incorrecta cuenta como Fallido. Un cambio exitoso registra Exitoso (reinicia el contador). Si el usuario tiene «Debe cambiar password», no puede usar nada más hasta cambiarla.
+- **Cerrar sesión**: `POST /api/auth/logout` con body JSON (415 si no es JSON, para que un formulario de otro sitio no pueda cerrar la sesión). El botón del header lo llama con `fetch` y navega a `/login` solo si la respuesta es 2xx; si falla, se queda en la página y muestra «No pudimos cerrar la sesión. Probá de nuevo.». Login y cambio de contraseña también exigen JSON.
+- **Guards** (`lib/auth/guards.ts`): `requireUser()` y `requireAdmin()`. En páginas redirigen (sin sesión → `/login`; Empleado en página de Admin → `/mis-horas`); en APIs responden 401/403 en JSON.
+- **`proxy.ts`** (la interceptación de Next 16, ex `middleware.ts`): solo redirige a `/login` si la cookie falta o su firma no es válida. La autorización real siempre la hacen los guards.
+
+### Convención para el resto de Fase 1
+
+- **Toda mutación pasa por un Route Handler**, con los wrappers de `lib/auth/api.ts`.
+- **Endpoints de Admin** en `app/api/admin/**`: cada método es `export const GET = adminRoute(async (request, user) => { ... })` (igual POST/PUT/PATCH/DELETE). `adminRoute` corre `requireAdmin()` antes del handler.
+- **Endpoints de Empleado** en `app/api/me/**`: `export const GET = userRoute(...)`, que corre `requireUser()`.
+- Un test por AST (`test/route-guards.test.ts`) falla si algún método exportado en esas carpetas no está envuelto, o si se declara como `export async function GET`.
+- **Respuestas a un Empleado**: pasan por el recorte por rol de `lib/airtable/access.ts`.
+- **Páginas protegidas**: envuelven su contenido en `<Guarded>` o `<Guarded admin>`.
+
+### Primer Admin (bootstrap, solo local)
+
+```bash
+# en .env.local: AIRTABLE_TOKEN, AIRTABLE_BASE_ID y BOOTSTRAP_ADMIN_PASSWORD (mínimo 10 caracteres)
+npm run bootstrap:admin
+```
+
+Antes de tocar nada, rechaza `BOOTSTRAP_ADMIN_PASSWORD` si tiene menos de 10 caracteres o más de 72 bytes, y verifica que los IDs de Usuarios de la base coincidan con `lib/airtable/schema.ts`. Si ya existe un usuario con `luciano@agenciakairos.net` (sin importar mayúsculas), no cambia nada. Si no, lo crea como Admin Activo, sigla LR, con «Debe cambiar password» = sí. No imprime la contraseña ni el hash. `BOOTSTRAP_ADMIN_PASSWORD` nunca se configura en Vercel.
 
 ## Estructura
 
@@ -59,11 +96,15 @@ Antes de abrir un PR tienen que pasar: `lint`, `build`, `test` y `check:bundle`.
 app/
   (admin)/         rutas del rol Admin (dashboard, horas, usuarios, maestros/*)
   (empleado)/      rutas del rol Empleado (mis-horas)
+  (auth)/          login y cambiar-password (sin sidebar)
+  api/auth/        login, logout, password, expirada
+  api/admin/       endpoints de Admin (requireAdmin)
   layout.tsx       layout raíz (fuente Sora, es-AR)
   globals.css      design tokens
 components/
   ui/              componentes base (Button, Input, Select, Checkbox, Card, Table, FormField, Toast, InlineMessage)
-  shell/           shell de la app (sidebar, drawer mobile, logo, menú por rol)
+  shell/           shell de la app (sidebar, drawer mobile, header, menú por rol)
+  auth/            formularios de login y contraseña, <Guarded>
 lib/
   airtable/        acceso a Airtable (solo servidor)
     schema.ts      IDs de tablas y campos: fuente única de verdad
@@ -71,13 +112,20 @@ lib/
     formula.ts     helpers seguros para filterByFormula
     access.ts      qué campos puede ver cada rol
     errors.ts      AirtableError
+  auth/            sesión, guards, login, bloqueo, credenciales (solo servidor, salvo token/constants)
   env.ts           validación de variables de entorno (solo servidor)
   format.ts        formatos es-AR (fechas, números, duraciones, porcentajes)
+proxy.ts           interceptación de requests (Next 16)
 scripts/
   check-bundle.mjs verificación de secretos en el bundle
+  setup-intentos-login.mjs  crea/verifica la tabla "Intentos de login"
+  bootstrap-admin.mjs       crea el primer Admin
 ```
 
 ## Reglas técnicas
+
+- **Dependencias con versión exacta** en `package.json` (`.npmrc` con `save-exact=true`). Usá `npm ci` para instalar exactamente el lockfile.
+- **Reintentos de Airtable**: las lecturas reintentan 429, 5xx y errores de red; `update` y `delete` reintentan 429 y 5xx; los `create` no se reintentan nunca, porque la documentación de Airtable ([rate limits](https://airtable.com/developers/web/api/rate-limits), [errores](https://airtable.com/developers/web/api/errors)) no garantiza que un 429 no se haya aplicado y un reintento podría duplicar registros.
 
 - **Airtable solo desde el servidor.** Todo vive en `lib/airtable/` y cada archivo importa `server-only`: si un componente cliente lo importa, el build falla.
 - **IDs, nunca nombres.** Tablas y campos se referencian por ID desde `lib/airtable/schema.ts`. Las lecturas usan `returnFieldsByFieldId` y piden solo los campos necesarios (`fields`). Las escrituras van por ID de campo.

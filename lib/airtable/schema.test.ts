@@ -23,8 +23,8 @@ describe("schema", () => {
     expect(FIELD_TABLE.size).toBe(fieldIds.length);
   });
 
-  it("incluye las 12 tablas", () => {
-    expect(Object.keys(TABLES)).toHaveLength(12);
+  it("incluye las 13 tablas", () => {
+    expect(Object.keys(TABLES)).toHaveLength(13);
   });
 
   it("campos calculados de Horas", () => {

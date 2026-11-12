@@ -57,10 +57,7 @@ export const NAV_BY_ROLE: Record<Role, readonly NavItem[]> = {
   Empleado: [{ label: "Mis horas", href: "/mis-horas", icon: Clock }],
 };
 
-export const HOME_BY_ROLE: Record<Role, string> = {
-  Admin: "/dashboard",
-  Empleado: "/mis-horas",
-};
+export { HOME_BY_ROLE } from "@/lib/roles";
 
 export function isActivePath(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);

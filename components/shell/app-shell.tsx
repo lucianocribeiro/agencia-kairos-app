@@ -1,9 +1,11 @@
 "use client";
 
-import { Menu, X } from "lucide-react";
+import { KeyRound, Menu, X } from "lucide-react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
+import { LogoutButton } from "@/components/auth/logout-button";
 import { cn } from "@/lib/cn";
 import type { Role } from "@/lib/roles";
 import { Logo } from "./logo";
@@ -18,10 +20,20 @@ const iconButton =
  *
  * - md+: sidebar fijo, colapsable (íconos solos) con el botón hamburguesa.
  *   El estado se guarda en localStorage.
- * - < md: barra superior con hamburguesa; el menú es un drawer con backdrop
+ * - Header: nombre del usuario, "Cambiar contraseña" y "Cerrar sesión".
+ * - < md: hamburguesa en el header; el menú es un drawer con backdrop
  *   que se cierra al navegar, con Escape o tocando el fondo.
  */
-export function AppShell({ role, children }: { role: Role; children: ReactNode }) {
+export interface ShellUser {
+  nombre: string;
+  rol: Role;
+}
+
+const headerAction =
+  "inline-flex h-9 items-center gap-2 rounded-md px-2.5 text-sm text-muted transition-colors hover:bg-card hover:text-text";
+
+export function AppShell({ user, children }: { user: ShellUser; children: ReactNode }) {
+  const role = user.rol;
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -119,7 +131,7 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-surface px-4 md:hidden">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-surface px-4 md:px-8">
           <button
             ref={openButtonRef}
             type="button"
@@ -127,11 +139,20 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
             aria-label="Abrir menú"
             aria-expanded={mobileOpen}
             aria-controls="mobile-drawer"
-            className={iconButton}
+            className={cn(iconButton, "md:hidden")}
           >
             <Menu aria-hidden="true" className="size-5" />
           </button>
-          <Logo className="h-8" />
+          <Logo className="h-8 md:hidden" />
+
+          <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
+            <span className="hidden max-w-56 truncate text-sm font-medium text-text sm:inline">{user.nombre}</span>
+            <Link href="/cambiar-password" aria-label="Cambiar contraseña" className={headerAction}>
+              <KeyRound aria-hidden="true" className="size-4" />
+              <span className="hidden lg:inline">Cambiar contraseña</span>
+            </Link>
+            <LogoutButton compact className={headerAction} />
+          </div>
         </header>
 
         <main className="flex-1 px-4 py-6 md:px-8 md:py-8">{children}</main>

@@ -16,3 +16,21 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Textos de UI en es-AR con voseo. Fechas DD/MM/AAAA, números es-AR (`lib/format.ts`).
 - Nada de azul en la UI: solo los tokens de `app/globals.css`.
 - Antes de un PR: `npm run lint`, `npm run build`, `npm test`, `npm run check:bundle`.
+
+## Convención de autenticación y APIs (resto de Fase 1)
+
+- Toda mutación pasa por un Route Handler (no Server Actions). Wrappers en `lib/auth/api.ts`.
+- Endpoints de Admin: `app/api/admin/**`. Cada método exportado es `export const GET = adminRoute(async (request, user) => { ... })` (igual POST/PUT/PATCH/DELETE); `adminRoute` corre `requireAdmin()` antes del handler. Nada de `export async function GET`.
+- Endpoints de Empleado: `app/api/me/**`, con `export const GET = userRoute(...)` (corre `requireUser()`).
+- `test/route-guards.test.ts` lo verifica por AST (TypeScript compiler API) y falla si un método no está envuelto.
+- Rutas públicas de auth (`app/api/auth/**`) usan `apiRoute` directo. Todo POST lee el body con `readJsonBody` (415 si no es JSON).
+- Las respuestas a un Empleado pasan por el recorte por rol de `lib/airtable/access.ts` (`readableFields` / `redactFields`).
+- Cada página protegida envuelve su contenido en `<Guarded>` / `<Guarded admin>` (`components/auth/guarded.tsx`): el guard del layout no alcanza porque los layouts no se re-renderizan al navegar.
+- `Usuarios.passwordHash` solo se lee en `lib/auth/credentials.ts` (test `test/password-hash-reader.test.ts`).
+- Todo hash de contraseña sale de `hashNewPassword()` (`lib/auth/password-hash.ts`, solo servidor); las reglas (10+ caracteres, máx. 72 bytes UTF-8, nunca truncar) están en `lib/auth/password-policy.ts`, que puede usar el cliente.
+- Frontera cliente/servidor: desde un archivo `"use client"` no se puede llegar (ni transitivamente) a `lib/airtable/**`, `lib/env.ts` ni a `lib/auth/**` salvo `password-policy.ts` (test `test/client-boundary.test.ts`).
+- Cliente de Airtable: los `create` no se reintentan nunca; `update`/`delete` sí ante 429/5xx.
+- Dependencias con versión exacta (`.npmrc` con `save-exact=true`).
+- Toda escritura a un usuario llama a `invalidateCachedUser(id)` (`lib/auth/user-cache.ts`).
+- Nunca poner datos por usuario en `use cache` ni en otro caché entre requests.
+- Interceptación de requests: `proxy.ts` (Next 16; `middleware.ts` está deprecado). Solo redirige a /login si falta la cookie o su firma es inválida.

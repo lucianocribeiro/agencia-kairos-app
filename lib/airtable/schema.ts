@@ -252,6 +252,27 @@ export const TABLES = {
       cargadoPor: "fldM3DuGsdg5ziNFU",
     },
   },
+
+  /**
+   * Registro de intentos de login para bloqueo temporal. Lo escribe sólo el servidor.
+   * Nunca se guardan contraseñas ni hashes acá. Creada con scripts/setup-intentos-login.mjs.
+   */
+  intentosLogin: {
+    id: "tblTog0yzQMn9oQyb",
+    name: "Intentos de login",
+    fields: {
+      /** primario; email normalizado (trim + minúsculas) */
+      email: "fldpiSBeXKuyf0tFK",
+      ip: "fld88TsM7298108GB",
+      /** singleSelect: ver `choices.resultado` */
+      resultado: "fldJN0vlohIeJH3Ie",
+      /** dateTime ISO 24 h, tz America/Argentina/Buenos_Aires; la setea el servidor */
+      fecha: "fld1AfVFZryzFDMUF",
+    },
+    choices: {
+      resultado: ["Fallido", "Exitoso", "Bloqueado"],
+    },
+  },
 } as const;
 
 type Tables = typeof TABLES;

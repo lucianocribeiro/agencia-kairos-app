@@ -1,39 +1,21 @@
 /**
- * Política y hashing de contraseñas. ÚNICO lugar donde se crea un hash.
+ * Hashing y comparación de contraseñas (bcrypt). Solo servidor y el script de bootstrap.
  *
- * Sin `server-only` y sin alias `@/`: este archivo lo importa también
- * scripts/bootstrap-admin.mjs (con `node --experimental-strip-types`). No
- * contiene secretos; DUMMY_HASH es el hash de un valor aleatorio descartado.
- * Solo usar sintaxis TypeScript "borrable" (sin enums ni namespaces).
- *
- * bcrypt solo mira los primeros 72 bytes: más que eso se rechaza (nunca se trunca).
+ * Sin `server-only` y sin alias `@/` porque lo importa scripts/bootstrap-admin.mjs
+ * con `node --experimental-strip-types` (por eso el import con extensión .ts).
+ * No contiene secretos: DUMMY_HASH es el hash de un valor aleatorio descartado.
+ * Que nunca llegue al cliente lo verifica test/client-boundary.test.ts.
  */
 import { createHash } from "node:crypto";
 
 import bcrypt from "bcryptjs";
 
-export const BCRYPT_COST = 12;
-export const PASSWORD_MIN_LENGTH = 10;
-export const PASSWORD_MAX_BYTES = 72;
+import { byteLength, checkNewPassword, PASSWORD_MAX_BYTES } from "./password-policy.ts";
 
-export const PASSWORD_POLICY_MESSAGES = {
-  corta: `La contraseña tiene que tener al menos ${PASSWORD_MIN_LENGTH} caracteres.`,
-  larga: "La contraseña no puede superar los 72 bytes (los caracteres con tilde o emojis ocupan más de uno).",
-} as const;
+export const BCRYPT_COST = 12;
 
 /** Hash fijo (costo 12) para comparar cuando no hay usuario o la contraseña es inválida (mismo tiempo). */
 export const DUMMY_HASH = "$2b$12$b5L5oVTthrYRXcDpLfrFk.BFM6G8QO.GMs6P/9wXIftfEf2hbDAra";
-
-export function byteLength(text: string): number {
-  return new TextEncoder().encode(text).length;
-}
-
-/** Valida una contraseña nueva. Devuelve el mensaje de error o null si es válida. */
-export function checkNewPassword(password: string): string | null {
-  if ([...password].length < PASSWORD_MIN_LENGTH) return PASSWORD_POLICY_MESSAGES.corta;
-  if (byteLength(password) > PASSWORD_MAX_BYTES) return PASSWORD_POLICY_MESSAGES.larga;
-  return null;
-}
 
 export class InvalidPasswordError extends Error {
   constructor(message: string) {

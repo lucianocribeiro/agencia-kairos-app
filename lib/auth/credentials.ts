@@ -4,7 +4,7 @@ import { getAirtableClient, type AirtableRecord } from "@/lib/airtable/client";
 import { field, formula, recordIdIs, type Formula } from "@/lib/airtable/formula";
 import { TABLES } from "@/lib/airtable/schema";
 import { isRole, type Role } from "@/lib/roles";
-import { comparePassword, hashNewPassword, passwordFingerprint } from "./password";
+import { comparePassword, hashNewPassword, passwordFingerprint } from "./password-hash";
 import { invalidateCachedUser } from "./user-cache";
 
 /**

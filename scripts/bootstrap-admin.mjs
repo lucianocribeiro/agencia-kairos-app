@@ -7,20 +7,21 @@
  *
  * Orden:
  * 1. Rechaza (exit 1) si BOOTSTRAP_ADMIN_PASSWORD no cumple la política de
- *    lib/auth/password.ts (10+ caracteres, máx. 72 bytes). No llama a Airtable.
+ *    lib/auth/password-policy.ts (10+ caracteres, máx. 72 bytes). No llama a Airtable.
  * 2. Verifica que los IDs de Usuarios coincidan con lib/airtable/schema.ts y con
  *    la base real (Meta API, solo lectura). Si no → exit 1 con los IDs reales.
  * 3. Si ya hay un usuario con ese email (sin distinguir mayúsculas), no cambia nada.
- * 4. Si no, lo crea. El hash sale de hashNewPassword (lib/auth/password.ts).
+ * 4. Si no, lo crea. El hash sale de hashNewPassword (lib/auth/password-hash.ts).
  *
  * Nunca imprime la contraseña ni el hash.
- * Se corre con `node --experimental-strip-types` para importar lib/auth/password.ts.
+ * Se corre con `node --experimental-strip-types` para importar esos módulos TypeScript.
  */
 import process from "node:process";
 
 import nextEnv from "@next/env";
 
-import { checkNewPassword, hashNewPassword } from "../lib/auth/password.ts";
+import { hashNewPassword } from "../lib/auth/password-hash.ts";
+import { checkNewPassword } from "../lib/auth/password-policy.ts";
 import { diffTable, fetchBaseTables, schemaTable } from "./lib/schema-ids.mjs";
 
 nextEnv.loadEnvConfig(process.cwd(), true, { info: () => {}, error: console.error });

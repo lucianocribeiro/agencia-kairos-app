@@ -1,15 +1,8 @@
 import bcrypt from "bcryptjs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  byteLength,
-  checkNewPassword,
-  comparePassword,
-  DUMMY_HASH,
-  hashNewPassword,
-  InvalidPasswordError,
-  PASSWORD_POLICY_MESSAGES,
-} from "./password";
+import { comparePassword, DUMMY_HASH, hashNewPassword, InvalidPasswordError } from "./password-hash";
+import { byteLength, checkNewPassword, PASSWORD_POLICY_MESSAGES } from "./password-policy";
 
 afterEach(() => vi.restoreAllMocks());
 

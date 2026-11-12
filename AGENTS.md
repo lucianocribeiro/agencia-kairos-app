@@ -73,3 +73,6 @@ Es un chequeo no atómico con compensación. Queda una ventana chica en la que u
 - Superposición: chequeo previo (409) y `overlapPostCheck` en `runPostWriteChecks` (alta: pierde el más nuevo; edición: vuelve quien edita; fail-closed).
 - Empleado: `/api/me/horas` (GET, POST) y `/api/me/proyectos` (GET). Nunca PATCH/PUT/DELETE en `/api/me/**` ni `/api/me/horas/[id]` (test). Colaborador = Cargado por = la sesión, Facturable = sí; las asignaciones se releen de Airtable en cada alta.
 - Nunca leer RESTRICTED_FIELDS (valor hora, moneda, importe, cliente) en el camino del Empleado; las respuestas y los props de `/mis-horas` son DTOs explícitos.
+- Toda verificación posterior que relee el registro escrito (superposición de Horas, unicidad de Usuarios y Maestros, cascada de siglas) lanza `WrittenRecordMissingError` si la relectura no lo trae: cuenta como lectura fallida → deshacer → 503 (500 si el deshacer falla). La de «último Admin activo» no depende del registro escrito (cuenta los demás Admins activos).
+- Período máximo de los filtros: 10 años calendario exactos (`hasta ≤ desde + 10 años`, 29/02 → 28/02). La vista diaria del dashboard sigue limitada a 400 días.
+- Mis horas: asignaciones y proyectos se leen una vez por request (`loadMisSnapshot`) y se pasan a `listMisHoras`; el alta siempre pide una foto nueva.

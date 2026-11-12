@@ -5,7 +5,7 @@ import { connection } from "next/server";
 import { MisHorasManager } from "@/components/horas/mis-horas-manager";
 import { requireUser } from "@/lib/auth/guards";
 import { todayInBuenosAires } from "@/lib/horas/dates";
-import { listMisHoras, loadMisProyectos } from "@/lib/horas/server/me-service";
+import { listMisHoras, loadMisSnapshot } from "@/lib/horas/server/me-service";
 import type { MisHorasData } from "@/lib/horas/types";
 
 /**
@@ -14,9 +14,11 @@ import type { MisHorasData } from "@/lib/horas/types";
  */
 export async function loadMisHorasPageProps(userId: string, now = new Date()) {
   const today = todayInBuenosAires(now);
-  const [mis, list] = await Promise.all([loadMisProyectos(userId), listMisHoras(userId, { desde: null, hasta: null, proyecto: null }, now)]);
+  // Una sola foto de asignaciones y proyectos para todo el request (test: cantidad de lecturas).
+  const snapshot = await loadMisSnapshot(userId);
+  const list = await listMisHoras(userId, { desde: null, hasta: null, proyecto: null }, now, snapshot);
   const initial: MisHorasData = list.ok ? list.data : { range: { desde: today, hasta: today }, records: [], total: 0 };
-  return { today, proyectos: mis.activos, filtros: mis.asignados, initial };
+  return { today, proyectos: snapshot.mis.activos, filtros: snapshot.mis.asignados, initial };
 }
 
 export async function MisHorasPage() {

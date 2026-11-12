@@ -27,10 +27,35 @@ const P = TABLES.proyectos.fields;
 
 const byCodigo = (a: ProyectoRef, b: ProyectoRef) => a.codigo.localeCompare(b.codigo, "es", { numeric: true });
 
-/** Proyectos (solo Código y Estado; nunca valor hora ni moneda). */
-async function proyectosById(): Promise<Map<string, { codigo: string; estado: string | null }>> {
-  const rows = await getAirtableClient().list(TABLES.proyectos.id, { fields: [P.codigo, P.estado] });
-  return new Map(rows.map((r) => [r.id, { codigo: String(r.fields[P.codigo] ?? ""), estado: (r.fields[P.estado] as string) ?? null }]));
+type ProyectoInfo = { codigo: string; estado: string | null };
+
+/**
+ * Foto de un request: asignaciones del usuario (leídas de Airtable, no del
+ * caché de sesión) + proyectos (solo Código y Estado; nunca valor hora ni
+ * moneda). Dos lecturas. La página y la lista la comparten; el alta (POST)
+ * siempre pide una nueva.
+ */
+export interface MisSnapshot {
+  mis: MisProyectos;
+  proyectos: ReadonlyMap<string, ProyectoInfo>;
+}
+
+export async function loadMisSnapshot(userId: string): Promise<MisSnapshot> {
+  const client = getAirtableClient();
+  const [user, rows] = await Promise.all([
+    client.get(TABLES.usuarios.id, userId, { fields: [U.proyectosAsignados, U.estado] }),
+    client.list(TABLES.proyectos.id, { fields: [P.codigo, P.estado] }),
+  ]);
+  const proyectos = new Map<string, ProyectoInfo>(rows.map((r) => [r.id, { codigo: String(r.fields[P.codigo] ?? ""), estado: (r.fields[P.estado] as string) ?? null }]));
+  const ids = user && user.fields[U.estado] === "Activo" ? ((user.fields[U.proyectosAsignados] as string[] | undefined) ?? []) : [];
+  const asignados = ids.filter((id) => proyectos.has(id)).map((id) => ({ id, codigo: proyectos.get(id)!.codigo }));
+  return {
+    proyectos,
+    mis: {
+      asignados: asignados.sort(byCodigo),
+      activos: asignados.filter((p) => proyectos.get(p.id)!.estado === "Activo").sort(byCodigo),
+    },
+  };
 }
 
 /**
@@ -38,16 +63,7 @@ async function proyectosById(): Promise<Map<string, { codigo: string; estado: st
  * quitarle un proyecto a alguien corta la carga en el próximo request.
  */
 export async function loadMisProyectos(userId: string): Promise<MisProyectos> {
-  const [user, proyectos] = await Promise.all([
-    getAirtableClient().get(TABLES.usuarios.id, userId, { fields: [U.proyectosAsignados, U.estado] }),
-    proyectosById(),
-  ]);
-  const ids = user && user.fields[U.estado] === "Activo" ? ((user.fields[U.proyectosAsignados] as string[] | undefined) ?? []) : [];
-  const asignados = ids.filter((id) => proyectos.has(id)).map((id) => ({ id, codigo: proyectos.get(id)!.codigo }));
-  return {
-    asignados: asignados.sort(byCodigo),
-    activos: asignados.filter((p) => proyectos.get(p.id)!.estado === "Activo").sort(byCodigo),
-  };
+  return (await loadMisSnapshot(userId)).mis;
 }
 
 export interface MisHorasQuery {
@@ -57,10 +73,11 @@ export interface MisHorasQuery {
 }
 
 
-export async function listMisHoras(userId: string, query: MisHorasQuery, now = new Date()): Promise<ServiceResult<MisHorasData>> {
+/** Lista propia. Con `snapshot` (la página) no vuelve a leer asignaciones ni proyectos. */
+export async function listMisHoras(userId: string, query: MisHorasQuery, now = new Date(), snapshot?: MisSnapshot): Promise<ServiceResult<MisHorasData>> {
   const resolved = resolveRange(query.desde, query.hasta, todayInBuenosAires(now));
   if ("error" in resolved) return fail(400, resolved.error);
-  const [mis, proyectos, horas] = await Promise.all([loadMisProyectos(userId), proyectosById(), listHorasInRange(resolved.range)]);
+  const [{ mis, proyectos }, horas] = await Promise.all([snapshot ?? loadMisSnapshot(userId), listHorasInRange(resolved.range)]);
   if (query.proyecto && !mis.asignados.some((p) => p.id === query.proyecto)) return fail(400, HORA_MESSAGES.noAsignado);
 
   const mine = horas.filter((h) => h.colaborador === userId && (!query.proyecto || h.proyecto === query.proyecto));
@@ -85,7 +102,8 @@ export async function createMiHora(userId: string, raw: RawValues, now = new Dat
   if (!values) return fail(400, HORA_MESSAGES.validacion, errors);
   if (values.fecha > todayInBuenosAires(now)) return fail(400, HORA_MESSAGES.futura, { fecha: HORA_MESSAGES.futura });
 
-  const mis = await loadMisProyectos(userId);
+  // Siempre una foto nueva al escribir: asignación y Estado al momento del request.
+  const { mis } = await loadMisSnapshot(userId);
   if (!mis.activos.some((p) => p.id === values.proyecto)) return fail(403, HORA_MESSAGES.noAsignado, { proyecto: HORA_MESSAGES.noAsignado });
 
   const slot = { colaborador: userId, fecha: values.fecha, desde: values.desde, hasta: values.hasta };

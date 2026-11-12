@@ -35,7 +35,7 @@ const { signSessionToken } = await import("@/lib/auth/token");
 const { passwordFingerprint } = await import("@/lib/auth/password-hash");
 const { clearUserCache } = await import("@/lib/auth/user-cache");
 const { HORA_MESSAGES } = await import("@/lib/horas/rules");
-const { loadMisHorasPageProps } = await import("@/components/horas/server/mis-horas-page");
+const { loadMisHorasPageProps, MisHorasPage } = await import("@/components/horas/server/mis-horas-page");
 const { MisHorasManager, SIN_PROYECTOS } = await import("@/components/horas/mis-horas-manager");
 const { ToastProvider } = await import("@/components/ui");
 const { createMiHora } = await import("@/lib/horas/server/me-service");
@@ -263,6 +263,45 @@ describe("Superposición", () => {
   });
 });
 
+// ── F1-04-01 · Superposición: el registro escrito falta en la relectura ────────
+
+describe("Superposición · el registro escrito falta en la relectura (F1-04-01)", () => {
+  const verificationLog = () => {
+    const entry = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls.find((c) => String(c[0]).includes("Verificación posterior fallida"));
+    expect(entry).toBeDefined();
+    return entry![1];
+  };
+
+  it.each([
+    ["deshacer OK → 503", false, 503, "No pudimos verificar el cambio. No se modificó nada; probá de nuevo."],
+    ["deshacer fallido → 500", true, 500, "El cambio quedó incompleto. Avisá a un administrador."],
+  ] as const)("alta (Empleado): %s", async (_l, undoFails, status, error) => {
+    await loginAs(ids.eva);
+    fake.hide(HT.id, (r) => r.fields[H.tarea] === "Oculta");
+    if (undoFails) fake.fail("delete", HT.id);
+    const res = await call(ME_HORAS, "POST", { body: nueva({ tarea: "Oculta" }) });
+    expect(res).toMatchObject({ status, json: { error } });
+    expect(verificationLog()).toEqual({ id: expect.stringMatching(/^rec/), check: "overlap", motivo: "lectura", rollback: undoFails ? "fallido" : "ok" });
+    expect(horaRows()).toHaveLength(undoFails ? 1 : 0);
+    expect(JSON.stringify((console.error as unknown as { mock: { calls: unknown[] } }).mock.calls)).not.toMatch(/Oculta|09:00|32400/);
+  });
+
+  it.each([
+    ["deshacer OK → 503", false, 503],
+    ["deshacer fallido → 500", true, 500],
+  ] as const)("edición (Admin): %s", async (_l, undoFails, status) => {
+    await loginAs(ids.admin);
+    const id = seedHora(ids.eva, ids.uno, "2026-11-12", "08:00", "09:00");
+    const written = () => fake.calls.some((c) => c.method === "update" && c.tableId === HT.id);
+    fake.hide(HT.id, (r) => r.id === id && written());
+    if (undoFails) fake.failWhen((c, i) => c.method === "update" && c.tableId === HT.id && i >= 1, new Error("deshacer caído"));
+    const res = await call(AD_HORA, "PATCH", { params: { id }, body: { ...nueva({ desde: "13:00", hasta: "14:00" }), colaborador: ids.eva } });
+    expect(res.status).toBe(status);
+    expect(verificationLog()).toEqual({ id, check: "overlap", motivo: "lectura", rollback: undoFails ? "fallido" : "ok" });
+    expect(fieldsOf(id)[H.horaDesde]).toBe(undoFails ? 13 * 3600 : 8 * 3600);
+  });
+});
+
 // ── Mis horas: lista ─────────────────────────────────────────────────────────
 
 describe("Mis horas · lista (Empleado)", () => {
@@ -299,6 +338,44 @@ describe("Mis horas · lista (Empleado)", () => {
 
   it("/api/me/proyectos: solo asignados y Activos, como { id, codigo }", async () => {
     expect((await call(ME_PROYECTOS, "GET")).json).toEqual({ ok: true, proyectos: [{ id: ids.uno, codigo: "QZ - Uno" }] });
+  });
+});
+
+// ── F1-04-03 · Una foto de asignaciones y proyectos por request ──────────────
+
+describe("Mis horas · lecturas por request (F1-04-03)", () => {
+  beforeEach(() => loginAs(ids.eva));
+  const reads = () => fake.calls.map((c) => `${c.method}:${c.tableId === TABLES.usuarios.id ? "usuarios" : c.tableId === P.id ? "proyectos" : c.tableId === HT.id ? "horas" : c.tableId}`);
+
+  it("renderizar /mis-horas: guard (1) + usuario, proyectos y horas una vez cada uno", async () => {
+    seedHora(ids.eva, ids.uno, "2026-11-03", "09:00", "10:00");
+    const element = (await MisHorasPage()) as { props: Awaited<ReturnType<typeof loadMisHorasPageProps>> };
+    expect(element.props.initial.records).toHaveLength(1);
+    expect(reads().sort()).toEqual(["list:horas", "list:proyectos", "list:usuarios", "list:usuarios"]);
+    // La lectura del usuario de la página es por ID (asignaciones), distinta de la del guard (sesión).
+    const userReads = fake.calls.filter((c) => c.tableId === TABLES.usuarios.id).map((c) => (c.options as { fields: string[] }).fields);
+    expect(userReads).toContainEqual([U.proyectosAsignados, U.estado]);
+
+    // Con la sesión en caché (30 s), un segundo render hace exactamente 3 lecturas.
+    fake.calls.length = 0;
+    await MisHorasPage();
+    expect(reads().sort()).toEqual(["list:horas", "list:proyectos", "list:usuarios"]);
+  });
+
+  it("loadMisHorasPageProps sola: 3 lecturas (la lista reusa la foto)", async () => {
+    await loadMisHorasPageProps(ids.eva);
+    expect(reads().sort()).toEqual(["list:horas", "list:proyectos", "list:usuarios"]);
+  });
+
+  it("GET /api/me/horas: 3 lecturas además del guard; el POST vuelve a leer asignación y Estado al escribir", async () => {
+    await call(ME_HORAS, "GET"); // calienta el caché de sesión
+    fake.calls.length = 0;
+    await call(ME_HORAS, "GET");
+    expect(reads().sort()).toEqual(["list:horas", "list:proyectos", "list:usuarios"]);
+    fake.calls.length = 0;
+    expect((await call(ME_HORAS, "POST", { body: nueva() })).status).toBe(201);
+    const before = fake.calls.findIndex((c) => c.method === "create");
+    expect(reads().slice(0, before)).toEqual(expect.arrayContaining(["list:usuarios", "list:proyectos"]));
   });
 });
 

@@ -3,7 +3,7 @@
  * Verifica que ningún secreto llegue al bundle del navegador.
  *
  * Después de `next build`, recorre `.next/static` y busca:
- * - los nombres AIRTABLE_TOKEN, AIRTABLE_BASE_ID y SESSION_SECRET;
+ * - los nombres AIRTABLE_TOKEN, AIRTABLE_BASE_ID, SESSION_SECRET y BOOTSTRAP_ADMIN_PASSWORD;
  * - sus valores, si están definidos en el entorno (incluye .env* que carga Next).
  *
  * Sale con código 1 si encuentra algo. Nunca imprime los valores.
@@ -16,7 +16,7 @@ import nextEnv from "@next/env";
 
 const ROOT = process.cwd();
 const STATIC_DIR = join(ROOT, ".next", "static");
-const NAMES = ["AIRTABLE_TOKEN", "AIRTABLE_BASE_ID", "SESSION_SECRET"];
+const NAMES = ["AIRTABLE_TOKEN", "AIRTABLE_BASE_ID", "SESSION_SECRET", "BOOTSTRAP_ADMIN_PASSWORD"];
 // Valores muy cortos darían falsos positivos; ningún valor real es tan corto.
 const MIN_VALUE_LENGTH = 8;
 

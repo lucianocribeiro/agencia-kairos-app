@@ -18,8 +18,8 @@ export function schemaTable(key, source = readFileSync(SCHEMA_PATH, "utf8")) {
 }
 
 /** Tablas de la base vía Meta API (solo lectura). */
-export async function fetchBaseTables(token, baseId) {
-  const res = await fetch(`https://api.airtable.com/v0/meta/bases/${baseId}/tables`, {
+export async function fetchBaseTables(token, baseId, fetchImpl = fetch) {
+  const res = await fetchImpl(`https://api.airtable.com/v0/meta/bases/${baseId}/tables`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));

@@ -1,0 +1,287 @@
+import "server-only";
+
+import { getAirtableClient, type Fields } from "@/lib/airtable/client";
+import { normalizeForUnique } from "@/lib/airtable/integrity";
+import { REFERENCE_FIELDS, TABLES, type FieldId, type TableKey } from "@/lib/airtable/schema";
+import type { FieldErrors, Mode, Values } from "@/lib/abm/fields";
+import { MAESTRO_SPECS, type MaestroSlug, type MaestroSpec } from "@/lib/abm/maestros";
+
+/**
+ * Parte de servidor de cada Maestro: IDs de campo, unicidad, de dónde salen las
+ * opciones de los links (y cuáles se pueden elegir), referencias que bloquean el
+ * borrado y reglas que necesitan leer la base (Código de Proyectos, cascada de
+ * siglas de Clientes).
+ */
+
+export interface LinkSource {
+  table: TableKey;
+  /** Campos a leer de la tabla destino (para la etiqueta y para `allow`). */
+  fields: readonly FieldId[];
+  label: (f: Fields) => string;
+  /** Solo estas opciones se pueden elegir. Lo que ya estaba guardado se puede mantener. */
+  allow?: (f: Fields) => boolean;
+}
+
+export interface WriteContext {
+  mode: Mode;
+  /** ID del registro (al editar). */
+  id?: string;
+  /** Valores parseados, por clave del spec. */
+  values: Values;
+  /** Registro actual, por ID de campo (al editar). */
+  existing?: Fields;
+}
+
+export interface WritePlan {
+  /** Campos extra que arma el servidor (p. ej. Código). Por ID de campo. */
+  extraFields?: Fields;
+  fieldErrors?: FieldErrors;
+  /** Conflicto que rechaza todo el cambio (409). */
+  conflict?: string;
+  /** Se corre después de escribir el registro (p. ej. actualizar Códigos de proyectos). */
+  after?: () => Promise<void>;
+}
+
+export interface MaestroConfig {
+  spec: MaestroSpec;
+  table: TableKey;
+  /** clave del spec → ID de campo (incluye los readonly que se muestran). */
+  fieldIds: Record<string, FieldId>;
+  /** Claves que tienen que ser únicas (trim + sin distinguir mayúsculas). */
+  unique?: readonly string[];
+  links?: Record<string, LinkSource>;
+  /** Links inversos que impiden borrar (REFERENCE_FIELDS de schema.ts). */
+  references: readonly FieldId[];
+  beforeWrite?: (ctx: WriteContext) => Promise<WritePlan>;
+}
+
+const T = TABLES;
+const text = (v: unknown) => (typeof v === "string" ? v : v === null || v === undefined ? "" : String(v));
+const first = (v: unknown): string | null => (Array.isArray(v) && typeof v[0] === "string" ? v[0] : null);
+
+export const PROYECTO_MESSAGES = {
+  clienteSinSigla: "El cliente elegido no tiene sigla.",
+  codigoDuplicado: (codigo: string) => `Ya existe un proyecto con el código «${codigo}».`,
+  quitarSigla: "No se puede quitar la sigla de un cliente que tiene proyectos.",
+  colisiones: (codigos: string[]) => `No se puede cambiar la sigla: estos códigos de proyecto ya existen: ${codigos.join(", ")}.`,
+} as const;
+
+export function buildCodigo(sigla: string, nombreCorto: string): string {
+  return `${sigla.trim()} - ${nombreCorto.trim()}`;
+}
+
+const links = {
+  clienteActivo: {
+    table: "clientes",
+    fields: [T.clientes.fields.nombre, T.clientes.fields.sigla, T.clientes.fields.estado],
+    label: (f) => (f[T.clientes.fields.sigla] ? `${text(f[T.clientes.fields.sigla])} · ${text(f[T.clientes.fields.nombre])}` : text(f[T.clientes.fields.nombre])),
+    allow: (f) => f[T.clientes.fields.estado] === "Cliente",
+  },
+  unidadNegocio: {
+    table: "unidadesNegocio",
+    fields: [T.unidadesNegocio.fields.nombre],
+    label: (f) => text(f[T.unidadesNegocio.fields.nombre]),
+  },
+  categoria: {
+    table: "categorias",
+    fields: [T.categorias.fields.nombre, T.categorias.fields.tipo],
+    label: (f) => `${text(f[T.categorias.fields.nombre])} (${text(f[T.categorias.fields.tipo]) || "sin tipo"})`,
+  },
+  usuario: {
+    table: "usuarios",
+    fields: [T.usuarios.fields.nombre, T.usuarios.fields.rol],
+    label: (f) => text(f[T.usuarios.fields.nombre]),
+  },
+} satisfies Record<string, LinkSource>;
+
+const P = T.proyectos.fields;
+const C = T.clientes.fields;
+
+/** Proyectos: el Código lo arma el servidor (nunca se acepta del cliente) y es único. */
+async function proyectosBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
+  const clienteId = first(ctx.values.cliente);
+  const nombreCorto = text(ctx.values.nombreCorto);
+  if (!clienteId || !nombreCorto) return {};
+  const cliente = await getAirtableClient().get(T.clientes.id, clienteId, { fields: [C.sigla] });
+  const sigla = text(cliente?.fields[C.sigla]).trim();
+  if (!sigla) return { fieldErrors: { cliente: PROYECTO_MESSAGES.clienteSinSigla } };
+
+  const codigo = buildCodigo(sigla, nombreCorto);
+  const proyectos = await getAirtableClient().list(T.proyectos.id, { fields: [P.codigo] });
+  const taken = proyectos.some((p) => p.id !== ctx.id && normalizeForUnique(p.fields[P.codigo]) === normalizeForUnique(codigo));
+  if (taken) return { fieldErrors: { nombreCorto: PROYECTO_MESSAGES.codigoDuplicado(codigo) } };
+  return { extraFields: { [P.codigo]: codigo } };
+}
+
+/**
+ * Clientes: si cambia la sigla de un cliente con proyectos, se recalcula el
+ * Código de todos sus proyectos. Si alguno choca con otro existente, se
+ * rechaza el cambio entero (409) con la lista de choques.
+ */
+async function clientesBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
+  if (ctx.mode !== "edit" || !ctx.existing || !ctx.id) return {};
+  const oldSigla = text(ctx.existing[C.sigla]).trim();
+  const newSigla = text(ctx.values.sigla).trim();
+  if (oldSigla === newSigla) return {};
+  const projectIds = (ctx.existing[C.proyectos] as string[] | undefined) ?? [];
+  if (projectIds.length === 0) return {};
+  if (!newSigla) return { conflict: PROYECTO_MESSAGES.quitarSigla };
+
+  const all = await getAirtableClient().list(T.proyectos.id, { fields: [P.codigo, P.nombreCorto] });
+  const mine = new Set(projectIds);
+  const updates = all
+    .filter((p) => mine.has(p.id))
+    .map((p) => ({ id: p.id, codigo: buildCodigo(newSigla, text(p.fields[P.nombreCorto])) }));
+  const others = new Set(all.filter((p) => !mine.has(p.id)).map((p) => normalizeForUnique(p.fields[P.codigo])));
+  const seen = new Set<string>();
+  const collisions: string[] = [];
+  for (const u of updates) {
+    const key = normalizeForUnique(u.codigo);
+    if (others.has(key) || seen.has(key)) collisions.push(u.codigo);
+    seen.add(key);
+  }
+  if (collisions.length > 0) return { conflict: PROYECTO_MESSAGES.colisiones(collisions) };
+
+  return {
+    after: async () => {
+      await getAirtableClient().update(
+        T.proyectos.id,
+        updates.map((u) => ({ id: u.id, fields: { [P.codigo]: u.codigo } })),
+        { returnFields: [] },
+      );
+    },
+  };
+}
+
+export const MAESTRO_CONFIGS: Record<MaestroSlug, MaestroConfig> = {
+  clientes: {
+    spec: MAESTRO_SPECS.clientes,
+    table: "clientes",
+    fieldIds: {
+      nombre: C.nombre,
+      estado: C.estado,
+      sigla: C.sigla,
+      cuit: C.cuit,
+      condicionIva: C.condicionIva,
+      contacto: C.contacto,
+      telefono: C.telefono,
+      mail: C.mail,
+      observaciones: C.observaciones,
+    },
+    unique: ["nombre", "sigla"],
+    references: REFERENCE_FIELDS.clientes,
+    beforeWrite: clientesBeforeWrite,
+  },
+
+  proyectos: {
+    spec: MAESTRO_SPECS.proyectos,
+    table: "proyectos",
+    fieldIds: {
+      codigo: P.codigo,
+      nombreCorto: P.nombreCorto,
+      cliente: P.cliente,
+      unidadNegocio: P.unidadNegocio,
+      monedaValorHora: P.monedaValorHora,
+      valorHora: P.valorHora,
+      estado: P.estado,
+      descripcion: P.descripcion,
+      usuarios: P.usuarios,
+    },
+    links: { cliente: links.clienteActivo, unidadNegocio: links.unidadNegocio, usuarios: links.usuario },
+    references: REFERENCE_FIELDS.proyectos,
+    beforeWrite: proyectosBeforeWrite,
+  },
+
+  proveedores: {
+    spec: MAESTRO_SPECS.proveedores,
+    table: "proveedores",
+    fieldIds: {
+      nombre: T.proveedores.fields.nombre,
+      cuit: T.proveedores.fields.cuit,
+      condicionIva: T.proveedores.fields.condicionIva,
+      contacto: T.proveedores.fields.contacto,
+      telefono: T.proveedores.fields.telefono,
+      mail: T.proveedores.fields.mail,
+      categoriaPorDefecto: T.proveedores.fields.categoriaPorDefecto,
+      observaciones: T.proveedores.fields.observaciones,
+    },
+    unique: ["cuit"],
+    links: { categoriaPorDefecto: { ...links.categoria, allow: (f) => f[T.categorias.fields.tipo] === "Gasto" } },
+    references: REFERENCE_FIELDS.proveedores,
+  },
+
+  socios: {
+    spec: MAESTRO_SPECS.socios,
+    table: "socios",
+    fieldIds: { sigla: T.socios.fields.sigla, nombre: T.socios.fields.nombre, porcentajeRetiros: T.socios.fields.porcentajeRetiros },
+    unique: ["sigla"],
+    references: REFERENCE_FIELDS.socios,
+  },
+
+  cuentas: {
+    spec: MAESTRO_SPECS.cuentas,
+    table: "cuentas",
+    fieldIds: {
+      nombre: T.cuentas.fields.nombre,
+      moneda: T.cuentas.fields.moneda,
+      banco: T.cuentas.fields.banco,
+      cbu: T.cuentas.fields.cbu,
+      saldoInicial: T.cuentas.fields.saldoInicial,
+      fechaSaldoInicial: T.cuentas.fields.fechaSaldoInicial,
+    },
+    unique: ["nombre"],
+    references: REFERENCE_FIELDS.cuentas,
+  },
+
+  categorias: {
+    spec: MAESTRO_SPECS.categorias,
+    table: "categorias",
+    fieldIds: { nombre: T.categorias.fields.nombre, tipo: T.categorias.fields.tipo, requiereProyecto: T.categorias.fields.requiereProyecto },
+    unique: ["nombre"],
+    references: REFERENCE_FIELDS.categorias,
+  },
+
+  "unidades-de-negocio": {
+    spec: MAESTRO_SPECS["unidades-de-negocio"],
+    table: "unidadesNegocio",
+    fieldIds: { nombre: T.unidadesNegocio.fields.nombre },
+    unique: ["nombre"],
+    references: REFERENCE_FIELDS.unidadesNegocio,
+  },
+
+  "tipos-de-operacion": {
+    spec: MAESTRO_SPECS["tipos-de-operacion"],
+    table: "tiposOperacion",
+    fieldIds: {
+      nombre: T.tiposOperacion.fields.nombre,
+      movimiento: T.tiposOperacion.fields.movimiento,
+      sumaAResultados: T.tiposOperacion.fields.sumaAResultados,
+      categoriaPorDefecto: T.tiposOperacion.fields.categoriaPorDefecto,
+      pideClienteProveedor: T.tiposOperacion.fields.pideClienteProveedor,
+      esDeSocio: T.tiposOperacion.fields.esDeSocio,
+    },
+    unique: ["nombre"],
+    links: { categoriaPorDefecto: links.categoria },
+    references: REFERENCE_FIELDS.tiposOperacion,
+  },
+
+  "tipos-de-comprobante": {
+    spec: MAESTRO_SPECS["tipos-de-comprobante"],
+    table: "tiposComprobante",
+    fieldIds: {
+      codigo: T.tiposComprobante.fields.codigo,
+      descripcion: T.tiposComprobante.fields.descripcion,
+      signo: T.tiposComprobante.fields.signo,
+    },
+    unique: ["codigo"],
+    references: REFERENCE_FIELDS.tiposComprobante,
+  },
+
+  parametros: {
+    spec: MAESTRO_SPECS.parametros,
+    table: "parametros",
+    fieldIds: { concepto: T.parametros.fields.concepto, valor: T.parametros.fields.valor, descripcion: T.parametros.fields.descripcion },
+    unique: ["concepto"],
+    references: REFERENCE_FIELDS.parametros,
+  },
+};

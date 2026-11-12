@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
 
+import { Guarded } from "@/components/auth/guarded";
 import { PlaceholderPage } from "@/components/shell/placeholder-page";
 
 export const metadata: Metadata = { title: "Categorías" };
 
 export default function Page() {
-  return <PlaceholderPage title="Categorías" />;
+  return (
+    <Guarded admin>
+      <PlaceholderPage title="Categorías" />
+    </Guarded>
+  );
 }

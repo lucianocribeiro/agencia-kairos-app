@@ -55,6 +55,38 @@ textarea {
   accent-color: var(--color-accent);
 }
 
+/* Fecha, hora y mes nativos: esquema oscuro (el selector del navegador no sale
+   en azul claro) y el ícono del calendario/reloj en gris claro. */
+input[type="date"],
+input[type="time"],
+input[type="month"] {
+  color-scheme: dark;
+  accent-color: var(--color-accent);
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.75);
+  cursor: pointer;
+}
+
+input[type="date"]::-webkit-datetime-edit-fields-wrapper:focus-within,
+input[type="time"]::-webkit-datetime-edit-fields-wrapper:focus-within {
+  color: var(--color-text);
+}
+
+input[type="date"]::-webkit-datetime-edit-day-field:focus,
+input[type="date"]::-webkit-datetime-edit-month-field:focus,
+input[type="date"]::-webkit-datetime-edit-year-field:focus,
+input[type="time"]::-webkit-datetime-edit-hour-field:focus,
+input[type="time"]::-webkit-datetime-edit-minute-field:focus,
+input[type="month"]::-webkit-datetime-edit-month-field:focus,
+input[type="month"]::-webkit-datetime-edit-year-field:focus {
+  background-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  color: var(--color-white);
+}
+
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus {

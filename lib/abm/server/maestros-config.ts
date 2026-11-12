@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getAirtableClient, type Fields } from "@/lib/airtable/client";
-import { normalizeForUnique } from "@/lib/airtable/integrity";
+import { normalizeForUnique, WrittenRecordMissingError } from "@/lib/airtable/integrity";
 import { REFERENCE_FIELDS, TABLES, type FieldId, type TableKey } from "@/lib/airtable/schema";
 import type { FieldErrors, Mode, Values } from "@/lib/abm/fields";
 import { MAESTRO_SPECS, type MaestroSlug, type MaestroSpec } from "@/lib/abm/maestros";
@@ -187,6 +187,10 @@ async function clientesBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
     // Carrera: otro proyecto pudo tomar uno de los Códigos nuevos mientras se escribía.
     verify: async () => {
       const now = await getAirtableClient().list(T.proyectos.id, { fields: [P.codigo] });
+      // Un proyecto renombrado que no aparece: no se puede verificar (deshacer → 503).
+      const seen = new Set(now.map((p) => p.id));
+      const missing = updates.find((u) => !seen.has(u.id));
+      if (missing) throw new WrittenRecordMissingError(missing.id);
       const found = collisionsOf(now, mine, updates);
       return found.length > 0 ? { error: PROYECTO_MESSAGES.colisiones(found) } : null;
     },

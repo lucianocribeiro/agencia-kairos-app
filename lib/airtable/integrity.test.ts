@@ -5,7 +5,7 @@ import { createFakeAirtable } from "@/test/fake-airtable";
 const fake = createFakeAirtable();
 vi.mock("./client", () => ({ getAirtableClient: () => fake.client }));
 
-const { findDuplicates, findReferences, isUnique, losesUniqueRace } = await import("./integrity");
+const { findDuplicates, findReferences, isUnique, losesUniqueRace, WrittenRecordMissingError } = await import("./integrity");
 const T = "tblsf0Wa09QVk3vvR";
 const NOMBRE = "fldlLmQ2W5WaHRep7";
 const PROYECTOS = "fldEu1ghFqF8jtVMM";
@@ -72,5 +72,13 @@ describe("losesUniqueRace (verificación después de escribir)", () => {
   it("valor vacío → no aplica", async () => {
     expect(await losesUniqueRace(T, NOMBRE, "  ", "recAAAAAAAAAAAAAA", "create")).toBe(false);
     expect(fake.calls).toHaveLength(0);
+  });
+});
+
+describe("losesUniqueRace · registro escrito ausente (F1-04-01)", () => {
+  it("si la relectura no trae el registro escrito, lanza (lectura fallida), con o sin otros iguales", async () => {
+    await expect(losesUniqueRace(T, NOMBRE, "Acme", "recNOESTA00000001", "create")).rejects.toBeInstanceOf(WrittenRecordMissingError);
+    fake.seed(T, { [NOMBRE]: "Acme" });
+    await expect(losesUniqueRace(T, NOMBRE, "Acme", "recNOESTA00000001", "edit")).rejects.toThrow(/recNOESTA00000001/);
   });
 });

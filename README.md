@@ -2,7 +2,7 @@
 
 App interna de Agencia Kairos. Next.js (App Router) + TypeScript + Tailwind CSS, con Airtable como base de datos. Se deploya en Vercel.
 
-> Estado: **Fase 1 · CC-F1-03 (Usuarios y Maestros)**. Hay login, cambio de contraseña, guards por rol y ABM de Usuarios y de los 10 Maestros para Admin. Horas y dashboard todavía muestran "En construcción" (CC-F1-04).
+> Estado: **Fase 1 · CC-F1-04 (Horas, Mis horas y Dashboard)**. Login, guards por rol, ABM de Usuarios y Maestros, carga de horas del Empleado, Horas y Dashboard de Admin.
 
 ## Requisitos
 
@@ -97,6 +97,15 @@ Antes de tocar nada, rechaza `BOOTSTRAP_ADMIN_PASSWORD` si tiene menos de 10 car
 - **Reglas destacadas**: el Código de un proyecto es `Sigla del cliente - Nombre corto` y lo arma el servidor; cambiar la sigla de un cliente recalcula los Códigos de sus proyectos (si alguno choca, se rechaza el cambio entero; si una escritura falla a mitad de camino, se revierte todo). CUIT validado con dígito verificador y guardado solo con dígitos. Números en formato es-AR (`1.234,56`; también `1234,56` y `1234.56`).
 - **API**: `app/api/admin/usuarios/**` y `app/api/admin/maestros/[tabla]/**`, todo con `adminRoute`. Errores: 400 validación, 409 duplicado/choque, 404 no encontrado, 503 Airtable no disponible (o cascada revertida).
 - **Concurrencia**: sin transacciones; las reglas de unicidad y «al menos un Admin activo» se verifican también después de escribir y se compensan; si esa verificación no se puede leer, el cambio se deshace (503). Detalle y riesgo residual en `AGENTS.md`.
+
+## Horas, Mis horas y Dashboard
+
+- **Mis horas** (`/mis-horas`, Empleado): carga arriba (Fecha hasta hoy en Buenos Aires, Proyecto asignado y Activo, Tarea, Desde, Hasta, con las horas en vivo) y lista propia abajo con período (mes actual / anterior), proyecto y total. Sin edición ni borrado: `/api/me/horas` solo tiene GET y POST.
+- **Horas** (`/horas`, Admin): lista con filtros por colaborador, proyecto, cliente y período, total, alta (cualquier fecha y proyecto, también Cerrados), edición (Cargado por no cambia) y borrado.
+- **Dashboard** (`/dashboard`, Admin): horas por proyecto × período (diaria, semanal ISO o mensual) con totales y un gráfico de barras en SVG. Solo horas, nunca importes.
+- **Reglas**: horas = `ROUND((hasta − desde) / 3600, 2)` en una sola función (`recordHours`, `lib/horas/time.ts`) que usan listas, totales y dashboard; dos registros del mismo colaborador y día no se pueden pisar (los que se tocan sí), con verificación posterior.
+- **Diferencia con la fórmula de Airtable**: el campo Horas usa `IF(AND({desde}, {hasta}), …)`. Como 00:00 se guarda como 0, un registro que empieza a las 00:00 queda en blanco en Airtable; la app lo calcula igual. Para que coincidan siempre habría que cambiar la fórmula a `IF(AND({desde} != BLANK(), {hasta} != BLANK()), …)` (no se tocó la base).
+- **Un Empleado nunca ve** valor hora, moneda, importe ni cliente: no se leen de Airtable y las respuestas son DTOs armados a mano (`test/horas.test.ts`, criterio 7).
 
 ## Estructura
 

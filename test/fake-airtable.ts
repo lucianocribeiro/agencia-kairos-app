@@ -32,6 +32,8 @@ export function createFakeAirtable() {
     if (b.arrived === b.count) b.waiting.splice(0).forEach((release) => release());
     else await new Promise<void>((resolve) => b.waiting.push(resolve));
   };
+  /** Registros que `list` no devuelve (simula una relectura que no trae lo recién escrito). */
+  const hidden: { tableId: string; when: (rec: Rec) => boolean }[] = [];
   let seq = 0;
   const newId = () => `rec${String(++seq).padStart(14, "0")}`;
   const rows = (tableId: string) => {
@@ -56,6 +58,7 @@ export function createFakeAirtable() {
       // Soporte mínimo de RECORD_ID() = "rec…" para get por ID.
       const m = /^RECORD_ID\(\) = "(rec[A-Za-z0-9]{14})"$/.exec(options.filterByFormula?.toString() ?? "");
       if (m) out = out.filter((r) => r.id === m[1]);
+      out = out.filter((r) => !hidden.some((h) => h.tableId === tableId && h.when(r)));
       return out.slice(0, options.maxRecords ?? Infinity).map((r) => ({ ...r, fields: pick(r.fields, options.fields) }));
     },
     async get(tableId: string, recordId: string, options: { fields: readonly string[] }) {
@@ -125,6 +128,10 @@ export function createFakeAirtable() {
     barrier(method: "create" | "update", tableId: string, count: number) {
       barriers.set(`${method}:${tableId}`, { count, waiting: [], arrived: 0 });
     },
+    /** `list` deja de devolver los registros de `tableId` que cumplan `when` (se evalúa en cada lectura). */
+    hide(tableId: string, when: (rec: { id: string; fields: Fields }) => boolean) {
+      hidden.push({ tableId, when });
+    },
     /** Cambia el createdTime de un registro (para probar desempates). */
     setCreatedTime(tableId: string, id: string, createdTime: string) {
       rows(tableId).find((r) => r.id === id)!.createdTime = createdTime;
@@ -135,6 +142,7 @@ export function createFakeAirtable() {
       failures.clear();
       rules.length = 0;
       barriers.clear();
+      hidden.length = 0;
     },
   };
 }

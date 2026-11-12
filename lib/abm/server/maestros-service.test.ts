@@ -188,6 +188,21 @@ describe("Clientes · cascada atómica (N-01)", () => {
     expect(JSON.stringify(errorLog.mock.calls)).not.toContain("QY - P");
   });
 
+  it.each([
+    ["deshacer OK → 503", false, 503, ABM_MESSAGES.noVerificado],
+    ["deshacer fallido → 500", true, 500, ABM_MESSAGES.incompleto],
+  ] as const)("verificación posterior: un proyecto renombrado falta en la relectura, %s (F1-04-01)", async (_l, undoFails, status, error) => {
+    const { ids, cliente } = setup();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const written = () => fake.calls.some((c) => c.method === "update" && c.tableId === C.id);
+    fake.hide(P.id, (r) => r.id === ids[7] && written());
+    if (undoFails) fake.failWhen((call, i) => call.method === "update" && call.tableId === P.id && i >= 3, serverError());
+    expect(await change(cliente)).toEqual({ ok: false, status, error });
+    const entry = errorLog.mock.calls.find((c) => String(c[0]).includes("Verificación posterior fallida"))!;
+    expect(entry[1]).toEqual({ id: cliente, check: "cascade", motivo: "lectura", rollback: undoFails ? "fallido" : "ok" });
+    if (!undoFails) expectNothingChanged(ids, cliente);
+  });
+
   it("colisión con otro proyecto → 409 antes de escribir nada", async () => {
     const { ids, cliente } = setup();
     fake.seed(P.id, { [P.fields.codigo]: "qy - p7", [P.fields.nombreCorto]: "p7" });

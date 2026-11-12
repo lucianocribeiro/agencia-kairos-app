@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 
 import { Guarded } from "@/components/auth/guarded";
-import { PlaceholderPage } from "@/components/shell/placeholder-page";
+import { HorasPage } from "@/components/horas/server/horas-page";
 
 export const metadata: Metadata = { title: "Horas" };
 
 export default function Page() {
   return (
     <Guarded admin>
-      <PlaceholderPage title="Horas" />
+      <HorasPage />
     </Guarded>
   );
 }

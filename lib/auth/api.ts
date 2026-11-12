@@ -4,16 +4,18 @@ import { unstable_rethrow } from "next/navigation";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { runInApiContext } from "./api-context";
-import { AuthError } from "./guards";
-import { clearSessionCookie } from "./session";
+import { AuthError, requireAdmin, requireUser } from "./guards";
+import { clearSessionCookie, type SessionUser } from "./session";
 import { describeError } from "./users";
 
 type Handler<C> = (request: NextRequest, context: C) => Promise<Response>;
+type GuardedHandler<C> = (request: NextRequest, user: SessionUser, context: C) => Promise<Response>;
 
 /**
- * Envoltorio obligatorio de todo Route Handler de la app.
+ * Envoltorio base de todo Route Handler de la app.
  * - Los guards responden 401/403 en JSON (y borran la cookie si era inválida).
  * - Cualquier otro error → 500 genérico, sin detalles internos.
+ * Las rutas públicas de auth lo usan directo; el resto usa adminRoute / userRoute.
  */
 export function apiRoute<C = unknown>(handler: Handler<C>): Handler<C> {
   return (request, context) =>
@@ -33,13 +35,43 @@ export function apiRoute<C = unknown>(handler: Handler<C>): Handler<C> {
     });
 }
 
-/** Lee un body JSON. Exige Content-Type application/json (corta formularios cross-site). */
-export async function readJson(request: NextRequest): Promise<Record<string, unknown> | null> {
-  if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return null;
+/**
+ * Obligatorio para todo método exportado en app/api/admin/**:
+ *   export const GET = adminRoute(async (request, user) => { ... })
+ * Corre requireAdmin() antes del handler. Lo verifica test/route-guards.test.ts (AST).
+ */
+export function adminRoute<C = unknown>(handler: GuardedHandler<C>): Handler<C> {
+  return apiRoute<C>(async (request, context) => handler(request, await requireAdmin(), context));
+}
+
+/**
+ * Obligatorio para todo método exportado en app/api/me/**:
+ *   export const GET = userRoute(async (request, user) => { ... })
+ * Corre requireUser() antes del handler. Las respuestas pasan por lib/airtable/access.ts.
+ */
+export function userRoute<C = unknown>(handler: GuardedHandler<C>): Handler<C> {
+  return apiRoute<C>(async (request, context) => handler(request, await requireUser(), context));
+}
+
+export const REQUEST_MESSAGES = {
+  formato: "El formato del pedido no es válido.",
+} as const;
+
+/**
+ * Lee un body JSON. Sin `Content-Type: application/json` → 415 (corta formularios
+ * HTML cross-site); JSON inválido o que no sea un objeto → 400. Devuelve el body
+ * o la Response de error lista para devolver.
+ */
+export async function readJsonBody(request: NextRequest): Promise<Record<string, unknown> | Response> {
+  const type = request.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!type.startsWith("application/json")) {
+    return NextResponse.json({ error: REQUEST_MESSAGES.formato }, { status: 415 });
+  }
   try {
     const body: unknown = await request.json();
-    return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
+    if (body && typeof body === "object" && !Array.isArray(body)) return body as Record<string, unknown>;
   } catch {
-    return null;
+    // cae al 400
   }
+  return NextResponse.json({ error: REQUEST_MESSAGES.formato }, { status: 400 });
 }

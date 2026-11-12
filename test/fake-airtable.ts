@@ -44,6 +44,26 @@ export function createFakeAirtable() {
       if (m) out = out.filter((r) => r.id === m[1]);
       return out.slice(0, options.maxRecords ?? Infinity).map((r) => ({ ...r, fields: pick(r.fields, options.fields) }));
     },
+    async get(tableId: string, recordId: string, options: { fields: readonly string[] }) {
+      calls.push({ method: "list", tableId, options: { ...options, filterByFormula: `RECORD_ID() = "${recordId}"` } });
+      maybeFail("list", tableId);
+      const rec = rows(tableId).find((r) => r.id === recordId);
+      return rec ? { ...rec, fields: pick(rec.fields, options.fields) } : null;
+    },
+    async delete(tableId: string, ids: readonly string[]) {
+      calls.push({ method: "delete", tableId, payload: ids });
+      maybeFail("delete", tableId);
+      const list = rows(tableId);
+      const deleted: string[] = [];
+      for (const id of ids) {
+        const i = list.findIndex((r) => r.id === id);
+        if (i >= 0) {
+          list.splice(i, 1);
+          deleted.push(id);
+        }
+      }
+      return deleted;
+    },
     async create(tableId: string, records: Fields[]) {
       calls.push({ method: "create", tableId, payload: records });
       maybeFail("create", tableId);
@@ -59,7 +79,10 @@ export function createFakeAirtable() {
       return records.map(({ id, fields }) => {
         const rec = rows(tableId).find((r) => r.id === id);
         if (!rec) throw new Error(`no existe ${id}`);
-        Object.assign(rec.fields, fields);
+        for (const [k, v] of Object.entries(fields)) {
+          if (v === null) delete rec.fields[k];
+          else rec.fields[k] = v;
+        }
         return { ...rec, fields: {} };
       });
     },

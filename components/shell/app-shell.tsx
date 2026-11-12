@@ -73,7 +73,7 @@ export function AppShell({ user, children }: { user: ShellUser; children: ReactN
       <aside
         className={cn(
           "sticky top-0 hidden h-dvh shrink-0 border-r border-line bg-surface transition-[width] duration-200 md:block",
-          collapsed ? "w-16" : "w-64",
+          collapsed ? "w-[72px]" : "w-64",
         )}
       >
         <SidebarNav
@@ -143,7 +143,7 @@ export function AppShell({ user, children }: { user: ShellUser; children: ReactN
           >
             <Menu aria-hidden="true" className="size-5" />
           </button>
-          <Logo className="h-8 md:hidden" eager />
+          <Logo className="h-[45px] md:hidden" eager />
 
           <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
             <span className="hidden max-w-56 truncate text-sm font-medium text-text sm:inline">{user.nombre}</span>

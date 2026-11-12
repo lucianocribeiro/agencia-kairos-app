@@ -9,6 +9,18 @@ import { and, field, formula, recordIdIs, type Formula } from "./formula";
  * vuelve a comparar en código (no depende solo de Airtable).
  */
 
+/**
+ * La relectura de una verificación posterior no encuentra el registro que este
+ * request acaba de escribir. Se trata como lectura fallida (runPostWriteChecks
+ * deshace la escritura → 503). El mensaje lleva solo el ID.
+ */
+export class WrittenRecordMissingError extends Error {
+  constructor(readonly recordId: string) {
+    super(`El registro escrito ${recordId} no aparece en la relectura`);
+    this.name = "WrittenRecordMissingError";
+  }
+}
+
 export const REFERENCED_MESSAGE = "No se puede borrar: tiene registros asociados. Desactivalo o dejalo como está.";
 
 /** Normalización para comparar unicidad: trim + minúsculas. */
@@ -44,6 +56,7 @@ export async function findDuplicates(
  * - edit: pierde siempre quien edita (vuelve a su valor anterior).
  * - create: pierde el registro más nuevo (createdTime más reciente; empate:
  *   el ID más alto). El otro request ve lo mismo y se queda con el suyo.
+ * Si la relectura no trae el registro escrito → WrittenRecordMissingError (fail-closed).
  */
 export async function losesUniqueRace(
   tableId: string,
@@ -59,9 +72,9 @@ export async function losesUniqueRace(
     filterByFormula: formula`LOWER(TRIM(${field(fieldId)} & "")) = ${target}`,
   });
   const matches = records.filter((r) => normalizeForUnique(r.fields[fieldId]) === target);
+  if (!matches.some((r) => r.id === recordId)) throw new WrittenRecordMissingError(recordId);
   if (!matches.some((r) => r.id !== recordId)) return false;
   if (mode === "edit") return true;
-  if (!matches.some((r) => r.id === recordId)) return true; // no se ve a sí mismo: por las dudas, pierde
   const newest = matches.reduce((a, b) => {
     const ta = Date.parse(a.createdTime);
     const tb = Date.parse(b.createdTime);

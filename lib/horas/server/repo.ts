@@ -3,6 +3,7 @@ import "server-only";
 import { getAirtableClient, type AirtableRecord, type Fields } from "@/lib/airtable/client";
 import { and, field, formula, type Formula } from "@/lib/airtable/formula";
 import { TABLES } from "@/lib/airtable/schema";
+import { WrittenRecordMissingError } from "@/lib/airtable/integrity";
 import type { CheckConflict, PostWriteCheck } from "@/lib/abm/server/compensation";
 import { addDays, isIsoDate, type DateRange } from "../dates";
 import { overlapMessage, overlapping } from "../rules";
@@ -128,6 +129,7 @@ export function overlapConflict(found: readonly { desde: number | null; hasta: n
  * - create: pierde el más nuevo (createdTime más reciente; empate: ID más alto).
  *   Si este registro es más viejo que todos con los que choca, se queda (los
  *   otros requests ven lo mismo y se deshacen).
+ * Si la relectura no trae el registro escrito → WrittenRecordMissingError (fail-closed).
  */
 export function overlapPostCheck(id: string, slot: Slot, mode: "create" | "edit"): PostWriteCheck {
   return {
@@ -135,6 +137,8 @@ export function overlapPostCheck(id: string, slot: Slot, mode: "create" | "edit"
     run: async () => {
       const day = await listHorasInRange({ desde: slot.fecha, hasta: slot.fecha });
       const me = day.find((h) => h.id === id);
+      // Sin el registro escrito no se puede verificar nada: lectura fallida (deshacer → 503).
+      if (!me) throw new WrittenRecordMissingError(id);
       const others = overlapping(
         slot,
         day.filter((h) => h.id !== id && h.colaborador === slot.colaborador && h.desde !== null && h.hasta !== null) as (Hora & {
@@ -143,7 +147,7 @@ export function overlapPostCheck(id: string, slot: Slot, mode: "create" | "edit"
         })[],
       );
       if (others.length === 0) return null;
-      if (mode === "edit" || !me) return overlapConflict(others);
+      if (mode === "edit") return overlapConflict(others);
       const t = (h: Hora) => Date.parse(h.createdTime);
       const olderExists = others.some((o) => t(o) < t(me) || (t(o) === t(me) && o.id < me.id));
       return olderExists ? overlapConflict(others) : null;

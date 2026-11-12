@@ -268,6 +268,83 @@ describe("Verificación posterior fail-closed (NEW-01/02)", () => {
   });
 });
 
+// ── F1-04-01 · El registro escrito no aparece en la relectura ─────────────────
+
+describe("Verificación posterior: el registro escrito falta en la relectura (F1-04-01)", () => {
+  const UT = TABLES.usuarios.id;
+  const afterWrite = (tableId: string) => () => fake.calls.some((c) => (c.method === "create" || c.method === "update") && c.tableId === tableId);
+  type Scenario = { name: string; table: string; undo: "update" | "delete"; check: string; setup: () => { run: () => Promise<{ ok: boolean }>; restored: () => void } };
+
+  const scenarios: Scenario[] = [
+    {
+      name: "alta de Maestro (unique:nombre)",
+      table: UN.id,
+      undo: "delete",
+      check: "unique:nombre",
+      setup: () => {
+        fake.hide(UN.id, (r) => r.fields[UN.fields.nombre] === "Oculta");
+        return { run: () => createMaestro("unidades-de-negocio", { nombre: "Oculta" }), restored: () => expect(fake.rows(UN.id)).toHaveLength(0) };
+      },
+    },
+    {
+      name: "edición de Maestro (unique:nombre)",
+      table: UN.id,
+      undo: "update",
+      check: "unique:nombre",
+      setup: () => {
+        const un = fake.seed(UN.id, { [UN.fields.nombre]: "Vieja" });
+        const written = afterWrite(UN.id);
+        fake.hide(UN.id, (r) => r.id === un && written());
+        return { run: () => updateMaestro("unidades-de-negocio", un, { nombre: "Nueva" }), restored: () => expect(fieldsOf(UN.id, un)[UN.fields.nombre]).toBe("Vieja") };
+      },
+    },
+    {
+      name: "alta de usuario (unique:email)",
+      table: UT,
+      undo: "delete",
+      check: "unique:email",
+      setup: () => {
+        fake.hide(UT, (r) => r.fields[U.email] === "oculta@kairos.test");
+        return {
+          run: () => createUsuario({ nombre: "Oculta", email: "oculta@kairos.test", rol: "Empleado", sigla: "OC", password: "Temporal-Segura-1" }),
+          restored: () => expect(fake.rows(UT).some((r) => r.fields[U.email] === "oculta@kairos.test")).toBe(false),
+        };
+      },
+    },
+    {
+      name: "edición de usuario (unique:email)",
+      table: UT,
+      undo: "update",
+      check: "unique:email",
+      setup: () => {
+        const written = afterWrite(UT);
+        fake.hide(UT, (r) => r.id === empleadoId && written());
+        return {
+          run: () => updateUsuario({ id: adminId }, empleadoId, { nombre: "Eva", email: "eva2@kairos.test", sigla: "EE", rol: "Empleado" }),
+          restored: () => expect(fieldsOf(UT, empleadoId)[U.email]).toBe("eva@kairos.test"),
+        };
+      },
+    },
+  ];
+
+  it.each(scenarios)("$name: falta en la relectura → se deshace → 503", async ({ check, setup }) => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { run, restored } = setup();
+    expect(await run()).toEqual({ ok: false, status: 503, error: WRITE_MESSAGES.noVerificado });
+    restored();
+    expect(verificationLog(errorLog)).toEqual({ id: expect.stringMatching(/^rec[A-Za-z0-9]{14}$/), check, motivo: "lectura", rollback: "ok" });
+    expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/kairos\.test|Oculta|Nueva|Vieja|Temporal/);
+  }, 30_000);
+
+  it.each(scenarios)("$name: falta en la relectura y el deshacer falla → 500", async ({ table, undo, check, setup }) => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { run } = setup();
+    failUndo(table, undo);
+    expect(await run()).toEqual({ ok: false, status: 500, error: WRITE_MESSAGES.incompleto });
+    expect(verificationLog(errorLog)).toEqual({ id: expect.stringMatching(/^rec/), check, motivo: "lectura", rollback: "fallido" });
+  }, 30_000);
+});
+
 // ── N-05 · Errores de Airtable ────────────────────────────────────────────────
 
 describe("apiRoute · errores de Airtable (N-05)", () => {

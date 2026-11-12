@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getAirtableClient, type Fields } from "@/lib/airtable/client";
+import type { FieldErrors } from "@/lib/abm/fields";
+import type { ServiceResult } from "@/lib/abm/types";
 
 /**
  * Escrituras con compensación. Airtable no tiene transacciones: cada paso que
@@ -110,4 +112,58 @@ export async function rollbackAndLog(tx: Compensation, label: string): Promise<b
   if (ok) console.error(`[abm] ${label}: cambio revertido`, { ids });
   else console.error(`[abm] ${label}: CAMBIO INCOMPLETO, falló el rollback`, { ids });
   return ok;
+}
+
+export const WRITE_MESSAGES = {
+  revertido: "No pudimos completar el cambio. No se modificó nada; probá de nuevo.",
+  noVerificado: "No pudimos verificar el cambio. No se modificó nada; probá de nuevo.",
+  incompleto: "El cambio quedó incompleto. Avisá a un administrador.",
+} as const;
+
+export interface CheckConflict {
+  error: string;
+  fieldErrors?: FieldErrors;
+}
+
+/** Verificación después de escribir. `run` devuelve el conflicto (→ 409) o null. */
+export interface PostWriteCheck {
+  /** Nombre para el log, p. ej. "unique:email", "ultimoAdmin", "cascade". */
+  name: string;
+  run: () => Promise<CheckConflict | null>;
+}
+
+/**
+ * Corre las verificaciones posteriores de Usuarios y Maestros, fail-closed:
+ * - conflicto → se deshace la escritura de este request → 409 (o 500 si el rollback falla);
+ * - la lectura de la verificación falla (cualquier error) → se deshace igual → 503 (o 500).
+ * Loguea solo el ID del registro y el nombre de la verificación. null = todo OK.
+ */
+export async function runPostWriteChecks(
+  tx: Compensation,
+  recordId: string,
+  checks: readonly PostWriteCheck[],
+): Promise<Extract<ServiceResult<never>, { ok: false }> | null> {
+  for (const check of checks) {
+    let conflict: CheckConflict | null;
+    let readFailed = false;
+    try {
+      conflict = await check.run();
+    } catch {
+      readFailed = true;
+      conflict = null;
+    }
+    if (!readFailed && !conflict) continue;
+
+    const undone = await tx.rollback();
+    console.error("[abm] Verificación posterior fallida", {
+      id: recordId,
+      check: check.name,
+      motivo: readFailed ? "lectura" : "conflicto",
+      rollback: undone ? "ok" : "fallido",
+    });
+    if (!undone) return { ok: false, status: 500, error: WRITE_MESSAGES.incompleto };
+    if (readFailed) return { ok: false, status: 503, error: WRITE_MESSAGES.noVerificado };
+    return { ok: false, status: 409, error: conflict!.error, ...(conflict!.fieldErrors ? { fieldErrors: conflict!.fieldErrors } : {}) };
+  }
+  return null;
 }

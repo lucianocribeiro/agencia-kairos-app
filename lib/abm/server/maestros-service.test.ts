@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TABLES } from "@/lib/airtable/schema";
 import { createFakeAirtable } from "@/test/fake-airtable";
@@ -8,7 +8,7 @@ vi.mock("@/lib/airtable/client", () => ({ getAirtableClient: () => fake.client }
 
 const { ABM_MESSAGES, createMaestro, deleteMaestro, loadMaestro, updateMaestro } = await import("./maestros-service");
 const { AirtableError } = await import("@/lib/airtable/errors");
-const { PROYECTO_MESSAGES } = await import("./maestros-config");
+const { MAESTRO_CONFIGS, PROYECTO_MESSAGES } = await import("./maestros-config");
 const { REFERENCED_MESSAGE } = await import("@/lib/airtable/integrity");
 const { MAESTRO_SPECS, sociosSumWarning } = await import("@/lib/abm/maestros");
 const MAESTRO_LABEL = MAESTRO_SPECS.proyectos.fields.find((f) => f.key === "usuarios")!.label;
@@ -430,5 +430,30 @@ describe("Otros maestros", () => {
     await createMaestro("proyectos", { nombreCorto: "X", cliente: [cliente], estado: "Activo", usuarios: ["recUUUUUUUUUUUUUU"] });
     const create = fake.calls.find((c) => c.method === "create" && c.tableId === P.id)!;
     expect(JSON.stringify(create.payload)).not.toContain(P.fields.usuarios);
+  });
+});
+
+describe("Payload inválido = bug del servidor (NEW-03)", () => {
+  const config = MAESTRO_CONFIGS["unidades-de-negocio"];
+  const original = config.beforeWrite;
+  afterEach(() => {
+    config.beforeWrite = original;
+  });
+
+  it("campo de solo lectura en el payload → 500 genérico, nada escrito, log solo con tabla e IDs de campo", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    config.beforeWrite = async () => ({ extraFields: { [UN.fields.proyectos]: ["recPPPPPPPPPPPPPP"] } });
+    expect(await createMaestro("unidades-de-negocio", { nombre: "Secreta" })).toEqual({ ok: false, status: 500, error: "Ocurrió un error. Probá de nuevo." });
+    expect(fake.calls.some((c) => c.method !== "list")).toBe(false);
+    const entry = errorLog.mock.calls.find((c) => String(c[0]).includes("Payload inválido"))!;
+    expect(entry[1]).toEqual({ problems: [{ table: UN.id, fields: [UN.fields.proyectos] }] });
+    expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/Secreta|recPPPP/);
+  });
+
+  it("update relacionado con un ID de registro inválido o un campo de otra tabla → 500, nada escrito", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    config.beforeWrite = async () => ({ related: [{ table: "proyectos", id: "no-es-id", fields: { [C.fields.sigla]: "X" }, previous: { [C.fields.sigla]: null } }] });
+    expect(await createMaestro("unidades-de-negocio", { nombre: "X" })).toMatchObject({ status: 500, error: "Ocurrió un error. Probá de nuevo." });
+    expect(fake.calls.some((c) => c.method !== "list")).toBe(false);
   });
 });

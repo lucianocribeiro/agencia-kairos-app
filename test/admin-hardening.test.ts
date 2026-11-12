@@ -35,6 +35,8 @@ const { passwordFingerprint } = await import("@/lib/auth/password-hash");
 const { clearUserCache } = await import("@/lib/auth/user-cache");
 const { API_MESSAGES } = await import("@/lib/auth/api");
 const { createUsuario, setUsuarioActivo, updateUsuario } = await import("@/lib/abm/server/usuarios-service");
+const { createMaestro, updateMaestro } = await import("@/lib/abm/server/maestros-service");
+const { WRITE_MESSAGES } = await import("@/lib/abm/server/compensation");
 
 type Handler = (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>;
 const ROUTES = import.meta.glob<Record<string, Handler>>("/app/api/admin/**/route.ts", { eager: true });
@@ -143,6 +145,127 @@ describe("Usuarios · concurrencia (N-02)", () => {
     expect(results.find((r) => !r.ok)).toMatchObject({ status: 409, fieldErrors: { email: "Ya existe un usuario con ese email." } });
     expect(fake.rows(TABLES.usuarios.id).filter((r) => r.fields[U.email] === "nico@kairos.test")).toHaveLength(1);
   }, 30_000);
+});
+
+// ── NEW-01/02 · Verificación posterior fail-closed ───────────────────────────
+
+/** Falla toda lectura de `tableId` que ocurra después de la primera escritura del request. */
+function failReadsAfterWrite(tableId: string) {
+  fake.failWhen((call) => {
+    if (call.method !== "list" || call.tableId !== tableId) return false;
+    const at = fake.calls.indexOf(call);
+    return fake.calls.slice(0, at).some((c) => (c.method === "create" || c.method === "update") && c.tableId === tableId);
+  }, new AirtableError({ code: "server_error", status: 503, message: "lectura caída VALOR-PRIVADO" }));
+}
+/** Falla también el rollback (el 2.º update de la tabla en adelante, o el delete). */
+function failUndo(tableId: string, kind: "update" | "delete") {
+  fake.failWhen((call, i) => call.tableId === tableId && call.method === kind && (kind === "delete" || i >= 1), new Error("rollback caído"));
+}
+function verificationLog(errorLog: { mock: { calls: unknown[][] } }) {
+  const entry = errorLog.mock.calls.find((c) => String(c[0]).includes("Verificación posterior fallida"));
+  expect(entry).toBeDefined();
+  return entry![1] as Record<string, unknown>;
+}
+
+describe("Verificación posterior fail-closed (NEW-01/02)", () => {
+  const UT = TABLES.usuarios.id;
+  type Scenario = {
+    name: string;
+    table: string;
+    undo: "update" | "delete";
+    check: string;
+    setup: () => { targetId?: string; before?: () => unknown; run: () => Promise<{ ok: boolean }> };
+    /** Estado que tiene que quedar si el rollback salió bien. */
+    restored: (ctx: { targetId?: string; before?: unknown }) => void;
+  };
+
+  const scenarios: Scenario[] = [
+    {
+      name: "desactivar un Admin",
+      table: UT,
+      undo: "update",
+      check: "ultimoAdmin",
+      setup: () => {
+        const bob = seedUser({ nombre: "Bob", email: "bob@kairos.test", rol: "Admin", sigla: "BB" });
+        return { targetId: bob, run: () => setUsuarioActivo({ id: adminId }, bob, false) };
+      },
+      restored: ({ targetId }) => expect(fieldsOf(UT, targetId!)[U.estado]).toBe("Activo"),
+    },
+    {
+      name: "pasar un Admin a Empleado",
+      table: UT,
+      undo: "update",
+      check: "ultimoAdmin",
+      setup: () => {
+        const bob = seedUser({ nombre: "Bob", email: "bob@kairos.test", rol: "Admin", sigla: "BB" });
+        return { targetId: bob, run: () => updateUsuario({ id: adminId }, bob, { nombre: "Bob", email: "bob@kairos.test", sigla: "BB", rol: "Empleado" }) };
+      },
+      restored: ({ targetId }) => expect(fieldsOf(UT, targetId!)[U.rol]).toBe("Admin"),
+    },
+    {
+      name: "alta de usuario",
+      table: UT,
+      undo: "delete",
+      check: "unique:email",
+      setup: () => ({ run: () => createUsuario({ nombre: "Nico", email: "nico@kairos.test", rol: "Empleado", sigla: "NN", password: "Temporal-Segura-1" }) }),
+      restored: () => expect(fake.rows(UT).some((r) => r.fields[U.email] === "nico@kairos.test")).toBe(false),
+    },
+    {
+      name: "edición de usuario",
+      table: UT,
+      undo: "update",
+      check: "unique:email",
+      setup: () => ({ targetId: empleadoId, run: () => updateUsuario({ id: adminId }, empleadoId, { nombre: "Eva", email: "eva2@kairos.test", sigla: "EE", rol: "Empleado" }) }),
+      restored: ({ targetId }) => expect(fieldsOf(UT, targetId!)[U.email]).toBe("eva@kairos.test"),
+    },
+    {
+      name: "alta de Maestro",
+      table: UN.id,
+      undo: "delete",
+      check: "unique:nombre",
+      setup: () => ({ run: () => createMaestro("unidades-de-negocio", { nombre: "Nueva UN" }) }),
+      restored: () => expect(fake.rows(UN.id)).toHaveLength(0),
+    },
+    {
+      name: "edición de Maestro",
+      table: UN.id,
+      undo: "update",
+      check: "unique:nombre",
+      setup: () => {
+        const un = fake.seed(UN.id, { [UN.fields.nombre]: "Vieja" });
+        return { targetId: un, run: () => updateMaestro("unidades-de-negocio", un, { nombre: "Nueva" }) };
+      },
+      restored: ({ targetId }) => expect(fieldsOf(UN.id, targetId!)[UN.fields.nombre]).toBe("Vieja"),
+    },
+  ];
+
+  it.each(scenarios)("$name: la lectura falla → se deshace → 503", async ({ table, check, setup, restored }) => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { targetId, run } = setup();
+    failReadsAfterWrite(table);
+    expect(await run()).toEqual({ ok: false, status: 503, error: WRITE_MESSAGES.noVerificado });
+    expect(WRITE_MESSAGES.noVerificado).toBe("No pudimos verificar el cambio. No se modificó nada; probá de nuevo.");
+    restored({ targetId });
+    const log = verificationLog(errorLog);
+    expect(log).toEqual({ id: expect.stringMatching(/^rec[A-Za-z0-9]{14}$/), check, motivo: "lectura", rollback: "ok" });
+    if (targetId) expect(log.id).toBe(targetId);
+    expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/VALOR-PRIVADO|kairos\.test|Nueva|Vieja|Temporal/);
+  }, 30_000);
+
+  it.each(scenarios)("$name: la lectura falla y el rollback también → 500", async ({ table, undo, check, setup }) => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { run } = setup();
+    failReadsAfterWrite(table);
+    failUndo(table, undo);
+    expect(await run()).toEqual({ ok: false, status: 500, error: WRITE_MESSAGES.incompleto });
+    expect(verificationLog(errorLog)).toEqual({ id: expect.stringMatching(/^rec/), check, motivo: "lectura", rollback: "fallido" });
+    expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/VALOR-PRIVADO|kairos\.test|Nueva|Vieja|Temporal/);
+  }, 30_000);
+
+  it("si la verificación pasa, el cambio queda (sin rollback)", async () => {
+    expect(await createMaestro("unidades-de-negocio", { nombre: "OK" })).toMatchObject({ ok: true });
+    expect(fake.calls.some((c) => c.method === "delete")).toBe(false);
+  });
 });
 
 // ── N-05 · Errores de Airtable ────────────────────────────────────────────────

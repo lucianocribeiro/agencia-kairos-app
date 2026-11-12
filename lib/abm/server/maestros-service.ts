@@ -2,14 +2,13 @@ import "server-only";
 
 import { getAirtableClient, type Fields } from "@/lib/airtable/client";
 import { findDuplicates, findReferences, losesUniqueRace, REFERENCED_MESSAGE } from "@/lib/airtable/integrity";
-import { summarizeError } from "@/lib/airtable/errors";
-import { assertRecordId, assertWritableFields } from "@/lib/airtable/payload";
+import { invalidFieldIds, isRecordId } from "@/lib/airtable/payload";
 import { TABLES } from "@/lib/airtable/schema";
 import type { FieldErrors, FieldSpec, RawValues, Values } from "@/lib/abm/fields";
 import { FIELD_MESSAGES } from "@/lib/abm/fields";
 import { isMaestroSlug, validateMaestro, type MaestroSlug } from "@/lib/abm/maestros";
 import type { AbmData, LinkOption, RecordDTO, ServiceResult } from "@/lib/abm/types";
-import { Compensation, previousOf, rollbackAndLog } from "./compensation";
+import { Compensation, previousOf, rollbackAndLog, runPostWriteChecks, WRITE_MESSAGES, type PostWriteCheck } from "./compensation";
 import { injectFault } from "./fault-injection";
 import { MAESTRO_CONFIGS, type MaestroConfig, type WritePlan } from "./maestros-config";
 
@@ -27,9 +26,7 @@ export const ABM_MESSAGES = {
   validacion: "Revisá los campos marcados.",
   duplicado: (label: string) => `Ya existe otro registro con este ${label.toLowerCase()}.`,
   error: "Ocurrió un error. Probá de nuevo.",
-  revertido: "No pudimos completar el cambio. No se modificó nada; probá de nuevo.",
-  incompleto: "El cambio quedó incompleto. Avisá a un administrador.",
-  payloadInvalido: "No se pudo preparar el cambio: hay valores que no se pueden guardar. Avisá a un administrador.",
+  ...WRITE_MESSAGES,
 } as const;
 
 function configFor(slug: string): MaestroConfig | null {
@@ -143,31 +140,35 @@ const fail = (status: 400 | 404 | 405 | 409 | 500 | 503, error: string, fieldErr
   ...(fieldErrors ? { fieldErrors } : {}),
 });
 
-/** Pre-valida todos los payloads (y sus valores de rollback) antes de escribir nada. */
+/**
+ * Pre-valida todos los payloads (y sus valores de rollback) antes de escribir
+ * nada. Un payload inválido es un bug del servidor: se loguean solo la tabla y
+ * los IDs de campo involucrados. Devuelve true si todo se puede escribir.
+ */
 function payloadsAreWritable(config: MaestroConfig, plan: WritePlan, fields: Fields, previous: Fields | undefined): boolean {
-  try {
-    assertWritableFields(tableId(config), fields);
-    if (previous) assertWritableFields(tableId(config), previous);
-    for (const r of plan.related ?? []) {
-      assertRecordId(r.id);
-      assertWritableFields(TABLES[r.table].id, r.fields);
-      assertWritableFields(TABLES[r.table].id, r.previous);
-    }
-    return true;
-  } catch (err) {
-    console.error("[abm] Payload inválido", summarizeError(err));
-    return false;
-  }
+  const payloads: [string, Fields, string?][] = [[tableId(config), fields], ...(previous ? [[tableId(config), previous] as [string, Fields]] : [])];
+  for (const r of plan.related ?? []) payloads.push([TABLES[r.table].id, r.fields, r.id], [TABLES[r.table].id, r.previous, r.id]);
+  const problems = payloads.flatMap(([table, f, recordId]) => {
+    const bad = invalidFieldIds(table, f);
+    const badRecord = recordId !== undefined && !isRecordId(recordId);
+    return bad.length > 0 || badRecord ? [{ table, fields: bad, ...(badRecord ? { recordId: "inválido" } : {}) }] : [];
+  });
+  if (problems.length === 0) return true;
+  console.error("[abm] Payload inválido (bug del servidor)", { problems });
+  return false;
 }
 
-/** Después de escribir: ¿alguna clave única quedó duplicada por otro request? Devuelve la clave perdida. */
-async function lostUniqueKey(config: MaestroConfig, fields: Fields, id: string, mode: "create" | "edit"): Promise<string | null> {
-  for (const key of config.unique ?? []) {
-    const fieldId = config.fieldIds[key];
-    if (!(fieldId in fields)) continue;
-    if (await losesUniqueRace(tableId(config), fieldId, fields[fieldId], id, mode)) return key;
-  }
-  return null;
+/** Una verificación por clave única escrita (carreras de unicidad). */
+function uniqueChecks(config: MaestroConfig, fields: Fields, id: string, mode: "create" | "edit"): PostWriteCheck[] {
+  return (config.unique ?? [])
+    .filter((key) => config.fieldIds[key] in fields)
+    .map((key) => ({
+      name: `unique:${key}`,
+      run: async () =>
+        (await losesUniqueRace(tableId(config), config.fieldIds[key], fields[config.fieldIds[key]], id, mode))
+          ? { error: ABM_MESSAGES.validacion, fieldErrors: { [key]: ABM_MESSAGES.duplicado(labelOf(config, key)) } }
+          : null,
+    }));
 }
 
 const labelOf = (config: MaestroConfig, key: string) => config.spec.fields.find((f) => f.key === key)?.label ?? key;
@@ -204,7 +205,7 @@ async function write(
 
   const fields = { ...toFields(config, values, target.mode), ...(plan.extraFields ?? {}) };
   const previous = existingFields ? previousOf(fields, existingFields) : undefined;
-  if (!payloadsAreWritable(config, plan, fields, previous)) return fail(409, ABM_MESSAGES.payloadInvalido);
+  if (!payloadsAreWritable(config, plan, fields, previous)) return fail(500, ABM_MESSAGES.error);
 
   // 2. Escritura: relacionados primero (lotes de 10), después el registro.
   const related = plan.related ?? [];
@@ -229,24 +230,11 @@ async function write(
       : fail(500, ABM_MESSAGES.incompleto);
   }
 
-  // 3. Verificación posterior: si otro request ganó la carrera, se deshace todo y 409.
-  let conflict: { error: string; fieldErrors?: FieldErrors } | null = null;
-  try {
-    const lost = await lostUniqueKey(config, fields, savedId, target.mode);
-    if (lost) conflict = { error: ABM_MESSAGES.validacion, fieldErrors: { [lost]: ABM_MESSAGES.duplicado(labelOf(config, lost)) } };
-    else {
-      const message = await plan.verify?.();
-      if (message) conflict = { error: message };
-    }
-  } catch (err) {
-    // No se pudo verificar: lo escrito pasó todos los chequeos previos y queda.
-    console.error("[abm] No se pudo verificar después de escribir", { id: savedId, error: summarizeError(err) });
-  }
-  if (conflict) {
-    return (await rollbackAndLog(tx, `${config.spec.slug} ${savedId} (carrera)`))
-      ? fail(409, conflict.error, conflict.fieldErrors)
-      : fail(500, ABM_MESSAGES.incompleto);
-  }
+  // 3. Verificación posterior (fail-closed): conflicto → 409; si no se puede leer → 503. Siempre deshaciendo.
+  const checks = uniqueChecks(config, fields, savedId, target.mode);
+  if (plan.verify) checks.push({ name: "cascade", run: plan.verify });
+  const failed = await runPostWriteChecks(tx, savedId, checks);
+  if (failed) return failed;
   return { ok: true, data: { id: savedId } };
 }
 

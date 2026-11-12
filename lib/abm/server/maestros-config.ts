@@ -5,6 +5,7 @@ import { normalizeForUnique } from "@/lib/airtable/integrity";
 import { REFERENCE_FIELDS, TABLES, type FieldId, type TableKey } from "@/lib/airtable/schema";
 import type { FieldErrors, Mode, Values } from "@/lib/abm/fields";
 import { MAESTRO_SPECS, type MaestroSlug, type MaestroSpec } from "@/lib/abm/maestros";
+import type { CheckConflict } from "./compensation";
 
 /**
  * Parte de servidor de cada Maestro: IDs de campo, unicidad, de dónde salen las
@@ -55,8 +56,8 @@ export interface WritePlan {
    * principal, en lotes de 10; si algo falla se revierte todo (ver write()).
    */
   related?: RelatedUpdate[];
-  /** Verificación después de escribir (carreras): devuelve un conflicto o null. */
-  verify?: () => Promise<string | null>;
+  /** Verificación después de escribir (carreras): devuelve un conflicto (409) o null. Si lanza → 503 (fail-closed). */
+  verify?: () => Promise<CheckConflict | null>;
 }
 
 export interface MaestroConfig {
@@ -187,7 +188,7 @@ async function clientesBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
     verify: async () => {
       const now = await getAirtableClient().list(T.proyectos.id, { fields: [P.codigo] });
       const found = collisionsOf(now, mine, updates);
-      return found.length > 0 ? PROYECTO_MESSAGES.colisiones(found) : null;
+      return found.length > 0 ? { error: PROYECTO_MESSAGES.colisiones(found) } : null;
     },
   };
 }

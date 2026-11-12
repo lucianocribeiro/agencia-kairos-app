@@ -59,6 +59,21 @@ export function assertWritableFields(tableId: string, fields: Record<string, unk
   assertFieldIds(tableId, keys);
 }
 
+/**
+ * IDs de campo de `fields` que no se pueden escribir en `tableId` (calculados,
+ * de solo lectura, que no son IDs de campo o que son de otra tabla). Sin lanzar.
+ */
+export function invalidFieldIds(tableId: string, fields: Record<string, unknown>): string[] {
+  return Object.keys(fields).filter((key) => {
+    try {
+      assertWritableFields(tableId, { [key]: null });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+}
+
 export function assertRecordId(recordId: string): void {
   if (!RECORD_ID_RE.test(recordId)) {
     throw invalid(`ID de registro inválido: ${JSON.stringify(recordId)}`);

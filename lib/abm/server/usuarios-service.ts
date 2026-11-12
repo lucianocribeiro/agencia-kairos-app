@@ -8,7 +8,7 @@ import type { AbmData, LinkOption, RecordDTO, ServiceResult } from "@/lib/abm/ty
 import { USUARIO_MESSAGES, validateTemporaryPassword, validateUsuario } from "@/lib/abm/usuarios";
 import { createUserWithTemporaryPassword, setTemporaryPassword } from "@/lib/auth/credentials";
 import { invalidateCachedUser } from "@/lib/auth/user-cache";
-import { Compensation, previousOf, rollbackAndLog } from "./compensation";
+import { Compensation, previousOf, runPostWriteChecks, type CheckConflict, type PostWriteCheck } from "./compensation";
 import { ABM_MESSAGES } from "./maestros-service";
 
 /**
@@ -21,8 +21,9 @@ import { ABM_MESSAGES } from "./maestros-service";
  * - toda escritura invalida el caché de sesión de ese usuario en esta instancia
  *
  * No hay transacciones: después de escribir se vuelve a verificar (último Admin
- * activo, email y sigla únicos) y, si otro request ganó la carrera, esta
- * escritura se deshace y responde 409. Ver AGENTS.md, "Concurrencia".
+ * activo, email y sigla únicos) con runPostWriteChecks (el mismo de Maestros,
+ * fail-closed): si otro request ganó la carrera → se deshace y 409; si la
+ * verificación no se puede leer → se deshace y 503. Ver AGENTS.md, "Concurrencia".
  */
 
 const U = TABLES.usuarios.fields;
@@ -45,7 +46,7 @@ export interface Actor {
   id: string;
 }
 
-const fail = (status: 400 | 404 | 409 | 500, error: string, fieldErrors?: FieldErrors): ServiceResult<never> => ({
+const fail = (status: 400 | 404 | 409, error: string, fieldErrors?: FieldErrors): ServiceResult<never> => ({
   ok: false,
   status,
   error,
@@ -147,22 +148,32 @@ function toFields(values: Values): Fields {
   return out;
 }
 
-/** Clave única que esta escritura perdió en una carrera (ver losesUniqueRace), o null. */
-async function lostUniqueKey(id: string, fields: Fields, mode: "create" | "edit"): Promise<"email" | "sigla" | null> {
-  for (const key of ["email", "sigla"] as const) {
-    const fieldId = KEY_TO_FIELD[key];
-    if (fieldId in fields && (await losesUniqueRace(TABLES.usuarios.id, fieldId, fields[fieldId], id, mode))) return key;
-  }
-  return null;
-}
-
 const DUPLICATE_ERRORS = { email: USUARIO_MESSAGES.emailDuplicado, sigla: USUARIO_MESSAGES.siglaDuplicada } as const;
 
-/** Deshace la escritura y responde: 409 con `conflict` si se pudo, 500 si quedó a medias. */
-async function undo(tx: Compensation, id: string, label: string, conflict: { error: string; fieldErrors?: FieldErrors }) {
-  const ok = await rollbackAndLog(tx, `usuarios ${label}`);
+/** Verificaciones de unicidad (email, sigla) para las claves escritas. */
+function uniqueChecks(id: string, fields: Fields, mode: "create" | "edit"): PostWriteCheck[] {
+  return (["email", "sigla"] as const)
+    .filter((key) => KEY_TO_FIELD[key] in fields)
+    .map((key) => ({
+      name: `unique:${key}`,
+      run: async () =>
+        (await losesUniqueRace(TABLES.usuarios.id, KEY_TO_FIELD[key], fields[KEY_TO_FIELD[key]], id, mode))
+          ? { error: ABM_MESSAGES.validacion, fieldErrors: { [key]: DUPLICATE_ERRORS[key] } }
+          : null,
+    }));
+}
+
+/** Verificación de «al menos un Admin activo», con el error que corresponde a cada pantalla. */
+const lastAdminCheck = (conflict: CheckConflict): PostWriteCheck => ({
+  name: "ultimoAdmin",
+  run: async () => ((await activeAdminIds()).length === 0 ? conflict : null),
+});
+
+/** Corre las verificaciones (fail-closed, compartido con Maestros) e invalida el caché del usuario. */
+async function verify(tx: Compensation, id: string, checks: PostWriteCheck[]): Promise<ServiceResult<{ id: string }>> {
+  const failed = await runPostWriteChecks(tx, id, checks);
   invalidateCachedUser(id);
-  return ok ? fail(409, conflict.error, conflict.fieldErrors) : fail(500, ABM_MESSAGES.incompleto);
+  return failed ?? { ok: true, data: { id } };
 }
 
 /** ¿Este write podía dejar la base sin Admins activos? (era Admin activo y deja de serlo) */
@@ -182,9 +193,7 @@ export async function createUsuario(raw: RawValues): Promise<ServiceResult<{ id:
   const tx = new Compensation();
   tx.created(TABLES.usuarios.id, id);
 
-  const lost = await lostUniqueKey(id, fields, "create");
-  if (lost) return undo(tx, id, `${id} (alta duplicada)`, { error: ABM_MESSAGES.validacion, fieldErrors: { [lost]: DUPLICATE_ERRORS[lost] } });
-  return { ok: true, data: { id } };
+  return verify(tx, id, uniqueChecks(id, fields, "create"));
 }
 
 export async function updateUsuario(actor: Actor, id: string, raw: RawValues): Promise<ServiceResult<{ id: string }>> {
@@ -211,12 +220,10 @@ export async function updateUsuario(actor: Actor, id: string, raw: RawValues): P
   await tx.update(TABLES.usuarios.id, [{ id, fields, previous: previousOf(fields, existing) }]);
   invalidateCachedUser(id);
 
-  if (removesActiveAdmin(existing, { rol: values.rol }) && (await activeAdminIds()).length === 0) {
-    return undo(tx, id, `${id} (último Admin)`, { error: USUARIO_MESSAGES.ultimoAdmin, fieldErrors: { rol: USUARIO_MESSAGES.ultimoAdmin } });
-  }
-  const lost = await lostUniqueKey(id, fields, "edit");
-  if (lost) return undo(tx, id, `${id} (duplicado)`, { error: ABM_MESSAGES.validacion, fieldErrors: { [lost]: DUPLICATE_ERRORS[lost] } });
-  return { ok: true, data: { id } };
+  const checks = removesActiveAdmin(existing, { rol: values.rol })
+    ? [lastAdminCheck({ error: USUARIO_MESSAGES.ultimoAdmin, fieldErrors: { rol: USUARIO_MESSAGES.ultimoAdmin } })]
+    : [];
+  return verify(tx, id, [...checks, ...uniqueChecks(id, fields, "edit")]);
 }
 
 export async function setUsuarioActivo(actor: Actor, id: string, activo: unknown): Promise<ServiceResult<{ id: string }>> {
@@ -235,10 +242,7 @@ export async function setUsuarioActivo(actor: Actor, id: string, activo: unknown
   invalidateCachedUser(id);
 
   // Dos desactivaciones a la vez pueden pasar el chequeo previo: se verifica después.
-  if (removesActiveAdmin(existing, { estado: fields[U.estado] }) && (await activeAdminIds()).length === 0) {
-    return undo(tx, id, `${id} (último Admin)`, { error: USUARIO_MESSAGES.ultimoAdmin });
-  }
-  return { ok: true, data: { id } };
+  return verify(tx, id, removesActiveAdmin(existing, { estado: fields[U.estado] }) ? [lastAdminCheck({ error: USUARIO_MESSAGES.ultimoAdmin })] : []);
 }
 
 export async function resetUsuarioPassword(actor: Actor, id: string, password: unknown): Promise<ServiceResult<{ id: string }>> {

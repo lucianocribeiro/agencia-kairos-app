@@ -45,11 +45,19 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Estados HTTP de los ABM: reglas de campo → 400 (`WritePlan.invalid`); duplicados y choques con otros registros → 409 (`WritePlan.conflict`); tabla sin borrado → 405. `apiRoute` mapea `AirtableError`: not_found → 404, 429/5xx/red → 503, el resto → 500 (logs solo con código/status/tipo).
 - Cascada de siglas de Clientes: todo se pre-valida antes de escribir; se escriben primero los proyectos (lotes de 10) y después el cliente, con compensación (`lib/abm/server/compensation.ts`). Si una escritura falla se revierte todo a los valores originales: rollback OK → 503 «No se modificó nada»; rollback fallido → 500 «quedó incompleto» y se loguean solo los IDs.
 - Inyección de fallas para el smoke test: `lib/abm/server/fault-injection.ts`, solo con `NODE_ENV=development` y `KAIROS_FAULT_INJECTION=<punto>`. En `next build` queda como código muerto; `check:bundle` falla si el nombre de la variable aparece en `.next/server`.
-- `toRawValues` solo acepta claves con forma de clave del spec (camelCase) en un objeto sin prototipo; los servicios ignoran toda clave que no esté en el spec.
+- `toRawValues(body, allowedKeys)` recibe explícitamente las claves del spec (`maestroInputKeys(slug)`, `USUARIO_INPUT_KEYS.create/edit`) y descarta todo lo demás; devuelve un objeto sin prototipo.
+- Un payload de escritura que no pasa la pre-validación (campo calculado, de solo lectura, de otra tabla o ID de registro inválido) es un bug del servidor: 500 genérico, sin escribir nada, y en el log solo la tabla y los IDs de campo.
 
 ## Concurrencia (riesgo residual)
 
-Airtable no tiene transacciones ni restricciones de unicidad. Las reglas que dependen de otros registros se chequean antes de escribir y se **vuelven a verificar después**, compensando si otro request ganó la carrera:
+Airtable no tiene transacciones ni restricciones de unicidad. Las reglas que dependen de otros registros se chequean antes de escribir y se **vuelven a verificar después**, compensando si otro request ganó la carrera. Usuarios y Maestros usan la misma implementación (`runPostWriteChecks` en `lib/abm/server/compensation.ts`), y es **fail-closed**:
+
+- conflicto → se deshace la escritura de este request → 409;
+- la lectura de la verificación falla (cualquier error) → se deshace igual → 503 «No pudimos verificar el cambio. No se modificó nada; probá de nuevo.»;
+- si el deshacer falla → 500 «El cambio quedó incompleto. Avisá a un administrador.»;
+- el log lleva solo el ID del registro y el nombre de la verificación (`ultimoAdmin`, `unique:<clave>`, `cascade`), nunca valores.
+
+Verificaciones:
 
 - **Último Admin activo**: después de desactivar o pasar a Empleado a un Admin se releen los Admins activos; si quedan cero, esta escritura se revierte y responde 409.
 - **Unicidad** (email y sigla de Usuarios, y cada campo único de los Maestros, incluido el Código de Proyectos): después de crear o editar se vuelve a buscar el valor. En un alta pierde el registro más nuevo (`createdTime` más reciente; empate: ID más alto) y se borra; en una edición, quien edita vuelve a su valor anterior. Después, 409 con el mensaje de duplicado.

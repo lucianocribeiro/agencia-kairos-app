@@ -96,7 +96,7 @@ Antes de tocar nada, rechaza `BOOTSTRAP_ADMIN_PASSWORD` si tiene menos de 10 car
 - **Maestros** (`/maestros/*`): un ABM único configurado por tabla (`lib/abm/maestros.ts` + `lib/abm/server/maestros-config.ts`). Lista con búsqueda, orden por el campo principal y filtro por Estado donde existe; alta, edición y borrado solo si la tabla lo permite y el registro no tiene registros asociados (si los tiene: 409). Clientes y Proyectos no se borran: se usa Estado.
 - **Reglas destacadas**: el Código de un proyecto es `Sigla del cliente - Nombre corto` y lo arma el servidor; cambiar la sigla de un cliente recalcula los Códigos de sus proyectos (si alguno choca, se rechaza el cambio entero; si una escritura falla a mitad de camino, se revierte todo). CUIT validado con dígito verificador y guardado solo con dígitos. Números en formato es-AR (`1.234,56`; también `1234,56` y `1234.56`).
 - **API**: `app/api/admin/usuarios/**` y `app/api/admin/maestros/[tabla]/**`, todo con `adminRoute`. Errores: 400 validación, 409 duplicado/choque, 404 no encontrado, 503 Airtable no disponible (o cascada revertida).
-- **Concurrencia**: sin transacciones; las reglas de unicidad y «al menos un Admin activo» se verifican también después de escribir y se compensan. Detalle y riesgo residual en `AGENTS.md`.
+- **Concurrencia**: sin transacciones; las reglas de unicidad y «al menos un Admin activo» se verifican también después de escribir y se compensan; si esa verificación no se puede leer, el cambio se deshace (503). Detalle y riesgo residual en `AGENTS.md`.
 
 ## Estructura
 

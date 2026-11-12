@@ -27,7 +27,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Las respuestas a un Empleado pasan por el recorte por rol de `lib/airtable/access.ts` (`readableFields` / `redactFields`).
 - Cada página protegida envuelve su contenido en `<Guarded>` / `<Guarded admin>` (`components/auth/guarded.tsx`): el guard del layout no alcanza porque los layouts no se re-renderizan al navegar.
 - `Usuarios.passwordHash` solo se lee en `lib/auth/credentials.ts` (test `test/password-hash-reader.test.ts`).
-- Todo hash de contraseña sale de `hashNewPassword()` (`lib/auth/password.ts`): 10+ caracteres y máx. 72 bytes UTF-8 (bcrypt). Nunca truncar.
+- Todo hash de contraseña sale de `hashNewPassword()` (`lib/auth/password-hash.ts`, solo servidor); las reglas (10+ caracteres, máx. 72 bytes UTF-8, nunca truncar) están en `lib/auth/password-policy.ts`, que puede usar el cliente.
+- Frontera cliente/servidor: desde un archivo `"use client"` no se puede llegar (ni transitivamente) a `lib/airtable/**`, `lib/env.ts` ni a `lib/auth/**` salvo `password-policy.ts` (test `test/client-boundary.test.ts`).
 - Cliente de Airtable: los `create` no se reintentan nunca; `update`/`delete` sí ante 429/5xx.
 - Dependencias con versión exacta (`.npmrc` con `save-exact=true`).
 - Toda escritura a un usuario llama a `invalidateCachedUser(id)` (`lib/auth/user-cache.ts`).

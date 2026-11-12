@@ -13,7 +13,7 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-const { Logo } = await import("./logo");
+const { Logo, LOGO_SIZES } = await import("./logo");
 const { SidebarNav } = await import("./sidebar-nav");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -31,6 +31,11 @@ afterEach(() => {
 });
 
 const img = () => container.querySelector("img");
+/** next/image sirve el PNG por el optimizador: /_next/image?url=%2FLogo.png&w=…&q=… */
+const servesLogo = (el: Element | null) => {
+  const url = new URL(el?.getAttribute("src") ?? "", "http://x");
+  return url.pathname === "/_next/image" && url.searchParams.get("url") === "/Logo.png";
+};
 const fireError = () =>
   act(() => {
     img()!.dispatchEvent(new Event("error"));
@@ -43,32 +48,44 @@ describe("public/Logo.png", () => {
   });
 });
 
-describe("<Logo>", () => {
-  it("muestra /Logo.png (expandido y compacto)", () => {
+describe("<Logo> (next/image)", () => {
+  it("expandido: /Logo.png optimizado a 84×40, srcset 1x/2x", () => {
     act(() => root.render(<Logo />));
-    expect(img()?.getAttribute("src")).toBe("/Logo.png");
+    expect(servesLogo(img())).toBe(true);
     expect(img()?.alt).toBe("Kairos");
+    expect(img()?.getAttribute("width")).toBe(String(LOGO_SIZES.expanded.width));
+    expect(img()?.getAttribute("height")).toBe(String(LOGO_SIZES.expanded.height));
+    // Tamaño fijo: srcset 1x/2x (96 y 256 px de ancho), nunca el PNG de 1700 px.
+    expect(img()?.getAttribute("srcset")).toBe("/_next/image?url=%2FLogo.png&w=96&q=75 1x, /_next/image?url=%2FLogo.png&w=256&q=75 2x");
     expect(container.firstElementChild!.className).toContain("w-32");
+  });
 
+  it("compacto: 40×19 en una caja de 40×40", () => {
     act(() => root.render(<Logo compact />));
-    expect(img()?.getAttribute("src")).toBe("/Logo.png");
+    expect(servesLogo(img())).toBe(true);
+    expect(img()?.getAttribute("width")).toBe("40");
+    expect(img()?.getAttribute("height")).toBe("19");
+    expect(img()?.getAttribute("srcset")).toBe("/_next/image?url=%2FLogo.png&w=48&q=75 1x, /_next/image?url=%2FLogo.png&w=96&q=75 2x");
     expect(container.firstElementChild!.className).toContain("w-10");
   });
 
-  it("si el archivo falta (error al cargar) muestra el texto «Kairos» en el mismo espacio", () => {
+  it("eager (shell): carga inmediata con prioridad alta; por defecto lazy", () => {
+    act(() => root.render(<Logo eager />));
+    expect(img()?.getAttribute("loading")).toBe("eager");
+    expect(img()?.getAttribute("fetchpriority")).toBe("high");
     act(() => root.render(<Logo />));
-    fireError();
-    expect(img()).toBeNull();
-    expect(container.textContent).toBe("Kairos");
-    expect(container.firstElementChild!.className).toContain("w-32");
+    expect(img()?.getAttribute("loading")).toBe("lazy");
   });
 
-  it("compacto: también cae al texto", () => {
-    act(() => root.render(<Logo compact />));
+  it.each([
+    ["expandido", false, "w-32"],
+    ["compacto", true, "w-10"],
+  ])("%s: si el archivo falta (error al cargar) muestra «Kairos» en el mismo espacio", (_l, compact, box) => {
+    act(() => root.render(<Logo compact={compact} />));
     fireError();
     expect(img()).toBeNull();
     expect(container.textContent).toBe("Kairos");
-    expect(container.firstElementChild!.className).toContain("w-10");
+    expect(container.firstElementChild!.className).toContain(box);
   });
 });
 
@@ -79,7 +96,9 @@ describe("<SidebarNav> renderiza el logo", () => {
   ])("%s", (_label, collapsed) => {
     act(() => root.render(<SidebarNav role="Admin" pathname="/dashboard" collapsed={collapsed} headerAction={null} />));
     const logo = container.querySelector('a[aria-label="Ir al inicio"] img');
-    expect(logo?.getAttribute("src")).toBe("/Logo.png");
+    expect(servesLogo(logo)).toBe(true);
+    expect(logo?.getAttribute("width")).toBe(String(collapsed ? LOGO_SIZES.compact.width : LOGO_SIZES.expanded.width));
+    expect(logo?.getAttribute("loading")).toBe("eager");
     expect(logo?.parentElement?.className).toContain(collapsed ? "w-10" : "w-32");
   });
 });

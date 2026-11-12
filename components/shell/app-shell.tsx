@@ -143,7 +143,7 @@ export function AppShell({ user, children }: { user: ShellUser; children: ReactN
           >
             <Menu aria-hidden="true" className="size-5" />
           </button>
-          <Logo className="h-8 md:hidden" />
+          <Logo className="h-8 md:hidden" eager />
 
           <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
             <span className="hidden max-w-56 truncate text-sm font-medium text-text sm:inline">{user.nombre}</span>

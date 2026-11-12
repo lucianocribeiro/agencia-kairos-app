@@ -1,13 +1,14 @@
 import "server-only";
 
 import { getAirtableClient, type Fields } from "@/lib/airtable/client";
-import { isUnique } from "@/lib/airtable/integrity";
+import { isUnique, losesUniqueRace } from "@/lib/airtable/integrity";
 import { TABLES } from "@/lib/airtable/schema";
 import { FIELD_MESSAGES, type FieldErrors, type RawValues, type Values } from "@/lib/abm/fields";
 import type { AbmData, LinkOption, RecordDTO, ServiceResult } from "@/lib/abm/types";
 import { USUARIO_MESSAGES, validateTemporaryPassword, validateUsuario } from "@/lib/abm/usuarios";
 import { createUserWithTemporaryPassword, setTemporaryPassword } from "@/lib/auth/credentials";
 import { invalidateCachedUser } from "@/lib/auth/user-cache";
+import { Compensation, previousOf, rollbackAndLog } from "./compensation";
 import { ABM_MESSAGES } from "./maestros-service";
 
 /**
@@ -18,6 +19,10 @@ import { ABM_MESSAGES } from "./maestros-service";
  * - un Admin no puede desactivarse ni cambiarse el rol a sí mismo
  * - no se puede desactivar ni pasar a Empleado al último Admin activo (409)
  * - toda escritura invalida el caché de sesión de ese usuario en esta instancia
+ *
+ * No hay transacciones: después de escribir se vuelve a verificar (último Admin
+ * activo, email y sigla únicos) y, si otro request ganó la carrera, esta
+ * escritura se deshace y responde 409. Ver AGENTS.md, "Concurrencia".
  */
 
 const U = TABLES.usuarios.fields;
@@ -40,7 +45,7 @@ export interface Actor {
   id: string;
 }
 
-const fail = (status: 400 | 404 | 409, error: string, fieldErrors?: FieldErrors): ServiceResult<never> => ({
+const fail = (status: 400 | 404 | 409 | 500, error: string, fieldErrors?: FieldErrors): ServiceResult<never> => ({
   ok: false,
   status,
   error,
@@ -142,13 +147,43 @@ function toFields(values: Values): Fields {
   return out;
 }
 
+/** Clave única que esta escritura perdió en una carrera (ver losesUniqueRace), o null. */
+async function lostUniqueKey(id: string, fields: Fields, mode: "create" | "edit"): Promise<"email" | "sigla" | null> {
+  for (const key of ["email", "sigla"] as const) {
+    const fieldId = KEY_TO_FIELD[key];
+    if (fieldId in fields && (await losesUniqueRace(TABLES.usuarios.id, fieldId, fields[fieldId], id, mode))) return key;
+  }
+  return null;
+}
+
+const DUPLICATE_ERRORS = { email: USUARIO_MESSAGES.emailDuplicado, sigla: USUARIO_MESSAGES.siglaDuplicada } as const;
+
+/** Deshace la escritura y responde: 409 con `conflict` si se pudo, 500 si quedó a medias. */
+async function undo(tx: Compensation, id: string, label: string, conflict: { error: string; fieldErrors?: FieldErrors }) {
+  const ok = await rollbackAndLog(tx, `usuarios ${label}`);
+  invalidateCachedUser(id);
+  return ok ? fail(409, conflict.error, conflict.fieldErrors) : fail(500, ABM_MESSAGES.incompleto);
+}
+
+/** ¿Este write podía dejar la base sin Admins activos? (era Admin activo y deja de serlo) */
+const removesActiveAdmin = (existing: Fields, after: { rol?: unknown; estado?: unknown }) =>
+  existing[U.rol] === "Admin" &&
+  existing[U.estado] === "Activo" &&
+  ((after.rol ?? existing[U.rol]) !== "Admin" || (after.estado ?? existing[U.estado]) !== "Activo");
+
 export async function createUsuario(raw: RawValues): Promise<ServiceResult<{ id: string }>> {
   const { values, errors, password } = validateUsuario(raw, "create");
   if (Object.keys(errors).length > 0) return fail(400, ABM_MESSAGES.validacion, errors);
   const problem = await checkLinksAndUnique(values);
   if (problem) return fail(problem.status, ABM_MESSAGES.validacion, problem.errors);
 
-  const id = await createUserWithTemporaryPassword({ ...toFields(values), [U.estado]: "Activo" }, password!);
+  const fields = { ...toFields(values), [U.estado]: "Activo" };
+  const id = await createUserWithTemporaryPassword(fields, password!);
+  const tx = new Compensation();
+  tx.created(TABLES.usuarios.id, id);
+
+  const lost = await lostUniqueKey(id, fields, "create");
+  if (lost) return undo(tx, id, `${id} (alta duplicada)`, { error: ABM_MESSAGES.validacion, fieldErrors: { [lost]: DUPLICATE_ERRORS[lost] } });
   return { ok: true, data: { id } };
 }
 
@@ -171,8 +206,16 @@ export async function updateUsuario(actor: Actor, id: string, raw: RawValues): P
   if (problem) return fail(problem.status, ABM_MESSAGES.validacion, problem.errors);
 
   // Si pasa a Admin, los proyectos asignados no se tocan (quedan guardados, ocultos).
-  await getAirtableClient().update(TABLES.usuarios.id, [{ id, fields: toFields(values) }], { returnFields: [] });
+  const fields = toFields(values);
+  const tx = new Compensation();
+  await tx.update(TABLES.usuarios.id, [{ id, fields, previous: previousOf(fields, existing) }]);
   invalidateCachedUser(id);
+
+  if (removesActiveAdmin(existing, { rol: values.rol }) && (await activeAdminIds()).length === 0) {
+    return undo(tx, id, `${id} (último Admin)`, { error: USUARIO_MESSAGES.ultimoAdmin, fieldErrors: { rol: USUARIO_MESSAGES.ultimoAdmin } });
+  }
+  const lost = await lostUniqueKey(id, fields, "edit");
+  if (lost) return undo(tx, id, `${id} (duplicado)`, { error: ABM_MESSAGES.validacion, fieldErrors: { [lost]: DUPLICATE_ERRORS[lost] } });
   return { ok: true, data: { id } };
 }
 
@@ -186,10 +229,15 @@ export async function setUsuarioActivo(actor: Actor, id: string, activo: unknown
     if (id === actor.id) return fail(409, USUARIO_MESSAGES.propioDesactivar);
     if (await wouldRemoveLastAdmin(id, existing)) return fail(409, USUARIO_MESSAGES.ultimoAdmin);
   }
-  await getAirtableClient().update(TABLES.usuarios.id, [{ id, fields: { [U.estado]: activo ? "Activo" : "Inactivo" } }], {
-    returnFields: [],
-  });
+  const fields = { [U.estado]: activo ? "Activo" : "Inactivo" };
+  const tx = new Compensation();
+  await tx.update(TABLES.usuarios.id, [{ id, fields, previous: previousOf(fields, existing) }]);
   invalidateCachedUser(id);
+
+  // Dos desactivaciones a la vez pueden pasar el chequeo previo: se verifica después.
+  if (removesActiveAdmin(existing, { estado: fields[U.estado] }) && (await activeAdminIds()).length === 0) {
+    return undo(tx, id, `${id} (último Admin)`, { error: USUARIO_MESSAGES.ultimoAdmin });
+  }
   return { ok: true, data: { id } };
 }
 

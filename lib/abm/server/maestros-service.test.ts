@@ -6,9 +6,12 @@ import { createFakeAirtable } from "@/test/fake-airtable";
 const fake = createFakeAirtable();
 vi.mock("@/lib/airtable/client", () => ({ getAirtableClient: () => fake.client }));
 
-const { createMaestro, deleteMaestro, loadMaestro, updateMaestro } = await import("./maestros-service");
+const { ABM_MESSAGES, createMaestro, deleteMaestro, loadMaestro, updateMaestro } = await import("./maestros-service");
+const { AirtableError } = await import("@/lib/airtable/errors");
+const { PROYECTO_MESSAGES } = await import("./maestros-config");
 const { REFERENCED_MESSAGE } = await import("@/lib/airtable/integrity");
-const { sociosSumWarning } = await import("@/lib/abm/maestros");
+const { MAESTRO_SPECS, sociosSumWarning } = await import("@/lib/abm/maestros");
+const MAESTRO_LABEL = MAESTRO_SPECS.proyectos.fields.find((f) => f.key === "usuarios")!.label;
 
 const C = TABLES.clientes;
 const P = TABLES.proyectos;
@@ -106,9 +109,104 @@ describe("Clientes · cascada de Código al cambiar la sigla", () => {
     expect(fake.calls.filter((c) => c.method === "update" && c.tableId === P.id)).toHaveLength(0);
   });
 
-  it("no se puede quitar la sigla a un cliente con proyectos", async () => {
+  it("no se puede quitar la sigla a un cliente con proyectos (regla de campo → 400)", async () => {
     const { cliente } = setup();
-    expect(await updateMaestro("clientes", cliente, { nombre: "QA", estado: "Lead", sigla: "" })).toMatchObject({ status: 409 });
+    expect(await updateMaestro("clientes", cliente, { nombre: "QA", estado: "Lead", sigla: "" })).toMatchObject({
+      status: 400,
+      fieldErrors: { sigla: PROYECTO_MESSAGES.quitarSigla },
+    });
+    expect(fake.calls.some((c) => c.method === "update")).toBe(false);
+  });
+
+  it("un proyecto sin nombre corto rechaza la cascada (409) sin escribir nada", async () => {
+    const { cliente, p1 } = setup();
+    delete fieldsOf(P.id, p1)[P.fields.nombreCorto];
+    expect(await updateMaestro("clientes", cliente, { nombre: "QA", estado: "Cliente", sigla: "QY" })).toMatchObject({
+      status: 409,
+      error: expect.stringContaining("QZ - Prueba"),
+    });
+    expect(fake.calls.some((c) => c.method === "update")).toBe(false);
+  });
+});
+
+describe("Clientes · cascada atómica (N-01)", () => {
+  const N = 25; // 3 lotes de proyectos: 10 + 10 + 5
+  const serverError = () => new AirtableError({ code: "server_error", status: 503, message: "falla simulada" });
+
+  function setup() {
+    const ids = Array.from({ length: N }, (_, i) => fake.seed(P.id, { [P.fields.codigo]: `QZ - P${i}`, [P.fields.nombreCorto]: `P${i}` }));
+    const cliente = seedCliente("QA", "QZ", "Cliente", { [C.fields.proyectos]: ids, [C.fields.contacto]: "Original" });
+    const intocable = fake.seed(P.id, { [P.fields.codigo]: "OT - Otro", [P.fields.nombreCorto]: "Otro" });
+    return { ids, cliente, intocable };
+  }
+  const codigos = (ids: string[]) => ids.map((id) => fieldsOf(P.id, id)[P.fields.codigo]);
+  const expectNothingChanged = (ids: string[], cliente: string) => {
+    expect(codigos(ids)).toEqual(ids.map((_, i) => `QZ - P${i}`));
+    expect(fieldsOf(C.id, cliente)).toMatchObject({ [C.fields.sigla]: "QZ", [C.fields.contacto]: "Original" });
+  };
+  const change = (cliente: string) => updateMaestro("clientes", cliente, { nombre: "QA", estado: "Cliente", sigla: "QY", contacto: "Nuevo" });
+
+  it("éxito: proyectos primero en lotes de ≤10, después el cliente", async () => {
+    const { ids, cliente, intocable } = setup();
+    expect(await change(cliente)).toMatchObject({ ok: true });
+    expect(codigos(ids)).toEqual(ids.map((_, i) => `QY - P${i}`));
+    expect(fieldsOf(C.id, cliente)[C.fields.sigla]).toBe("QY");
+    expect(fieldsOf(P.id, intocable)[P.fields.codigo]).toBe("OT - Otro");
+    const updates = fake.calls.filter((c) => c.method === "update");
+    expect(updates.map((c) => c.tableId)).toEqual([P.id, P.id, P.id, C.id]);
+    expect(updates.map((c) => (c.payload as unknown[]).length)).toEqual([10, 10, 5, 1]);
+  });
+
+  it.each([
+    ["el primer lote de proyectos", (call: { tableId: string }, i: number) => call.tableId === P.id && i === 0],
+    ["un lote del medio", (call: { tableId: string }, i: number) => call.tableId === P.id && i === 1],
+    ["la escritura del cliente", (call: { tableId: string }) => call.tableId === C.id],
+  ])("falla en %s → rollback OK → 503 y no queda nada a medias", async (_label, when) => {
+    const { ids, cliente } = setup();
+    let failed = false;
+    fake.failWhen((call, i) => {
+      if (failed || call.method !== "update" || !when(call, i)) return false;
+      return (failed = true);
+    }, serverError());
+    expect(await change(cliente)).toEqual({ ok: false, status: 503, error: ABM_MESSAGES.revertido });
+    expect(ABM_MESSAGES.revertido).toBe("No pudimos completar el cambio. No se modificó nada; probá de nuevo.");
+    expectNothingChanged(ids, cliente);
+  });
+
+  it("si el rollback también falla → 500 «quedó incompleto» y se loguean solo los IDs", async () => {
+    const { ids, cliente } = setup();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Falla la escritura del cliente y todos los updates de rollback de proyectos (los posteriores a los 3 lotes).
+    fake.failWhen((call) => call.method === "update" && call.tableId === C.id, serverError());
+    fake.failWhen((call, i) => call.method === "update" && call.tableId === P.id && i >= 3, serverError());
+    expect(await change(cliente)).toEqual({ ok: false, status: 500, error: ABM_MESSAGES.incompleto });
+    expect(ABM_MESSAGES.incompleto).toBe("El cambio quedó incompleto. Avisá a un administrador.");
+    const logged = errorLog.mock.calls.find((c) => String(c[0]).includes("INCOMPLETO"));
+    expect(logged).toBeDefined();
+    expect(logged![1]).toEqual({ ids: expect.arrayContaining([...ids, cliente]) });
+    expect(Object.keys(logged![1] as object)).toEqual(["ids"]);
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain("QY - P");
+  });
+
+  it("colisión con otro proyecto → 409 antes de escribir nada", async () => {
+    const { ids, cliente } = setup();
+    fake.seed(P.id, { [P.fields.codigo]: "qy - p7", [P.fields.nombreCorto]: "p7" });
+    expect(await change(cliente)).toMatchObject({ status: 409, error: expect.stringContaining("QY - P7") });
+    expect(fake.calls.some((c) => c.method === "update")).toBe(false);
+    expectNothingChanged(ids, cliente);
+  });
+
+  it("carrera: otro proyecto toma un Código nuevo mientras se escribe → se revierte todo (409)", async () => {
+    const { ids, cliente } = setup();
+    // Justo antes de escribir el cliente aparece un proyecto con «QY - P3».
+    fake.failWhen((call) => {
+      if (call.method === "update" && call.tableId === C.id && !fake.rows(P.id).some((r) => r.fields[P.fields.codigo] === "QY - P3" && !ids.includes(r.id))) {
+        fake.seed(P.id, { [P.fields.codigo]: "QY - P3", [P.fields.nombreCorto]: "P3" });
+      }
+      return false;
+    });
+    expect(await change(cliente)).toMatchObject({ status: 409, error: expect.stringContaining("QY - P3") });
+    expectNothingChanged(ids, cliente);
   });
 });
 
@@ -124,6 +222,14 @@ describe("Proyectos · Código y cliente", () => {
     expect(res.ok).toBe(true);
     expect(fieldsOf(P.id, res.data.id)[P.fields.codigo]).toBe("QZ - Prueba");
     expect(fieldsOf(P.id, res.data.id)[P.fields.cliente]).toEqual([cliente]);
+  });
+
+  it("cliente sin sigla → 400 (regla de campo); Código duplicado → 409 (choque)", async () => {
+    const sinSigla = seedCliente("Viejo", null, "Cliente");
+    expect(await createMaestro("proyectos", { nombreCorto: "X", cliente: [sinSigla], estado: "Activo" })).toMatchObject({
+      status: 400,
+      fieldErrors: { cliente: PROYECTO_MESSAGES.clienteSinSigla },
+    });
   });
 
   it("solo clientes con Estado Cliente", async () => {
@@ -160,6 +266,44 @@ describe("Proyectos · Código y cliente", () => {
     const ex = seedCliente("Viejo", "VJ", "Ex cliente");
     const id = fake.seed(P.id, { [P.fields.codigo]: "VJ - X", [P.fields.nombreCorto]: "X", [P.fields.cliente]: [ex], [P.fields.estado]: "Activo" });
     expect(await updateMaestro("proyectos", id, { nombreCorto: "X", cliente: [ex], estado: "Cerrado" })).toMatchObject({ ok: true });
+  });
+});
+
+describe("Proyectos · Empleados asignados (N-04)", () => {
+  it("solo muestra usuarios con Rol Empleado; un Admin con asignaciones viejas no aparece", async () => {
+    const U = TABLES.usuarios.fields;
+    const empleado = fake.seed(TABLES.usuarios.id, { [U.nombre]: "Eva", [U.rol]: "Empleado" });
+    const admin = fake.seed(TABLES.usuarios.id, { [U.nombre]: "Ana", [U.rol]: "Admin" });
+    const cliente = seedCliente("QA", "QZ");
+    const id = fake.seed(P.id, { [P.fields.codigo]: "QZ - X", [P.fields.nombreCorto]: "X", [P.fields.cliente]: [cliente], [P.fields.usuarios]: [empleado, admin] });
+    const data = await loadMaestro("proyectos");
+    expect(MAESTRO_LABEL).toBe("Empleados asignados");
+    expect(data.records.find((r) => r.id === id)!.values.usuarios).toEqual([empleado]);
+    // El dato en Airtable no se toca.
+    expect(fieldsOf(P.id, id)[P.fields.usuarios]).toEqual([empleado, admin]);
+  });
+});
+
+describe("Unicidad con concurrencia (N-02)", () => {
+  it("dos altas simultáneas con el mismo nombre: queda exactamente una", async () => {
+    fake.barrier("create", UN.id, 2); // las dos pasan el chequeo previo antes de que exista ninguna
+    const results = await Promise.all([createMaestro("unidades-de-negocio", { nombre: "Dup" }), createMaestro("unidades-de-negocio", { nombre: " dup " })]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok)).toEqual([expect.objectContaining({ status: 409, fieldErrors: { nombre: expect.stringMatching(/Ya existe/) } })]);
+    expect(fake.rows(UN.id)).toHaveLength(1);
+  });
+
+  it("edición que choca con un alta simultánea: la edición vuelve a su valor anterior", async () => {
+    const id = fake.seed(UN.id, { [UN.fields.nombre]: "Viejo" });
+    // Simula que el alta entra entre el chequeo previo y la verificación de la edición.
+    fake.failWhen((call) => {
+      if (call.method === "update" && call.tableId === UN.id && !fake.rows(UN.id).some((r) => r.fields[UN.fields.nombre] === "Nuevo")) {
+        fake.seed(UN.id, { [UN.fields.nombre]: "Nuevo" });
+      }
+      return false;
+    });
+    expect(await updateMaestro("unidades-de-negocio", id, { nombre: "Nuevo" })).toMatchObject({ status: 409 });
+    expect(fieldsOf(UN.id, id)[UN.fields.nombre]).toBe("Viejo");
   });
 });
 

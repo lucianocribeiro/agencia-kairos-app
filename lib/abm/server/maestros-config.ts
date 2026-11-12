@@ -15,11 +15,13 @@ import { MAESTRO_SPECS, type MaestroSlug, type MaestroSpec } from "@/lib/abm/mae
 
 export interface LinkSource {
   table: TableKey;
-  /** Campos a leer de la tabla destino (para la etiqueta y para `allow`). */
+  /** Campos a leer de la tabla destino (para la etiqueta, `allow` y `show`). */
   fields: readonly FieldId[];
   label: (f: Fields) => string;
   /** Solo estas opciones se pueden elegir. Lo que ya estaba guardado se puede mantener. */
   allow?: (f: Fields) => boolean;
+  /** Al mostrar el valor guardado, solo se ven estos registros (p. ej. solo Empleados). */
+  show?: (f: Fields) => boolean;
 }
 
 export interface WriteContext {
@@ -32,14 +34,29 @@ export interface WriteContext {
   existing?: Fields;
 }
 
+/** Update de otro registro que acompaña la escritura (p. ej. Códigos de proyectos). */
+export interface RelatedUpdate {
+  table: TableKey;
+  id: string;
+  fields: Fields;
+  /** Valores originales, para el rollback. */
+  previous: Fields;
+}
+
 export interface WritePlan {
   /** Campos extra que arma el servidor (p. ej. Código). Por ID de campo. */
   extraFields?: Fields;
-  fieldErrors?: FieldErrors;
-  /** Conflicto que rechaza todo el cambio (409). */
-  conflict?: string;
-  /** Se corre después de escribir el registro (p. ej. actualizar Códigos de proyectos). */
-  after?: () => Promise<void>;
+  /** Reglas de campo que no se cumplen → 400. */
+  invalid?: FieldErrors;
+  /** Choque con otros registros (duplicados, colisiones de la cascada) → 409. */
+  conflict?: { error: string; fieldErrors?: FieldErrors };
+  /**
+   * Updates relacionados, pre-validados. Se escriben ANTES del registro
+   * principal, en lotes de 10; si algo falla se revierte todo (ver write()).
+   */
+  related?: RelatedUpdate[];
+  /** Verificación después de escribir (carreras): devuelve un conflicto o null. */
+  verify?: () => Promise<string | null>;
 }
 
 export interface MaestroConfig {
@@ -64,6 +81,7 @@ export const PROYECTO_MESSAGES = {
   codigoDuplicado: (codigo: string) => `Ya existe un proyecto con el código «${codigo}».`,
   quitarSigla: "No se puede quitar la sigla de un cliente que tiene proyectos.",
   colisiones: (codigos: string[]) => `No se puede cambiar la sigla: estos códigos de proyecto ya existen: ${codigos.join(", ")}.`,
+  sinNombreCorto: (proyectos: string[]) => `No se puede cambiar la sigla: estos proyectos no tienen nombre corto: ${proyectos.join(", ")}.`,
 } as const;
 
 export function buildCodigo(sigla: string, nombreCorto: string): string {
@@ -91,6 +109,8 @@ const links = {
     table: "usuarios",
     fields: [T.usuarios.fields.nombre, T.usuarios.fields.rol],
     label: (f) => text(f[T.usuarios.fields.nombre]),
+    // "Empleados asignados": solo se muestran los usuarios con Rol Empleado (un Admin puede conservar asignaciones viejas).
+    show: (f) => f[T.usuarios.fields.rol] === "Empleado",
   },
 } satisfies Record<string, LinkSource>;
 
@@ -104,34 +124,19 @@ async function proyectosBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
   if (!clienteId || !nombreCorto) return {};
   const cliente = await getAirtableClient().get(T.clientes.id, clienteId, { fields: [C.sigla] });
   const sigla = text(cliente?.fields[C.sigla]).trim();
-  if (!sigla) return { fieldErrors: { cliente: PROYECTO_MESSAGES.clienteSinSigla } };
+  if (!sigla) return { invalid: { cliente: PROYECTO_MESSAGES.clienteSinSigla } };
 
   const codigo = buildCodigo(sigla, nombreCorto);
   const proyectos = await getAirtableClient().list(T.proyectos.id, { fields: [P.codigo] });
   const taken = proyectos.some((p) => p.id !== ctx.id && normalizeForUnique(p.fields[P.codigo]) === normalizeForUnique(codigo));
-  if (taken) return { fieldErrors: { nombreCorto: PROYECTO_MESSAGES.codigoDuplicado(codigo) } };
+  if (taken) {
+    return { conflict: { error: PROYECTO_MESSAGES.codigoDuplicado(codigo), fieldErrors: { nombreCorto: PROYECTO_MESSAGES.codigoDuplicado(codigo) } } };
+  }
   return { extraFields: { [P.codigo]: codigo } };
 }
 
-/**
- * Clientes: si cambia la sigla de un cliente con proyectos, se recalcula el
- * Código de todos sus proyectos. Si alguno choca con otro existente, se
- * rechaza el cambio entero (409) con la lista de choques.
- */
-async function clientesBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
-  if (ctx.mode !== "edit" || !ctx.existing || !ctx.id) return {};
-  const oldSigla = text(ctx.existing[C.sigla]).trim();
-  const newSigla = text(ctx.values.sigla).trim();
-  if (oldSigla === newSigla) return {};
-  const projectIds = (ctx.existing[C.proyectos] as string[] | undefined) ?? [];
-  if (projectIds.length === 0) return {};
-  if (!newSigla) return { conflict: PROYECTO_MESSAGES.quitarSigla };
-
-  const all = await getAirtableClient().list(T.proyectos.id, { fields: [P.codigo, P.nombreCorto] });
-  const mine = new Set(projectIds);
-  const updates = all
-    .filter((p) => mine.has(p.id))
-    .map((p) => ({ id: p.id, codigo: buildCodigo(newSigla, text(p.fields[P.nombreCorto])) }));
+/** Proyectos cuyo Código choca: con otros proyectos (fuera de `mine`) o entre sí. */
+function collisionsOf(all: { id: string; fields: Fields }[], mine: Set<string>, updates: { id: string; codigo: string }[]): string[] {
   const others = new Set(all.filter((p) => !mine.has(p.id)).map((p) => normalizeForUnique(p.fields[P.codigo])));
   const seen = new Set<string>();
   const collisions: string[] = [];
@@ -140,15 +145,49 @@ async function clientesBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
     if (others.has(key) || seen.has(key)) collisions.push(u.codigo);
     seen.add(key);
   }
-  if (collisions.length > 0) return { conflict: PROYECTO_MESSAGES.colisiones(collisions) };
+  return collisions;
+}
+
+/**
+ * Clientes: si cambia la sigla de un cliente con proyectos, se recalcula el
+ * Código de todos sus proyectos. Todo se valida ANTES de escribir: Códigos
+ * nuevos únicos (contra todos los proyectos que no se renombran y entre sí),
+ * proyectos con nombre corto y payloads escribibles. Cualquier problema
+ * rechaza el cambio entero sin escribir nada. Los updates de proyectos llevan
+ * su Código original para el rollback.
+ */
+async function clientesBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
+  if (ctx.mode !== "edit" || !ctx.existing || !ctx.id) return {};
+  const oldSigla = text(ctx.existing[C.sigla]).trim();
+  const newSigla = text(ctx.values.sigla).trim();
+  if (oldSigla === newSigla) return {};
+  const projectIds = (ctx.existing[C.proyectos] as string[] | undefined) ?? [];
+  if (projectIds.length === 0) return {};
+  if (!newSigla) return { invalid: { sigla: PROYECTO_MESSAGES.quitarSigla } };
+
+  const all = await getAirtableClient().list(T.proyectos.id, { fields: [P.codigo, P.nombreCorto] });
+  const mine = new Set(projectIds);
+  const own = all.filter((p) => mine.has(p.id));
+  const sinNombre = own.filter((p) => !text(p.fields[P.nombreCorto]).trim());
+  if (sinNombre.length > 0) {
+    return { conflict: { error: PROYECTO_MESSAGES.sinNombreCorto(sinNombre.map((p) => text(p.fields[P.codigo]) || p.id)) } };
+  }
+  const updates = own.map((p) => ({ id: p.id, codigo: buildCodigo(newSigla, text(p.fields[P.nombreCorto])), previous: p.fields[P.codigo] }));
+  const collisions = collisionsOf(all, mine, updates);
+  if (collisions.length > 0) return { conflict: { error: PROYECTO_MESSAGES.colisiones(collisions), fieldErrors: { sigla: PROYECTO_MESSAGES.colisiones(collisions) } } };
 
   return {
-    after: async () => {
-      await getAirtableClient().update(
-        T.proyectos.id,
-        updates.map((u) => ({ id: u.id, fields: { [P.codigo]: u.codigo } })),
-        { returnFields: [] },
-      );
+    related: updates.map((u) => ({
+      table: "proyectos",
+      id: u.id,
+      fields: { [P.codigo]: u.codigo },
+      previous: { [P.codigo]: typeof u.previous === "string" ? u.previous : null },
+    })),
+    // Carrera: otro proyecto pudo tomar uno de los Códigos nuevos mientras se escribía.
+    verify: async () => {
+      const now = await getAirtableClient().list(T.proyectos.id, { fields: [P.codigo] });
+      const found = collisionsOf(now, mine, updates);
+      return found.length > 0 ? PROYECTO_MESSAGES.colisiones(found) : null;
     },
   };
 }
@@ -187,6 +226,8 @@ export const MAESTRO_CONFIGS: Record<MaestroSlug, MaestroConfig> = {
       descripcion: P.descripcion,
       usuarios: P.usuarios,
     },
+    // Código: único; lo arma beforeWrite y se verifica después de escribir.
+    unique: ["codigo"],
     links: { cliente: links.clienteActivo, unidadNegocio: links.unidadNegocio, usuarios: links.usuario },
     references: REFERENCE_FIELDS.proyectos,
     beforeWrite: proyectosBeforeWrite,

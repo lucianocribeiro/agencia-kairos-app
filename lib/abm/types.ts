@@ -24,4 +24,4 @@ export interface AbmData {
 
 export type ServiceResult<T> =
   | { ok: true; data: T }
-  | { ok: false; status: 400 | 403 | 404 | 405 | 409 | 500; error: string; fieldErrors?: FieldErrors };
+  | { ok: false; status: 400 | 403 | 404 | 405 | 409 | 500 | 503; error: string; fieldErrors?: FieldErrors };

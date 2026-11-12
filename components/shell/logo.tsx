@@ -7,14 +7,14 @@ import { cn } from "@/lib/cn";
 
 /**
  * Tamaños del logo (PNG 1700×812, proporción ≈ 2,09:1) dentro de su caja fija:
- * - expandido: caja de 128×40 px → 84×40
- * - compacto (sidebar colapsado): caja de 40×40 px → 40×19
+ * - expandido: caja de 180×56 px → 118×56
+ * - compacto (sidebar colapsado, 72 px de ancho): caja de 56×56 px → 56×27
  * `width`/`height` le dan a next/image el tamaño real que se muestra, así el
  * optimizador sirve una imagen chica (1x/2x) en vez del PNG original.
  */
 export const LOGO_SIZES = {
-  expanded: { width: 84, height: 40 },
-  compact: { width: 40, height: 19 },
+  expanded: { width: 118, height: 56 },
+  compact: { width: 56, height: 27 },
 } as const;
 
 /**
@@ -33,13 +33,13 @@ export function Logo({ compact = false, eager = false, className }: { compact?: 
   return (
     <span
       className={cn(
-        "flex h-10 shrink-0 items-center overflow-hidden",
-        compact ? "w-10 justify-center" : "w-32",
+        "flex h-14 shrink-0 items-center overflow-hidden",
+        compact ? "w-14 justify-center" : "w-[180px]",
         className,
       )}
     >
       {failed ? (
-        <span className={cn("font-semibold tracking-tight text-white", compact ? "text-[11px]" : "text-xl")}>
+        <span className={cn("font-semibold tracking-tight text-white", compact ? "text-[15px]" : "text-[28px]")}>
           Kairos
         </span>
       ) : (

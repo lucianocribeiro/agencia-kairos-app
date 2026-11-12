@@ -49,24 +49,24 @@ describe("public/Logo.png", () => {
 });
 
 describe("<Logo> (next/image)", () => {
-  it("expandido: /Logo.png optimizado a 84×40, srcset 1x/2x", () => {
+  it("expandido: /Logo.png optimizado a 118×56, srcset 1x/2x", () => {
     act(() => root.render(<Logo />));
     expect(servesLogo(img())).toBe(true);
     expect(img()?.alt).toBe("Kairos");
     expect(img()?.getAttribute("width")).toBe(String(LOGO_SIZES.expanded.width));
     expect(img()?.getAttribute("height")).toBe(String(LOGO_SIZES.expanded.height));
-    // Tamaño fijo: srcset 1x/2x (96 y 256 px de ancho), nunca el PNG de 1700 px.
-    expect(img()?.getAttribute("srcset")).toBe("/_next/image?url=%2FLogo.png&w=96&q=75 1x, /_next/image?url=%2FLogo.png&w=256&q=75 2x");
-    expect(container.firstElementChild!.className).toContain("w-32");
+    // Tamaño fijo: srcset 1x/2x (128 y 256 px de ancho), nunca el PNG de 1700 px.
+    expect(img()?.getAttribute("srcset")).toBe("/_next/image?url=%2FLogo.png&w=128&q=75 1x, /_next/image?url=%2FLogo.png&w=256&q=75 2x");
+    expect(container.firstElementChild!.className).toContain("w-[180px]");
   });
 
-  it("compacto: 40×19 en una caja de 40×40", () => {
+  it("compacto: 56×27 en una caja de 56×56", () => {
     act(() => root.render(<Logo compact />));
     expect(servesLogo(img())).toBe(true);
-    expect(img()?.getAttribute("width")).toBe("40");
-    expect(img()?.getAttribute("height")).toBe("19");
-    expect(img()?.getAttribute("srcset")).toBe("/_next/image?url=%2FLogo.png&w=48&q=75 1x, /_next/image?url=%2FLogo.png&w=96&q=75 2x");
-    expect(container.firstElementChild!.className).toContain("w-10");
+    expect(img()?.getAttribute("width")).toBe("56");
+    expect(img()?.getAttribute("height")).toBe("27");
+    expect(img()?.getAttribute("srcset")).toBe("/_next/image?url=%2FLogo.png&w=64&q=75 1x, /_next/image?url=%2FLogo.png&w=128&q=75 2x");
+    expect(container.firstElementChild!.className).toContain("w-14");
   });
 
   it("eager (shell): carga inmediata con prioridad alta; por defecto lazy", () => {
@@ -78,8 +78,8 @@ describe("<Logo> (next/image)", () => {
   });
 
   it.each([
-    ["expandido", false, "w-32"],
-    ["compacto", true, "w-10"],
+    ["expandido", false, "w-[180px]"],
+    ["compacto", true, "w-14"],
   ])("%s: si el archivo falta (error al cargar) muestra «Kairos» en el mismo espacio", (_l, compact, box) => {
     act(() => root.render(<Logo compact={compact} />));
     fireError();
@@ -99,6 +99,6 @@ describe("<SidebarNav> renderiza el logo", () => {
     expect(servesLogo(logo)).toBe(true);
     expect(logo?.getAttribute("width")).toBe(String(collapsed ? LOGO_SIZES.compact.width : LOGO_SIZES.expanded.width));
     expect(logo?.getAttribute("loading")).toBe("eager");
-    expect(logo?.parentElement?.className).toContain(collapsed ? "w-10" : "w-32");
+    expect(logo?.parentElement?.className).toContain(collapsed ? "w-14" : "w-[180px]");
   });
 });

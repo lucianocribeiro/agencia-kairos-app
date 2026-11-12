@@ -53,3 +53,9 @@ export function validateTemporaryPassword(raw: unknown): string | null {
   if (typeof raw !== "string" || !raw) return USUARIO_MESSAGES.passwordRequerida;
   return checkNewPassword(raw);
 }
+
+/** Claves que acepta la API de Usuarios: las del spec, y la contraseña temporal solo en el alta. */
+export const USUARIO_INPUT_KEYS = {
+  create: [...USUARIO_FIELDS.map((f) => f.key), "password"],
+  edit: USUARIO_FIELDS.map((f) => f.key),
+} as const;

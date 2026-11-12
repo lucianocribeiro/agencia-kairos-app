@@ -249,3 +249,8 @@ export function sociosSumWarning(porcentajes: readonly (number | null | undefine
   if (Math.abs(sum - 1) < 1e-6) return null;
   return `La suma de % retiros es ${formatNumber(sum * 100, { maxDecimals: 2 })} %. Debería ser 100 %.`;
 }
+
+/** Claves que acepta la API de un Maestro (las del spec, sin las de solo lectura). Slug desconocido → []. */
+export function maestroInputKeys(slug: string): readonly string[] {
+  return isMaestroSlug(slug) ? MAESTRO_SPECS[slug].fields.filter((f) => f.kind !== "readonly").map((f) => f.key) : [];
+}

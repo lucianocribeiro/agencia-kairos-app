@@ -1,5 +1,6 @@
 import { adminRoute, readJsonBody } from "@/lib/auth/api";
 import { toRawValues, toResponse } from "@/lib/abm/server/http";
+import { maestroInputKeys } from "@/lib/abm/maestros";
 import { deleteMaestro, updateMaestro } from "@/lib/abm/server/maestros-service";
 
 type Context = { params: Promise<{ tabla: string; id: string }> };
@@ -9,7 +10,7 @@ export const PATCH = adminRoute<Context>(async (request, _user, { params }) => {
   const body = await readJsonBody(request);
   if (body instanceof Response) return body;
   const { tabla, id } = await params;
-  return toResponse(await updateMaestro(tabla, id, toRawValues(body)));
+  return toResponse(await updateMaestro(tabla, id, toRawValues(body, maestroInputKeys(tabla))));
 });
 
 /** DELETE /api/admin/maestros/:tabla/:id · borra solo si el maestro lo permite y no tiene referencias (409). */

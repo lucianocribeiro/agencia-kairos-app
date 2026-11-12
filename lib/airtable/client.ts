@@ -63,13 +63,24 @@ export interface AirtableClientOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Política de reintentos por tipo de operación:
+ * - "read" (list/get): reintenta 429, 5xx y errores de red.
+ * - "idempotent" (update PATCH, delete): reintenta 429 y 5xx; no errores de red.
+ * - "create": NUNCA reintenta. La documentación de Airtable no garantiza que un
+ *   429 implique que el request no se aplicó
+ *   (https://airtable.com/developers/web/api/rate-limits y
+ *   https://airtable.com/developers/web/api/errors), y un 5xx o un error de red
+ *   pueden haber creado el registro: reintentar podría duplicarlo.
+ */
+type RetryPolicy = "read" | "idempotent" | "create";
+
 interface RequestInit_ {
   method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   query?: URLSearchParams;
   body?: unknown;
-  /** Lecturas: se pueden reintentar también ante errores de red. */
-  safeToRetryOnNetworkError?: boolean;
+  retry: RetryPolicy;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -184,7 +195,7 @@ export class AirtableClient {
       const page = await this.#request<{ records: AirtableRecord<F>[]; offset?: string }>({
         method: "POST",
         path: `/${this.#baseId}/${tableId}/listRecords`,
-        safeToRetryOnNetworkError: true,
+        retry: "read",
         body: {
           returnFieldsByFieldId: true,
           fields: options.fields,
@@ -223,6 +234,7 @@ export class AirtableClient {
 
   // ── Escrituras ──────────────────────────────────────────────────────────
   // Se envían en lotes de hasta 10 registros. Varios lotes NO son atómicos.
+  // create no se reintenta nunca; update y delete sí ante 429/5xx (ver RetryPolicy).
 
   async create<F extends Fields = Fields>(
     tableId: string,
@@ -238,6 +250,7 @@ export class AirtableClient {
       const res = await this.#request<{ records: AirtableRecord<F>[] }>({
         method: "POST",
         path: `/${this.#baseId}/${tableId}`,
+        retry: "create",
         body: {
           returnFieldsByFieldId: true,
           typecast: options.typecast ?? false,
@@ -270,6 +283,7 @@ export class AirtableClient {
       const res = await this.#request<{ records: AirtableRecord<F>[] }>({
         method: "PATCH",
         path: `/${this.#baseId}/${tableId}`,
+        retry: "idempotent",
         body: {
           returnFieldsByFieldId: true,
           typecast: options.typecast ?? false,
@@ -297,6 +311,7 @@ export class AirtableClient {
       const res = await this.#request<{ records: { id: string; deleted: boolean }[] }>({
         method: "DELETE",
         path: `/${this.#baseId}/${tableId}`,
+        retry: "idempotent",
         query,
       });
       deleted.push(...res.records.filter((r) => r.deleted).map((r) => r.id));
@@ -344,7 +359,7 @@ export class AirtableClient {
         });
       } catch {
         // No se adjunta la causa: podría incluir la URL o el request.
-        if (req.safeToRetryOnNetworkError && attempt < this.#maxRetries) {
+        if (req.retry === "read" && attempt < this.#maxRetries) {
           await this.#sleep(this.#backoff(attempt, null));
           continue;
         }
@@ -353,7 +368,7 @@ export class AirtableClient {
 
       if (res.ok) return (await res.json()) as T;
 
-      const retryable = res.status === 429 || res.status >= 500;
+      const retryable = req.retry !== "create" && (res.status === 429 || res.status >= 500);
       if (retryable && attempt < this.#maxRetries) {
         await res.body?.cancel().catch(() => {});
         await this.#sleep(this.#backoff(attempt, res.headers.get("retry-after")));

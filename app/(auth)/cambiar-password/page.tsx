@@ -1,8 +1,8 @@
-import { LogOut } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 
+import { LogoutButton } from "@/components/auth/logout-button";
 import { PasswordForm } from "@/components/auth/password-form";
 import { PageSkeleton } from "@/components/auth/guarded";
 import { buttonClasses, Card, CardContent, CardDescription, CardHeader, CardTitle, InlineMessage } from "@/components/ui";
@@ -44,12 +44,7 @@ async function CambiarPassword() {
             Volver
           </Link>
         )}
-        <form action="/api/auth/logout" method="post">
-          <button type="submit" className={buttonClasses("ghost", "sm")}>
-            <LogOut aria-hidden="true" className="size-4" />
-            Cerrar sesión
-          </button>
-        </form>
+        <LogoutButton className={buttonClasses("ghost", "sm")} />
       </div>
     </div>
   );

@@ -1,10 +1,11 @@
 "use client";
 
-import { KeyRound, LogOut, Menu, X } from "lucide-react";
+import { KeyRound, Menu, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
+import { LogoutButton } from "@/components/auth/logout-button";
 import { cn } from "@/lib/cn";
 import type { Role } from "@/lib/roles";
 import { Logo } from "./logo";
@@ -150,12 +151,7 @@ export function AppShell({ user, children }: { user: ShellUser; children: ReactN
               <KeyRound aria-hidden="true" className="size-4" />
               <span className="hidden lg:inline">Cambiar contraseña</span>
             </Link>
-            <form action="/api/auth/logout" method="post">
-              <button type="submit" aria-label="Cerrar sesión" className={headerAction}>
-                <LogOut aria-hidden="true" className="size-4" />
-                <span className="hidden lg:inline">Cerrar sesión</span>
-              </button>
-            </form>
+            <LogoutButton compact className={headerAction} />
           </div>
         </header>
 

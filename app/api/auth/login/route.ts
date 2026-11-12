@@ -1,13 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { apiRoute, readJson } from "@/lib/auth/api";
-import { attemptLogin, clientIp, LOGIN_MESSAGES } from "@/lib/auth/login";
+import { apiRoute, readJsonBody } from "@/lib/auth/api";
+import { attemptLogin, clientIp } from "@/lib/auth/login";
 import { setSessionCookie } from "@/lib/auth/session";
 
-/** POST /api/auth/login · body JSON { email, password, robot } → { redirectTo } + cookie. */
+/** POST /api/auth/login · body JSON { email, password, robot } → { redirectTo } + cookie. 415 si no es JSON. */
 export const POST = apiRoute(async (request: NextRequest) => {
-  const body = await readJson(request);
-  if (!body) return NextResponse.json({ error: LOGIN_MESSAGES.incompleto }, { status: 400 });
+  const body = await readJsonBody(request);
+  if (body instanceof Response) return body;
 
   const result = await attemptLogin({
     email: body.email,

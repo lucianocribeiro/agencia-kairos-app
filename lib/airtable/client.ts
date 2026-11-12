@@ -3,18 +3,15 @@ import "server-only";
 import { getEnv } from "@/lib/env";
 import { AirtableError, codeForStatus, sanitizeMessage } from "./errors";
 import { Formula, recordIdIs } from "./formula";
-import { COMPUTED_FIELDS, FIELD_TABLE, READ_ONLY_FIELDS, TABLE_IDS } from "./schema";
+import { assertFieldIds, assertRecordId, assertTableId, assertWritableFields } from "./payload";
 
 export { AirtableError } from "./errors";
+export { assertFieldIds, assertRecordId, assertTableId, assertWritableFields } from "./payload";
 export type { AirtableErrorCode } from "./errors";
 
 const API_URL = "https://api.airtable.com/v0";
 const BATCH_SIZE = 10;
 const MAX_PAGE_SIZE = 100;
-
-const TABLE_ID_RE = /^tbl[A-Za-z0-9]{14}$/;
-const FIELD_ID_RE = /^fld[A-Za-z0-9]{14}$/;
-const RECORD_ID_RE = /^rec[A-Za-z0-9]{14}$/;
 
 /** Campos de un registro, indexados por ID de campo. */
 export type Fields = Record<string, unknown>;
@@ -99,54 +96,6 @@ function pick(fields: Fields, keys: readonly string[]): Fields {
   const out: Fields = {};
   for (const key of keys) if (key in fields) out[key] = fields[key];
   return out;
-}
-
-export function assertTableId(tableId: string): void {
-  if (!TABLE_ID_RE.test(tableId)) {
-    throw invalid(`Se esperaba un ID de tabla (tbl…), se recibió ${JSON.stringify(tableId)}`);
-  }
-}
-
-/** Valida que sean IDs de campo y que pertenezcan a la tabla (si la tabla está en el schema). */
-export function assertFieldIds(tableId: string, fieldIds: readonly string[]): void {
-  for (const id of fieldIds) {
-    if (!FIELD_ID_RE.test(id)) {
-      throw invalid(`Se esperaba un ID de campo (fld…), se recibió ${JSON.stringify(id)}`);
-    }
-    if (TABLE_IDS.has(tableId) && FIELD_TABLE.get(id) !== tableId) {
-      throw invalid(`El campo ${id} no pertenece a la tabla ${tableId}`);
-    }
-  }
-}
-
-/**
- * Guard de escritura: lanza si el payload tiene un campo calculado
- * (COMPUTED_FIELDS), un link inverso de solo lectura, o algo que no sea un ID
- * de campo de esa tabla.
- */
-export function assertWritableFields(tableId: string, fields: Fields): void {
-  const keys = Object.keys(fields);
-  for (const key of keys) {
-    if (COMPUTED_FIELDS.has(key)) {
-      throw new AirtableError({
-        code: "computed_field_write",
-        message: `El campo ${key} es calculado y no se puede escribir`,
-      });
-    }
-    if (READ_ONLY_FIELDS.has(key)) {
-      throw new AirtableError({
-        code: "read_only_field_write",
-        message: `El campo ${key} es de solo lectura y no se puede escribir`,
-      });
-    }
-  }
-  assertFieldIds(tableId, keys);
-}
-
-function assertRecordId(recordId: string): void {
-  if (!RECORD_ID_RE.test(recordId)) {
-    throw invalid(`ID de registro inválido: ${JSON.stringify(recordId)}`);
-  }
 }
 
 export class AirtableClient {

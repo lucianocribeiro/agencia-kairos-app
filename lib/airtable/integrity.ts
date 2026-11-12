@@ -38,6 +38,39 @@ export async function findDuplicates(
     .map((r) => ({ id: r.id }));
 }
 
+/**
+ * Después de escribir (no hay transacciones): ¿este registro tiene que
+ * deshacer su escritura porque otro request guardó el mismo valor a la vez?
+ * - edit: pierde siempre quien edita (vuelve a su valor anterior).
+ * - create: pierde el registro más nuevo (createdTime más reciente; empate:
+ *   el ID más alto). El otro request ve lo mismo y se queda con el suyo.
+ */
+export async function losesUniqueRace(
+  tableId: string,
+  fieldId: string,
+  value: unknown,
+  recordId: string,
+  mode: "create" | "edit",
+): Promise<boolean> {
+  const target = normalizeForUnique(value);
+  if (!target) return false;
+  const records = await getAirtableClient().list(tableId, {
+    fields: [fieldId],
+    filterByFormula: formula`LOWER(TRIM(${field(fieldId)} & "")) = ${target}`,
+  });
+  const matches = records.filter((r) => normalizeForUnique(r.fields[fieldId]) === target);
+  if (!matches.some((r) => r.id !== recordId)) return false;
+  if (mode === "edit") return true;
+  if (!matches.some((r) => r.id === recordId)) return true; // no se ve a sí mismo: por las dudas, pierde
+  const newest = matches.reduce((a, b) => {
+    const ta = Date.parse(a.createdTime);
+    const tb = Date.parse(b.createdTime);
+    if (ta !== tb) return tb > ta ? b : a;
+    return b.id > a.id ? b : a;
+  });
+  return newest.id === recordId;
+}
+
 export async function isUnique(
   tableId: string,
   fieldId: string,

@@ -34,3 +34,11 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Toda escritura a un usuario llama a `invalidateCachedUser(id)` (`lib/auth/user-cache.ts`).
 - Nunca poner datos por usuario en `use cache` ni en otro caché entre requests.
 - Interceptación de requests: `proxy.ts` (Next 16; `middleware.ts` está deprecado). Solo redirige a /login si falta la cookie o su firma es inválida.
+
+## ABM de Usuarios y Maestros (CC-F1-03)
+
+- Specs client-safe (sin IDs) en `lib/abm/`: `fields.ts` (tipos de campo, parseo, formato), `maestros.ts` (los 10 Maestros), `usuarios.ts`. Cliente y servidor validan con las mismas funciones; el servidor es la fuente de verdad.
+- Parte de servidor en `lib/abm/server/`: `maestros-config.ts` (clave → ID de campo, unicidad, links permitidos, referencias, reglas como el Código de Proyectos y la cascada de siglas), `maestros-service.ts` (ABM genérico), `usuarios-service.ts`.
+- Unicidad y referencias: `lib/airtable/integrity.ts` (`findDuplicates` con `LOWER(TRIM())`, `findReferences` sobre `REFERENCE_FIELDS` de `schema.ts`). Un registro con referencias no se borra (409).
+- Las escrituras del hash de un usuario (alta y reset) también pasan por `lib/auth/credentials.ts`.
+- Todo cambio a un usuario llama a `invalidateCachedUser(id)`.

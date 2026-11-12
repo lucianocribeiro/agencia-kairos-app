@@ -3,7 +3,7 @@ import "server-only";
 import { setPassword, verifyPasswordById } from "./credentials";
 import { isLockedOut, LockoutUnavailableError, recordAttempt } from "./lockout";
 import { LOGIN_MESSAGES } from "./login";
-import { checkNewPassword } from "./password";
+import { checkNewPassword } from "./password-policy";
 
 export const PASSWORD_MESSAGES = {
   incompleto: "Completá los tres campos.",
@@ -20,7 +20,7 @@ export type PasswordChangeResult =
   | { ok: true; pf: string }
   | { ok: false; status: 400 | 429 | 503; error: string; field?: PasswordField };
 
-/** Reglas sin tocar Airtable (la política de largo es la de lib/auth/password.ts). */
+/** Reglas sin tocar Airtable (la política es la de lib/auth/password-policy.ts). */
 export function validateNewPassword(input: {
   actual: unknown;
   nueva: unknown;
@@ -40,7 +40,8 @@ export function validateNewPassword(input: {
 /**
  * Cambio de contraseña con el mismo bloqueo que el login (mismo contador en
  * "Intentos de login", por email e IP): bloqueado → Bloqueado + 429; contraseña
- * actual incorrecta → Fallido + 400. Si no se puede leer el bloqueo → 503.
+ * actual incorrecta → Fallido + 400; éxito → Exitoso (reinicia el contador).
+ * Si no se puede leer el bloqueo → 503.
  */
 export async function changePassword(
   user: { id: string; email: string },
@@ -73,5 +74,8 @@ export async function changePassword(
   }
 
   const pf = await setPassword(user.id, input.nueva as string);
+  // Igual que un login exitoso: reinicia el contador de Fallido del email.
+  // recordAttempt loguea y no lanza si la escritura falla.
+  await recordAttempt(user.email, ip, "Exitoso", now);
   return { ok: true, pf };
 }

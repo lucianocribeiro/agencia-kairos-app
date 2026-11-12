@@ -9,7 +9,7 @@ vi.mock("@/lib/airtable/client", () => ({ getAirtableClient: () => fake.client }
 
 const { changePassword, PASSWORD_MESSAGES, validateNewPassword } = await import("./password-change");
 const { attemptLogin } = await import("./login");
-const { PASSWORD_POLICY_MESSAGES } = await import("./password");
+const { PASSWORD_POLICY_MESSAGES } = await import("./password-policy");
 const { clearUserCache } = await import("./user-cache");
 
 const U = TABLES.usuarios.fields;
@@ -94,6 +94,24 @@ describe("cambio de contraseña", () => {
     expect(await attemptLogin({ email: "ana@kairos.test", password: ACTUAL, robot: true, ip: IP }, NOW)).toMatchObject({ status: 429 });
     expect(await change({})).toMatchObject({ status: 429 });
   });
+
+  it("éxito registra Exitoso y reinicia el contador (N-01)", async () => {
+    for (let i = 0; i < 3; i++) await change({ actual: `mal-${i}-xxxx` });
+    expect(await change({})).toMatchObject({ ok: true });
+    expect(attempts()).toEqual(["Fallido", "Fallido", "Fallido", "Exitoso"]);
+    expect(fake.rows(I.id)[3].fields).toMatchObject({ [I.fields.email]: "ana@kairos.test", [I.fields.ip]: IP });
+    // Logins fallidos 1 min después: 3 previos + 2 nuevos = 5; sin el reinicio, el 3.º daría 429.
+    const later = new Date(NOW.getTime() + 60_000);
+    for (let i = 0; i < 3; i++) {
+      expect(await attemptLogin({ email: "ana@kairos.test", password: "mal", robot: true, ip: IP }, later)).toMatchObject({ status: 401 });
+    }
+  }, 20_000);
+
+  it("si falla registrar el Exitoso, el cambio igual se aplica", async () => {
+    fake.fail("create", I.id);
+    expect(await change({})).toMatchObject({ ok: true });
+    expect(fake.rows(TABLES.usuarios.id)[0].fields[U.debeCambiarPassword]).toBe(false);
+  }, 20_000);
 
   it("si no se puede leer el bloqueo → 503 y no verifica ni cambia", async () => {
     fake.fail("list", I.id);

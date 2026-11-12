@@ -255,4 +255,3 @@ export function UsuariosManager({ data, currentUserId }: { data: AbmData; curren
     </div>
   );
 }
-

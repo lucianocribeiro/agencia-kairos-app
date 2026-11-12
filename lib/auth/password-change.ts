@@ -1,24 +1,26 @@
 import "server-only";
 
 import { setPassword, verifyPasswordById } from "./credentials";
-import { byteLength, PASSWORD_MAX_BYTES, PASSWORD_MIN_LENGTH } from "./password";
+import { isLockedOut, LockoutUnavailableError, recordAttempt } from "./lockout";
+import { LOGIN_MESSAGES } from "./login";
+import { checkNewPassword } from "./password";
 
 export const PASSWORD_MESSAGES = {
   incompleto: "Completá los tres campos.",
-  corta: `La contraseña nueva tiene que tener al menos ${PASSWORD_MIN_LENGTH} caracteres.`,
-  larga: `La contraseña nueva puede tener hasta ${PASSWORD_MAX_BYTES} caracteres.`,
   noCoinciden: "Las contraseñas nuevas no coinciden.",
   igual: "La contraseña nueva tiene que ser distinta de la actual.",
   actualIncorrecta: "La contraseña actual no es correcta.",
+  bloqueado: LOGIN_MESSAGES.bloqueado,
+  noDisponible: LOGIN_MESSAGES.noDisponible,
 } as const;
 
 export type PasswordField = "actual" | "nueva" | "repetir";
 
 export type PasswordChangeResult =
   | { ok: true; pf: string }
-  | { ok: false; status: 400; error: string; field?: PasswordField };
+  | { ok: false; status: 400 | 429 | 503; error: string; field?: PasswordField };
 
-/** Reglas sin tocar Airtable. Exportada para tests y para reusar en el form. */
+/** Reglas sin tocar Airtable (la política de largo es la de lib/auth/password.ts). */
 export function validateNewPassword(input: {
   actual: unknown;
   nueva: unknown;
@@ -28,24 +30,48 @@ export function validateNewPassword(input: {
   if (typeof actual !== "string" || typeof nueva !== "string" || typeof repetir !== "string" || !actual || !nueva || !repetir) {
     return { error: PASSWORD_MESSAGES.incompleto };
   }
-  if (nueva.length < PASSWORD_MIN_LENGTH) return { error: PASSWORD_MESSAGES.corta, field: "nueva" };
-  if (byteLength(nueva) > PASSWORD_MAX_BYTES) return { error: PASSWORD_MESSAGES.larga, field: "nueva" };
+  const policy = checkNewPassword(nueva);
+  if (policy) return { error: policy, field: "nueva" };
   if (nueva !== repetir) return { error: PASSWORD_MESSAGES.noCoinciden, field: "repetir" };
   if (nueva === actual) return { error: PASSWORD_MESSAGES.igual, field: "nueva" };
   return null;
 }
 
+/**
+ * Cambio de contraseña con el mismo bloqueo que el login (mismo contador en
+ * "Intentos de login", por email e IP): bloqueado → Bloqueado + 429; contraseña
+ * actual incorrecta → Fallido + 400. Si no se puede leer el bloqueo → 503.
+ */
 export async function changePassword(
-  userId: string,
+  user: { id: string; email: string },
   input: { actual: unknown; nueva: unknown; repetir: unknown },
+  ip: string,
+  now: Date = new Date(),
 ): Promise<PasswordChangeResult> {
   const invalid = validateNewPassword(input);
   if (invalid) return { ok: false, status: 400, ...invalid };
 
-  const actual = input.actual as string;
-  if (!(await verifyPasswordById(userId, actual))) {
+  try {
+    if (await isLockedOut(user.email, ip, now)) {
+      await recordAttempt(user.email, ip, "Bloqueado", now);
+      return { ok: false, status: 429, error: PASSWORD_MESSAGES.bloqueado };
+    }
+  } catch (err) {
+    if (err instanceof LockoutUnavailableError) return { ok: false, status: 503, error: PASSWORD_MESSAGES.noDisponible };
+    throw err;
+  }
+
+  let ok: boolean;
+  try {
+    ok = await verifyPasswordById(user.id, input.actual as string);
+  } catch {
+    return { ok: false, status: 503, error: PASSWORD_MESSAGES.noDisponible };
+  }
+  if (!ok) {
+    await recordAttempt(user.email, ip, "Fallido", now);
     return { ok: false, status: 400, error: PASSWORD_MESSAGES.actualIncorrecta, field: "actual" };
   }
-  const pf = await setPassword(userId, input.nueva as string);
+
+  const pf = await setPassword(user.id, input.nueva as string);
   return { ok: true, pf };
 }

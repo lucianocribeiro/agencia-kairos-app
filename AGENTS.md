@@ -42,3 +42,17 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Unicidad y referencias: `lib/airtable/integrity.ts` (`findDuplicates` con `LOWER(TRIM())`, `findReferences` sobre `REFERENCE_FIELDS` de `schema.ts`). Un registro con referencias no se borra (409).
 - Las escrituras del hash de un usuario (alta y reset) también pasan por `lib/auth/credentials.ts`.
 - Todo cambio a un usuario llama a `invalidateCachedUser(id)`.
+- Estados HTTP de los ABM: reglas de campo → 400 (`WritePlan.invalid`); duplicados y choques con otros registros → 409 (`WritePlan.conflict`); tabla sin borrado → 405. `apiRoute` mapea `AirtableError`: not_found → 404, 429/5xx/red → 503, el resto → 500 (logs solo con código/status/tipo).
+- Cascada de siglas de Clientes: todo se pre-valida antes de escribir; se escriben primero los proyectos (lotes de 10) y después el cliente, con compensación (`lib/abm/server/compensation.ts`). Si una escritura falla se revierte todo a los valores originales: rollback OK → 503 «No se modificó nada»; rollback fallido → 500 «quedó incompleto» y se loguean solo los IDs.
+- Inyección de fallas para el smoke test: `lib/abm/server/fault-injection.ts`, solo con `NODE_ENV=development` y `KAIROS_FAULT_INJECTION=<punto>`. En `next build` queda como código muerto; `check:bundle` falla si el nombre de la variable aparece en `.next/server`.
+- `toRawValues` solo acepta claves con forma de clave del spec (camelCase) en un objeto sin prototipo; los servicios ignoran toda clave que no esté en el spec.
+
+## Concurrencia (riesgo residual)
+
+Airtable no tiene transacciones ni restricciones de unicidad. Las reglas que dependen de otros registros se chequean antes de escribir y se **vuelven a verificar después**, compensando si otro request ganó la carrera:
+
+- **Último Admin activo**: después de desactivar o pasar a Empleado a un Admin se releen los Admins activos; si quedan cero, esta escritura se revierte y responde 409.
+- **Unicidad** (email y sigla de Usuarios, y cada campo único de los Maestros, incluido el Código de Proyectos): después de crear o editar se vuelve a buscar el valor. En un alta pierde el registro más nuevo (`createdTime` más reciente; empate: ID más alto) y se borra; en una edición, quien edita vuelve a su valor anterior. Después, 409 con el mensaje de duplicado.
+- **Cascada de siglas**: después de escribir se verifica que ningún Código nuevo choque con otro proyecto; si choca, se revierte todo.
+
+Es un chequeo no atómico con compensación. Queda una ventana chica en la que un duplicado (o cero Admins activos) puede existir unos milisegundos, y si el rollback falla queda un estado a medias que se loguea por ID. Con la escala actual (pocos usuarios Admin, escrituras manuales) es aceptable; si crece, hace falta un lock o una base con transacciones.

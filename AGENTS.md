@@ -64,3 +64,12 @@ Verificaciones:
 - **Cascada de siglas**: después de escribir se verifica que ningún Código nuevo choque con otro proyecto; si choca, se revierte todo.
 
 Es un chequeo no atómico con compensación. Queda una ventana chica en la que un duplicado (o cero Admins activos) puede existir unos milisegundos, y si el rollback falla queda un estado a medias que se loguea por ID. Con la escala actual (pocos usuarios Admin, escrituras manuales) es aceptable; si crece, hace falta un lock o una base con transacciones.
+
+## Horas (CC-F1-04)
+
+- Lógica compartida y client-safe en `lib/horas/`: `time.ts` (HH:mm ↔ segundos, `recordHours`, `sumHours`), `dates.ts` (fechas "YYYY-MM-DD", hoy en Buenos Aires, atajos, buckets), `rules.ts` (validación y superposición), `types.ts` (DTOs). Parte de servidor en `lib/horas/server/`.
+- `recordHours` es la única cuenta de horas; los totales se suman con `sumHours` (en centésimas). No usar el campo fórmula Horas de Airtable en la app.
+- Período: `fechaRangeFormula` (`AND({fecha}, IS_AFTER({fecha}, "desde − 1"), IS_BEFORE({fecha}, "hasta + 1"))`) y después se vuelve a filtrar en código por el string. Los filtros por link (colaborador, proyecto, cliente vía el Cliente del proyecto) se aplican en código con los IDs que devuelve la API, nunca por nombre.
+- Superposición: chequeo previo (409) y `overlapPostCheck` en `runPostWriteChecks` (alta: pierde el más nuevo; edición: vuelve quien edita; fail-closed).
+- Empleado: `/api/me/horas` (GET, POST) y `/api/me/proyectos` (GET). Nunca PATCH/PUT/DELETE en `/api/me/**` ni `/api/me/horas/[id]` (test). Colaborador = Cargado por = la sesión, Facturable = sí; las asignaciones se releen de Airtable en cada alta.
+- Nunca leer RESTRICTED_FIELDS (valor hora, moneda, importe, cliente) en el camino del Empleado; las respuestas y los props de `/mis-horas` son DTOs explícitos.

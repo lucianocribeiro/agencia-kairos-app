@@ -4,7 +4,7 @@ import { getAirtableClient, type AirtableRecord } from "@/lib/airtable/client";
 import { field, formula, recordIdIs, type Formula } from "@/lib/airtable/formula";
 import { TABLES } from "@/lib/airtable/schema";
 import { isRole, type Role } from "@/lib/roles";
-import { comparePassword, hashPassword, passwordFingerprint } from "./password";
+import { comparePassword, hashNewPassword, passwordFingerprint } from "./password";
 import { invalidateCachedUser } from "./user-cache";
 
 /**
@@ -105,10 +105,10 @@ export async function verifyPasswordById(userId: string, password: string): Prom
 
 /**
  * Guarda una contraseña nueva, apaga "Debe cambiar password" y devuelve el
- * `pf` nuevo para reemitir la cookie.
+ * `pf` nuevo para reemitir la cookie. El hash sale de hashNewPassword (valida la política).
  */
 export async function setPassword(userId: string, newPassword: string): Promise<string> {
-  const hash = await hashPassword(newPassword);
+  const hash = await hashNewPassword(newPassword);
   await getAirtableClient().update(
     TABLES.usuarios.id,
     [{ id: userId, fields: { [U.passwordHash]: hash, [U.debeCambiarPassword]: false } }],

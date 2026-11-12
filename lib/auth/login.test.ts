@@ -119,6 +119,18 @@ describe("login · mismo 401 para email desconocido, contraseña mal o Inactivo"
     expect(attempts()).toEqual(["Fallido", "Fallido", "Fallido"]);
   });
 
+  it("contraseña de más de 72 bytes → mismo 401, Fallido y compara igual (sin truncar)", async () => {
+    const long = "a".repeat(72);
+    const longHash = await bcrypt.hash(long, 4);
+    seedUser({ [U.passwordHash]: longHash });
+    const spy = vi.spyOn(bcrypt, "compare");
+    // Los primeros 72 bytes coinciden: bcrypt truncando la aceptaría.
+    expect(await login("ana@kairos.test", long + "ñ")).toEqual({ ok: false, status: 401, error: LOGIN_MESSAGES.incorrecto });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(attempts()).toEqual(["Fallido"]);
+    expect(await login("ana@kairos.test", long)).toMatchObject({ ok: true });
+  });
+
   it("con email desconocido igual corre bcrypt (hash fijo)", async () => {
     const spy = vi.spyOn(bcrypt, "compare");
     await login("nadie@kairos.test", PASSWORD);
@@ -222,10 +234,13 @@ describe("login · falla cerrado", () => {
   });
 });
 
-describe("clientIp", () => {
-  it("x-real-ip, si no el primer x-forwarded-for, si no desconocida", () => {
+describe("clientIp (F-08)", () => {
+  it("orden: x-vercel-forwarded-for, x-real-ip, primer x-forwarded-for, desconocida", () => {
+    const all = { "x-vercel-forwarded-for": "9.9.9.9, 8.8.8.8", "x-real-ip": "1.1.1.1", "x-forwarded-for": "2.2.2.2" };
+    expect(clientIp(new Headers(all))).toBe("9.9.9.9");
     expect(clientIp(new Headers({ "x-real-ip": "1.1.1.1", "x-forwarded-for": "2.2.2.2" }))).toBe("1.1.1.1");
     expect(clientIp(new Headers({ "x-forwarded-for": " 2.2.2.2 , 3.3.3.3" }))).toBe("2.2.2.2");
+    expect(clientIp(new Headers({ "x-vercel-forwarded-for": " ", "x-real-ip": "" }))).toBe("desconocida");
     expect(clientIp(new Headers())).toBe("desconocida");
   });
 });

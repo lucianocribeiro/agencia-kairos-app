@@ -14,7 +14,6 @@ export const LOGIN_MESSAGES = {
 } as const;
 
 const MAX_EMAIL_LENGTH = 254;
-const MAX_PASSWORD_LENGTH = 1024;
 
 export interface LoginInput {
   email: unknown;
@@ -27,12 +26,21 @@ export type LoginResult =
   | { ok: true; user: AuthUser; redirectTo: string }
   | { ok: false; status: 400 | 401 | 429 | 503; error: string };
 
-/** IP del cliente: x-real-ip, si no el primer valor de x-forwarded-for, si no "desconocida". */
+/**
+ * IP del cliente, en este orden:
+ * 1. `x-vercel-forwarded-for`: la fuente que documenta Vercel; a diferencia de
+ *    `x-forwarded-for`, no la pisa un proxy delante de Vercel.
+ *    https://vercel.com/docs/headers/request-headers#x-vercel-forwarded-for
+ *    (`ipAddress()` de @vercel/functions también lee estos headers:
+ *    https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package#ipaddress)
+ * 2. `x-real-ip`
+ * 3. el primer valor de `x-forwarded-for`
+ * 4. "desconocida"
+ * Fuera de Vercel (p. ej. `next dev`) estos headers los puede mandar el cliente.
+ */
 export function clientIp(headers: Headers): string {
-  const real = headers.get("x-real-ip")?.trim();
-  if (real) return real;
-  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || "desconocida";
+  const first = (name: string) => headers.get(name)?.split(",")[0]?.trim() || null;
+  return first("x-vercel-forwarded-for") ?? first("x-real-ip") ?? first("x-forwarded-for") ?? "desconocida";
 }
 
 export function homeFor(user: Pick<AuthUser, "rol" | "debeCambiarPassword">): string {
@@ -52,8 +60,7 @@ export async function attemptLogin(input: LoginInput, now: Date = new Date()): P
     typeof input.password !== "string" ||
     !input.email.trim() ||
     !input.password ||
-    input.email.length > MAX_EMAIL_LENGTH ||
-    input.password.length > MAX_PASSWORD_LENGTH
+    input.email.length > MAX_EMAIL_LENGTH
   ) {
     return { ok: false, status: 400, error: LOGIN_MESSAGES.incompleto };
   }
@@ -76,6 +83,8 @@ export async function attemptLogin(input: LoginInput, now: Date = new Date()): P
   }
 
   // 4–5. Buscar y comparar (con hash fijo si no existe). Mismo mensaje en los tres casos.
+  // Una contraseña de más de 72 bytes nunca coincide: comparePassword la cuenta como
+  // fallida (comparando igual contra el hash fijo, sin truncar) y queda como Fallido.
   let user: AuthUser | null;
   try {
     user = await verifyPasswordByEmail(email, input.password);

@@ -55,26 +55,29 @@ El token de Airtable necesita `data.records:read` y `data.records:write`; para c
 | `npm run typecheck`     | Chequeo de tipos con TypeScript.                                         |
 | `npm test`              | Tests unitarios (Vitest).                                                |
 | `npm run check:bundle`  | Después del build, busca en `.next/static` los nombres y valores de los secretos. Falla si aparece alguno. |
-| `npm run setup:intentos-login` | Crea (o verifica, si ya existe) la tabla "Intentos de login" en Airtable. Idempotente. |
+| `npm run setup:intentos-login` | Verifica la tabla "Intentos de login" contra `lib/airtable/schema.ts` (tipos e IDs); si no existe, la crea, muestra los IDs nuevos y sale con error hasta que actualices `schema.ts`. Con `-- --verify` solo lee. |
 | `npm run bootstrap:admin` | **Solo local.** Crea el primer Admin si no existe (ver abajo). |
 
 Antes de abrir un PR tienen que pasar: `lint`, `build`, `test` y `check:bundle`. GitHub Actions los corre en cada PR (`.github/workflows/ci.yml`).
 
 ## Autenticación
 
-- **Login** (`/login` → `POST /api/auth/login`): email, contraseña y la casilla «No soy un robot». Contraseñas con bcrypt (costo 12).
+- **Login** (`/login` → `POST /api/auth/login`): email, contraseña y la casilla «No soy un robot». Contraseñas con bcrypt (costo 12). Una contraseña de más de 72 bytes cuenta como intento fallido (nunca se trunca).
+- **IP del cliente** (para el bloqueo por IP): `x-vercel-forwarded-for` (la fuente que documenta Vercel: [request headers](https://vercel.com/docs/headers/request-headers#x-vercel-forwarded-for)), si no `x-real-ip`, si no el primer valor de `x-forwarded-for`, si no "desconocida".
 - **Bloqueo temporal** (tabla "Intentos de login"): 5 fallidos por email en 15 minutos (contando solo los posteriores al último ingreso exitoso) o 20 fallidos por IP en 15 minutos → 429 durante 15 minutos. Si no se puede leer la tabla, el login falla cerrado (503).
 - **Sesión**: cookie `kairos_session` httpOnly, `Secure` en producción, `SameSite=Lax`, 12 h sin renovación. Es un JWT HS256 (jose) con el ID del usuario, la fecha de emisión y una huella del hash de la contraseña: si la contraseña cambia, las sesiones viejas dejan de valer. En cada request se vuelve a leer el usuario (caché de 30 s por instancia): la sesión se invalida si el usuario no existe, está Inactivo o cambió la contraseña.
-- **Cambiar contraseña** (`/cambiar-password` → `POST /api/auth/password`): mínimo 10 caracteres, distinta de la actual. Si el usuario tiene «Debe cambiar password», no puede usar nada más hasta cambiarla.
-- **Cerrar sesión**: `POST /api/auth/logout`.
+- **Contraseñas nuevas**: mínimo 10 caracteres y máximo 72 bytes UTF-8 (los caracteres con tilde ocupan 2 bytes, los emojis 4). Todo hash sale de `hashNewPassword()` en `lib/auth/password.ts`.
+- **Cambiar contraseña** (`/cambiar-password` → `POST /api/auth/password`): distinta de la actual. Usa el mismo bloqueo que el login (mismo contador por email e IP): una contraseña actual incorrecta cuenta como Fallido. Si el usuario tiene «Debe cambiar password», no puede usar nada más hasta cambiarla.
+- **Cerrar sesión**: `POST /api/auth/logout` con body JSON (415 si no es JSON, para que un formulario de otro sitio no pueda cerrar la sesión). El botón del header lo llama con `fetch` y después navega a `/login`. Login y cambio de contraseña también exigen JSON.
 - **Guards** (`lib/auth/guards.ts`): `requireUser()` y `requireAdmin()`. En páginas redirigen (sin sesión → `/login`; Empleado en página de Admin → `/mis-horas`); en APIs responden 401/403 en JSON.
 - **`proxy.ts`** (la interceptación de Next 16, ex `middleware.ts`): solo redirige a `/login` si la cookie falta o su firma no es válida. La autorización real siempre la hacen los guards.
 
 ### Convención para el resto de Fase 1
 
-- **Toda mutación pasa por un Route Handler**, exportado con `apiRoute()` (`lib/auth/api.ts`).
-- **Endpoints de Admin** en `app/api/admin/**`: lo primero es `await requireAdmin()`. Un test recorre esa carpeta y falla si alguna ruta no lo hace.
-- **Endpoints de Empleado** en `app/api/me/**`: lo primero es `await requireUser()`.
+- **Toda mutación pasa por un Route Handler**, con los wrappers de `lib/auth/api.ts`.
+- **Endpoints de Admin** en `app/api/admin/**`: cada método es `export const GET = adminRoute(async (request, user) => { ... })` (igual POST/PUT/PATCH/DELETE). `adminRoute` corre `requireAdmin()` antes del handler.
+- **Endpoints de Empleado** en `app/api/me/**`: `export const GET = userRoute(...)`, que corre `requireUser()`.
+- Un test por AST (`test/route-guards.test.ts`) falla si algún método exportado en esas carpetas no está envuelto, o si se declara como `export async function GET`.
 - **Respuestas a un Empleado**: pasan por el recorte por rol de `lib/airtable/access.ts`.
 - **Páginas protegidas**: envuelven su contenido en `<Guarded>` o `<Guarded admin>`.
 
@@ -85,7 +88,7 @@ Antes de abrir un PR tienen que pasar: `lint`, `build`, `test` y `check:bundle`.
 npm run bootstrap:admin
 ```
 
-Si ya existe un usuario con `luciano@agenciakairos.net` (sin importar mayúsculas), no cambia nada. Si no, lo crea como Admin Activo, sigla LR, con «Debe cambiar password» = sí. No imprime la contraseña ni el hash. `BOOTSTRAP_ADMIN_PASSWORD` nunca se configura en Vercel.
+Antes de tocar nada, rechaza `BOOTSTRAP_ADMIN_PASSWORD` si tiene menos de 10 caracteres o más de 72 bytes, y verifica que los IDs de Usuarios de la base coincidan con `lib/airtable/schema.ts`. Si ya existe un usuario con `luciano@agenciakairos.net` (sin importar mayúsculas), no cambia nada. Si no, lo crea como Admin Activo, sigla LR, con «Debe cambiar password» = sí. No imprime la contraseña ni el hash. `BOOTSTRAP_ADMIN_PASSWORD` nunca se configura en Vercel.
 
 ## Estructura
 
@@ -120,6 +123,9 @@ scripts/
 ```
 
 ## Reglas técnicas
+
+- **Dependencias con versión exacta** en `package.json` (`.npmrc` con `save-exact=true`). Usá `npm ci` para instalar exactamente el lockfile.
+- **Reintentos de Airtable**: las lecturas reintentan 429, 5xx y errores de red; `update` y `delete` reintentan 429 y 5xx; los `create` no se reintentan nunca, porque la documentación de Airtable ([rate limits](https://airtable.com/developers/web/api/rate-limits), [errores](https://airtable.com/developers/web/api/errors)) no garantiza que un 429 no se haya aplicado y un reintento podría duplicar registros.
 
 - **Airtable solo desde el servidor.** Todo vive en `lib/airtable/` y cada archivo importa `server-only`: si un componente cliente lo importa, el build falla.
 - **IDs, nunca nombres.** Tablas y campos se referencian por ID desde `lib/airtable/schema.ts`. Las lecturas usan `returnFieldsByFieldId` y piden solo los campos necesarios (`fields`). Las escrituras van por ID de campo.

@@ -19,12 +19,17 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Convención de autenticación y APIs (resto de Fase 1)
 
-- Toda mutación pasa por un Route Handler (no Server Actions). Cada handler se exporta como `export const POST = apiRoute(async (request) => { ... })` (`lib/auth/api.ts`).
-- Endpoints de Admin: `app/api/admin/**`, y lo primero que hacen es `await requireAdmin()`. Un test (`test/api-admin-guard.test.ts`) recorre esa carpeta y falla si alguna ruta no lo llama.
-- Endpoints de Empleado: `app/api/me/**`, y lo primero que hacen es `await requireUser()`.
+- Toda mutación pasa por un Route Handler (no Server Actions). Wrappers en `lib/auth/api.ts`.
+- Endpoints de Admin: `app/api/admin/**`. Cada método exportado es `export const GET = adminRoute(async (request, user) => { ... })` (igual POST/PUT/PATCH/DELETE); `adminRoute` corre `requireAdmin()` antes del handler. Nada de `export async function GET`.
+- Endpoints de Empleado: `app/api/me/**`, con `export const GET = userRoute(...)` (corre `requireUser()`).
+- `test/route-guards.test.ts` lo verifica por AST (TypeScript compiler API) y falla si un método no está envuelto.
+- Rutas públicas de auth (`app/api/auth/**`) usan `apiRoute` directo. Todo POST lee el body con `readJsonBody` (415 si no es JSON).
 - Las respuestas a un Empleado pasan por el recorte por rol de `lib/airtable/access.ts` (`readableFields` / `redactFields`).
 - Cada página protegida envuelve su contenido en `<Guarded>` / `<Guarded admin>` (`components/auth/guarded.tsx`): el guard del layout no alcanza porque los layouts no se re-renderizan al navegar.
 - `Usuarios.passwordHash` solo se lee en `lib/auth/credentials.ts` (test `test/password-hash-reader.test.ts`).
+- Todo hash de contraseña sale de `hashNewPassword()` (`lib/auth/password.ts`): 10+ caracteres y máx. 72 bytes UTF-8 (bcrypt). Nunca truncar.
+- Cliente de Airtable: los `create` no se reintentan nunca; `update`/`delete` sí ante 429/5xx.
+- Dependencias con versión exacta (`.npmrc` con `save-exact=true`).
 - Toda escritura a un usuario llama a `invalidateCachedUser(id)` (`lib/auth/user-cache.ts`).
 - Nunca poner datos por usuario en `use cache` ni en otro caché entre requests.
 - Interceptación de requests: `proxy.ts` (Next 16; `middleware.ts` está deprecado). Solo redirige a /login si falta la cookie o su firma es inválida.

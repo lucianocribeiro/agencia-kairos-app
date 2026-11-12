@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens Kairos.
+ * Se borra la paleta por defecto de Tailwind (`--color-*: initial`) para que
+ * no exista ningún azul (ni ningún otro color fuera de estos tokens).
+ */
+@theme {
+  --color-*: initial;
+
+  --color-bg: #000000;
+  --color-surface: #030712;
+  --color-card: #111827;
+  --color-line: #1f2937;
+  --color-text: #d1d5db;
+  --color-muted: #9ca3af;
+  --color-accent: #0de8e1;
+  --color-accent-ink: #000000;
+  /* Solo para errores de validación y mensajes de éxito. */
+  --color-danger: #c27a7a;
+  --color-success: #7fae8c;
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  --font-sans: var(--font-sora), ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* Sin azules del navegador: links, selección, controles nativos, autofill. */
+a {
+  color: inherit;
+}
+
+::selection {
+  background-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  color: var(--color-white);
+}
+
+input,
+select,
+textarea {
+  accent-color: var(--color-accent);
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--color-text);
+  -webkit-box-shadow: 0 0 0 1000px var(--color-surface) inset;
+  caret-color: var(--color-text);
+}
+
+/* Foco de teclado visible con el anillo accent en todo lo enfocable. */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}

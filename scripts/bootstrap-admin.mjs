@@ -4,17 +4,24 @@
  *
  * Lee .env.local (AIRTABLE_TOKEN, AIRTABLE_BASE_ID, BOOTSTRAP_ADMIN_PASSWORD).
  * BOOTSTRAP_ADMIN_PASSWORD nunca se configura en Vercel.
- * Si ya hay un usuario con ese email (sin distinguir mayúsculas), no cambia nada.
- * Nunca imprime la contraseña ni el hash.
  *
- * Los IDs están copiados de lib/airtable/schema.ts (un .mjs no puede importar
- * ese módulo TypeScript server-only); scripts/bootstrap-admin.test.ts verifica
- * que coincidan.
+ * Orden:
+ * 1. Rechaza (exit 1) si BOOTSTRAP_ADMIN_PASSWORD no cumple la política de
+ *    lib/auth/password.ts (10+ caracteres, máx. 72 bytes). No llama a Airtable.
+ * 2. Verifica que los IDs de Usuarios coincidan con lib/airtable/schema.ts y con
+ *    la base real (Meta API, solo lectura). Si no → exit 1 con los IDs reales.
+ * 3. Si ya hay un usuario con ese email (sin distinguir mayúsculas), no cambia nada.
+ * 4. Si no, lo crea. El hash sale de hashNewPassword (lib/auth/password.ts).
+ *
+ * Nunca imprime la contraseña ni el hash.
+ * Se corre con `node --experimental-strip-types` para importar lib/auth/password.ts.
  */
 import process from "node:process";
 
 import nextEnv from "@next/env";
-import bcrypt from "bcryptjs";
+
+import { checkNewPassword, hashNewPassword } from "../lib/auth/password.ts";
+import { diffTable, fetchBaseTables, schemaTable } from "./lib/schema-ids.mjs";
 
 nextEnv.loadEnvConfig(process.cwd(), true, { info: () => {}, error: console.error });
 
@@ -29,22 +36,52 @@ export const IDS = {
   debeCambiarPassword: "fldTuOm2vDwBhiGBB",
 };
 
+/** clave en schema.ts → nombre del campo en Airtable */
+const NAMES = {
+  nombre: "Nombre",
+  email: "Email",
+  rol: "Rol",
+  estado: "Estado",
+  sigla: "Sigla",
+  passwordHash: "Password hash",
+  debeCambiarPassword: "Debe cambiar password",
+};
+
 const ADMIN = {
   nombre: "Luciano Ribeiro",
   email: "luciano@agenciakairos.net",
   sigla: "LR",
 };
-const BCRYPT_COST = 12;
+
+function exit(message) {
+  console.error(`✖ ${message}`);
+  process.exit(1);
+}
 
 async function main() {
   const { AIRTABLE_TOKEN: token, AIRTABLE_BASE_ID: baseId, BOOTSTRAP_ADMIN_PASSWORD: password } = process.env;
   const missing = ["AIRTABLE_TOKEN", "AIRTABLE_BASE_ID", "BOOTSTRAP_ADMIN_PASSWORD"].filter((k) => !process.env[k]);
-  if (missing.length > 0) {
-    console.error(`✖ Faltan en .env.local: ${missing.join(", ")}`);
-    process.exit(1);
+  if (missing.length > 0) exit(`Faltan en .env.local: ${missing.join(", ")}`);
+
+  // 1. Política de contraseña (antes de cualquier llamada a Airtable).
+  const problem = checkNewPassword(password);
+  if (problem) exit(`BOOTSTRAP_ADMIN_PASSWORD no es válida: ${problem}`);
+
+  // 2. IDs: constantes del script = schema.ts = base real.
+  const expected = schemaTable("usuarios");
+  const local = Object.entries(NAMES).filter(([key]) => IDS[key] !== expected.fields[key]).map(([key]) => key);
+  if (IDS.usuarios !== expected.id || local.length > 0) {
+    exit(`Los IDs de este script no coinciden con lib/airtable/schema.ts (${[IDS.usuarios !== expected.id ? "tabla" : null, ...local].filter(Boolean).join(", ")}).`);
   }
-  if (password.length < 10) {
-    console.error("✖ BOOTSTRAP_ADMIN_PASSWORD tiene que tener al menos 10 caracteres.");
+  const usuarios = (await fetchBaseTables(token, baseId)).find((t) => t.id === expected.id || t.name === "Usuarios");
+  if (!usuarios) exit("No encontré la tabla Usuarios en la base.");
+  const diffs = diffTable(usuarios, expected, NAMES);
+  if (diffs.length > 0) {
+    console.error("✖ La tabla Usuarios de la base no coincide con lib/airtable/schema.ts:");
+    for (const d of diffs) console.error(`  - ${d}`);
+    console.error("IDs reales:");
+    console.error(`  tabla ${usuarios.id}`);
+    for (const f of usuarios.fields) console.error(`  ${f.id}  ${f.name}`);
     process.exit(1);
   }
 
@@ -53,11 +90,10 @@ async function main() {
   const fail = async (res) => {
     const data = await res.json().catch(() => ({}));
     const type = typeof data.error === "string" ? data.error : data.error?.type;
-    console.error(`✖ Airtable respondió ${res.status}${type ? ` (${type})` : ""}`);
-    process.exit(1);
+    exit(`Airtable respondió ${res.status}${type ? ` (${type})` : ""}`);
   };
 
-  // ¿Ya existe? (el email es una constante, no input de usuario)
+  // 3. ¿Ya existe? (el email es una constante, no input de usuario)
   const list = await fetch(`${base}/listRecords`, {
     method: "POST",
     headers,
@@ -75,7 +111,8 @@ async function main() {
     return;
   }
 
-  const hash = await bcrypt.hash(password, BCRYPT_COST);
+  // 4. Crear.
+  const hash = await hashNewPassword(password);
   const create = await fetch(base, {
     method: "POST",
     headers,

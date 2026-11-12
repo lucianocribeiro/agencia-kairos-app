@@ -77,3 +77,12 @@ export function sanitizeMessage(message: string, secrets: readonly string[]): st
   out = out.replace(/\bpat[A-Za-z0-9]{14}\.[A-Za-z0-9]+/g, "[redactado]");
   return out.length > MAX_MESSAGE_LENGTH ? `${out.slice(0, MAX_MESSAGE_LENGTH)}…` : out;
 }
+
+/**
+ * Resumen para logs sin mensajes de la API (que pueden traer valores de los
+ * registros): solo código, status y tipo. Nunca el body ni el token.
+ */
+export function summarizeError(err: unknown): Record<string, unknown> {
+  if (err instanceof AirtableError) return { name: err.name, code: err.code, status: err.status, airtableType: err.airtableType };
+  return { name: err instanceof Error ? err.name : typeof err };
+}

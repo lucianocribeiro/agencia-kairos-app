@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { canReadField, readableFields, redactFields } from "./access";
-import { COMPUTED_FIELDS, FIELD_TABLE, READ_ONLY_FIELDS, RESTRICTED_FIELDS, TABLES } from "./schema";
+import { COMPUTED_FIELDS, FIELD_TABLE, READ_ONLY_FIELDS, REFERENCE_FIELDS, RESTRICTED_FIELDS, TABLES } from "./schema";
 
 const H = TABLES.horas.fields;
 const U = TABLES.usuarios.fields;
@@ -33,8 +33,21 @@ describe("schema", () => {
     );
   });
 
-  it("links inversos de solo lectura", () => {
-    expect(READ_ONLY_FIELDS).toEqual(new Set([U.horasReverse, U.horas2Reverse, P.usuarios]));
+  it("links inversos de solo lectura = todas las referencias", () => {
+    for (const id of [U.horasReverse, U.horas2Reverse, P.usuarios, TABLES.clientes.fields.proyectos, TABLES.categorias.fields.proveedores]) {
+      expect(READ_ONLY_FIELDS.has(id)).toBe(true);
+    }
+    expect(READ_ONLY_FIELDS.size).toBe(Object.values(REFERENCE_FIELDS).flat().length);
+    // los links que sí se escriben no son de solo lectura
+    for (const id of [P.cliente, TABLES.usuarios.fields.proyectosAsignados, TABLES.proveedores.fields.categoriaPorDefecto]) {
+      expect(READ_ONLY_FIELDS.has(id)).toBe(false);
+    }
+  });
+
+  it("cada referencia pertenece a su tabla", () => {
+    for (const [key, ids] of Object.entries(REFERENCE_FIELDS)) {
+      for (const id of ids) expect(FIELD_TABLE.get(id)).toBe(TABLES[key as keyof typeof TABLES].id);
+    }
   });
 
   it("campos restringidos", () => {

@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 
 import { Guarded } from "@/components/auth/guarded";
-import { PlaceholderPage } from "@/components/shell/placeholder-page";
+import { MaestroPage } from "@/components/abm/server/maestro-page";
 
 export const metadata: Metadata = { title: "Cuentas" };
 
 export default function Page() {
   return (
     <Guarded admin>
-      <PlaceholderPage title="Cuentas" />
+      <MaestroPage slug="cuentas" />
     </Guarded>
   );
 }

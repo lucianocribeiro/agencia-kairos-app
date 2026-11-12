@@ -2,11 +2,11 @@
 
 App interna de Agencia Kairos. Next.js (App Router) + TypeScript + Tailwind CSS, con Airtable como base de datos. Se deploya en Vercel.
 
-> Estado: **Fase 1 · CC-F1-02 (auth, sesión, bloqueo, primer Admin)**. Hay login, cambio de contraseña y guards por rol. Usuarios, maestros, horas y dashboard todavía muestran "En construcción".
+> Estado: **Fase 1 · CC-F1-03 (Usuarios y Maestros)**. Hay login, cambio de contraseña, guards por rol y ABM de Usuarios y de los 10 Maestros para Admin. Horas y dashboard todavía muestran "En construcción" (CC-F1-04).
 
 ## Requisitos
 
-- Node.js 22 o superior
+- Node.js 22.22.2 o superior dentro de la línea 22 (o 24.15+, o 26+). Lo fija `jsdom` (dev), que es la dependencia con el mínimo más alto. Está en `.nvmrc` y en `engines` de `package.json`; CI usa `.nvmrc`.
 - npm
 
 ## Setup
@@ -90,6 +90,14 @@ npm run bootstrap:admin
 
 Antes de tocar nada, rechaza `BOOTSTRAP_ADMIN_PASSWORD` si tiene menos de 10 caracteres o más de 72 bytes, y verifica que los IDs de Usuarios de la base coincidan con `lib/airtable/schema.ts`. Si ya existe un usuario con `luciano@agenciakairos.net` (sin importar mayúsculas), no cambia nada. Si no, lo crea como Admin Activo, sigla LR, con «Debe cambiar password» = sí. No imprime la contraseña ni el hash. `BOOTSTRAP_ADMIN_PASSWORD` nunca se configura en Vercel.
 
+## Usuarios y Maestros (Admin)
+
+- **Usuarios** (`/usuarios`): lista con filtros por Rol y Estado y búsqueda; alta con contraseña temporal (se tipea o se genera, 14 caracteres) y «Debe cambiar password» = sí; edición; activar/desactivar; reset de contraseña. No se borran. Un Admin no puede desactivarse ni cambiarse el rol a sí mismo, y siempre tiene que quedar al menos un Admin activo.
+- **Maestros** (`/maestros/*`): un ABM único configurado por tabla (`lib/abm/maestros.ts` + `lib/abm/server/maestros-config.ts`). Lista con búsqueda, orden por el campo principal y filtro por Estado donde existe; alta, edición y borrado solo si la tabla lo permite y el registro no tiene registros asociados (si los tiene: 409). Clientes y Proyectos no se borran: se usa Estado.
+- **Reglas destacadas**: el Código de un proyecto es `Sigla del cliente - Nombre corto` y lo arma el servidor; cambiar la sigla de un cliente recalcula los Códigos de sus proyectos (si alguno choca, se rechaza el cambio entero; si una escritura falla a mitad de camino, se revierte todo). CUIT validado con dígito verificador y guardado solo con dígitos. Números en formato es-AR (`1.234,56`; también `1234,56` y `1234.56`).
+- **API**: `app/api/admin/usuarios/**` y `app/api/admin/maestros/[tabla]/**`, todo con `adminRoute`. Errores: 400 validación, 409 duplicado/choque, 404 no encontrado, 503 Airtable no disponible (o cascada revertida).
+- **Concurrencia**: sin transacciones; las reglas de unicidad y «al menos un Admin activo» se verifican también después de escribir y se compensan; si esa verificación no se puede leer, el cambio se deshace (503). Detalle y riesgo residual en `AGENTS.md`.
+
 ## Estructura
 
 ```
@@ -105,6 +113,7 @@ components/
   ui/              componentes base (Button, Input, Select, Checkbox, Card, Table, FormField, Toast, InlineMessage)
   shell/           shell de la app (sidebar, drawer mobile, header, menú por rol)
   auth/            formularios de login y contraseña, <Guarded>
+  abm/             tabla, formulario y gestores de Usuarios y Maestros
 lib/
   airtable/        acceso a Airtable (solo servidor)
     schema.ts      IDs de tablas y campos: fuente única de verdad
@@ -112,7 +121,9 @@ lib/
     formula.ts     helpers seguros para filterByFormula
     access.ts      qué campos puede ver cada rol
     errors.ts      AirtableError
+  abm/             specs y validación de Usuarios y Maestros (client-safe); server/ con la parte de servidor
   auth/            sesión, guards, login, bloqueo, credenciales (solo servidor, salvo token/constants)
+  cuit.ts          validación y formato de CUIT
   env.ts           validación de variables de entorno (solo servidor)
   format.ts        formatos es-AR (fechas, números, duraciones, porcentajes)
 proxy.ts           interceptación de requests (Next 16)

@@ -64,3 +64,17 @@ describe("comparePassword", () => {
     expect(spy.mock.calls[0][1]).toBe(DUMMY_HASH);
   });
 });
+
+describe("generateTemporaryPassword", () => {
+  it("14 caracteres ASCII que cumplen la política, y distintos cada vez", async () => {
+    const { generateTemporaryPassword } = await import("./password-policy");
+    const seen = new Set<string>();
+    for (let i = 0; i < 50; i++) {
+      const p = generateTemporaryPassword();
+      expect(p).toMatch(/^[A-Za-z2-9]{14}$/);
+      expect(checkNewPassword(p)).toBeNull();
+      seen.add(p);
+    }
+    expect(seen.size).toBe(50);
+  });
+});

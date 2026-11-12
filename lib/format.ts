@@ -163,3 +163,30 @@ export function displayToPercent(text: string | null | undefined): number | null
   if (n === null) return null;
   return Math.round(n * 1e6) / 1e8;
 }
+
+/**
+ * Parser de inputs numéricos que tipea un usuario argentino.
+ * Acepta:  "1.234,56" (miles con punto, decimal con coma) · "1234,56" · "1234" ·
+ *          "1234.56" o "12.5" (un solo punto como decimal) · "1.234.567" (varios puntos = miles) ·
+ *          signo "-" adelante y espacios alrededor.
+ * Rechaza lo ambiguo o mal formado (devuelve null): "1.234" (¿mil o uno coma dos?),
+ *          "1,234.56", "1.23,4", "1,2,3", ",5", "5,", "", "abc".
+ */
+export function parseNumberInput(text: string | null | undefined): number | null {
+  if (text === null || text === undefined) return null;
+  const s = text.trim().replace(/\s+/g, "");
+  if (!s) return null;
+  let normalized: string | null = null;
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) {
+    // miles con punto (2+ grupos o con decimales con coma)
+    if (/^-?\d{1,3}\.\d{3}$/.test(s)) return null; // "1.234": ambiguo
+    normalized = s.replace(/\./g, "").replace(",", ".");
+  } else if (/^-?\d+(,\d+)?$/.test(s)) {
+    normalized = s.replace(",", ".");
+  } else if (/^-?\d+\.\d+$/.test(s)) {
+    normalized = s; // un solo punto como decimal (el caso "1.234" ya se descartó arriba)
+  }
+  if (normalized === null) return null;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}

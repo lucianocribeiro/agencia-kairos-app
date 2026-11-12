@@ -63,6 +63,12 @@ export const TABLES = {
       nombre: "fldw5I8dKZqnBNYBN",
       /** percent: la API devuelve un decimal (0.5 = 50 %) */
       porcentajeRetiros: "fldF1vdh3Fnc9ikfd",
+      /** Link inverso (solo lectura): Usuarios.socio. */
+      usuarios: "fldCtk8E0nQ9uzjNX",
+      /** Link inverso (solo lectura): Compras.imputar a socio. */
+      compras: "fldw8DkZohIFwAgYz",
+      /** Link inverso (solo lectura): Tesorería.socio. */
+      tesoreria: "fldSHwsvCIPzZ34ud",
     },
   },
 
@@ -71,6 +77,12 @@ export const TABLES = {
     name: "Unidades de negocio",
     fields: {
       nombre: "fldfvpNzag1AioI1v",
+      /** Link inverso (solo lectura): Proyectos.unidadNegocio. */
+      proyectos: "fldgCDhb3F01NCz4l",
+      /** Link inverso (solo lectura): Ventas.unidad de negocio. */
+      ventas: "fld4csMflNzYGAg7B",
+      /** Link inverso (solo lectura): Compras.unidad de negocio. */
+      compras: "fldaxfL91AtohiLrU",
     },
   },
 
@@ -82,6 +94,16 @@ export const TABLES = {
       /** singleSelect: ver `choices.tipo` */
       tipo: "fldNyFuZJLvR0RZeD",
       requiereProyecto: "fldtPBOw0KCG3Z9mI",
+      /** Link inverso (solo lectura): Tipos de operación.categoriaPorDefecto. */
+      tiposOperacion: "fldQiaXj3UFOTDafD",
+      /** Link inverso (solo lectura): Ventas.categoría. */
+      ventas: "fldjjumvQVqxV3s9d",
+      /** Link inverso (solo lectura): Compras.categoría. */
+      compras: "fldcuTHJLAiGOB1TT",
+      /** Link inverso (solo lectura): Tesorería.categoría. */
+      tesoreria: "fld14ttxfT8RWfUYY",
+      /** Link inverso (solo lectura): Proveedores.categoriaPorDefecto. */
+      proveedores: "fldq0YnGo38FlM29R",
     },
     choices: {
       tipo: ["Ingreso", "Gasto"],
@@ -99,6 +121,8 @@ export const TABLES = {
       cbu: "fld2oEUBfMUTe0BWE",
       saldoInicial: "fldpJvKGcj1KnlY67",
       fechaSaldoInicial: "fld2IlAnqu22wDyjp",
+      /** Link inverso (solo lectura): Tesorería.cuenta. */
+      tesoreria: "fldJemNAUfadsTYdf",
     },
     choices: {
       moneda: ["ARS", "USD"],
@@ -112,6 +136,10 @@ export const TABLES = {
       codigo: "fldvcpVg1SQHxQPnc",
       descripcion: "fld9ckJyxqUv1zun2",
       signo: "fld8Ihuj2aDa7CdDu",
+      /** Link inverso (solo lectura): Ventas.tipo comprobante. */
+      ventas: "fldxRBIM7G1WK0mII",
+      /** Link inverso (solo lectura): Compras.tipo comprobante. */
+      compras: "fldFz7UCDUUTmu9lO",
     },
   },
 
@@ -130,6 +158,12 @@ export const TABLES = {
       telefono: "fldWiDGoAIapY06kH",
       mail: "fldhp5lVafjdAsdFB",
       observaciones: "fldzUhgXEDxvv89aY",
+      /** Link inverso (solo lectura): Proyectos.cliente. */
+      proyectos: "fldEu1ghFqF8jtVMM",
+      /** Link inverso (solo lectura): Ventas.cliente. */
+      ventas: "fldP7WVJnruka9dt5",
+      /** Link inverso (solo lectura): Tesorería.cliente. */
+      tesoreria: "fldfq5DMOJLuKAXop",
     },
     choices: {
       estado: ["Cliente", "Lead", "Ex cliente", "Perdido"],
@@ -155,6 +189,8 @@ export const TABLES = {
       categoriaPorDefecto: "fld0mDUthxRN7JyjI",
       pideClienteProveedor: "fldLXNYk1keAGueCV",
       esDeSocio: "fldq509hY3qgc3VpH",
+      /** Link inverso (solo lectura): Tesorería.tipo de operación. */
+      tesoreria: "fldeQasfm66TayGIJ",
     },
     choices: {
       movimiento: ["Cobranza", "Pago", "Ambos"],
@@ -179,6 +215,12 @@ export const TABLES = {
       descripcion: "fldwIsCSOB486kRue",
       /** Link inverso de Usuarios.proyectosAsignados. Solo lectura. */
       usuarios: "fldX6jchng6G6l1ni",
+      /** Link inverso (solo lectura): Ventas.proyecto. */
+      ventas: "fldDhArTXATCLna3Q",
+      /** Link inverso (solo lectura): Compras.proyecto. */
+      compras: "fldcyBqMayWdN3TXv",
+      /** Link inverso (solo lectura): Horas.proyecto. */
+      horas: "fldAuFs9t1ZXiScGp",
     },
     choices: {
       monedaValorHora: ["ARS", "USD"],
@@ -200,6 +242,10 @@ export const TABLES = {
       /** link → Categorías */
       categoriaPorDefecto: "fldOT6WXx9NiywG4K",
       observaciones: "fldop7yLAdmlChdl5",
+      /** Link inverso (solo lectura): Compras.proveedor. */
+      compras: "fldoVdDyGjRq8kakf",
+      /** Link inverso (solo lectura): Tesorería.proveedor. */
+      tesoreria: "fldqI92QpqZ9FJXCx",
     },
     choices: {
       condicionIva: [
@@ -301,12 +347,39 @@ export const COMPUTED_FIELDS: ReadonlySet<string> = new Set<FieldId>([
   F.horas.creado,
 ]);
 
+/**
+ * Links inversos: "quién apunta a este registro". Se leen (chequeo de
+ * referencias antes de borrar, listas) pero nunca se escriben desde esta tabla.
+ * Es también la lista de referencias que bloquean un borrado.
+ */
+export const REFERENCE_FIELDS = {
+  usuarios: [F.usuarios.horasReverse, F.usuarios.horas2Reverse],
+  socios: [TABLES.socios.fields.usuarios, TABLES.socios.fields.compras, TABLES.socios.fields.tesoreria],
+  unidadesNegocio: [
+    TABLES.unidadesNegocio.fields.proyectos,
+    TABLES.unidadesNegocio.fields.ventas,
+    TABLES.unidadesNegocio.fields.compras,
+  ],
+  categorias: [
+    TABLES.categorias.fields.tiposOperacion,
+    TABLES.categorias.fields.ventas,
+    TABLES.categorias.fields.compras,
+    TABLES.categorias.fields.tesoreria,
+    TABLES.categorias.fields.proveedores,
+  ],
+  cuentas: [TABLES.cuentas.fields.tesoreria],
+  tiposComprobante: [TABLES.tiposComprobante.fields.ventas, TABLES.tiposComprobante.fields.compras],
+  clientes: [TABLES.clientes.fields.proyectos, TABLES.clientes.fields.ventas, TABLES.clientes.fields.tesoreria],
+  tiposOperacion: [TABLES.tiposOperacion.fields.tesoreria],
+  proyectos: [F.proyectos.usuarios, TABLES.proyectos.fields.ventas, TABLES.proyectos.fields.compras, TABLES.proyectos.fields.horas],
+  proveedores: [TABLES.proveedores.fields.compras, TABLES.proveedores.fields.tesoreria],
+  parametros: [],
+  horas: [],
+  intentosLogin: [],
+} as const satisfies Record<TableKey, readonly FieldId[]>;
+
 /** Links inversos que se leen pero nunca se escriben desde la app. */
-export const READ_ONLY_FIELDS: ReadonlySet<string> = new Set<FieldId>([
-  F.usuarios.horasReverse,
-  F.usuarios.horas2Reverse,
-  F.proyectos.usuarios,
-]);
+export const READ_ONLY_FIELDS: ReadonlySet<string> = new Set<FieldId>(Object.values(REFERENCE_FIELDS).flat());
 
 /** Campos que nunca se devuelven a nadie (ni Admin ni Empleado). */
 export const SECRET_FIELDS: ReadonlySet<string> = new Set<FieldId>([F.usuarios.passwordHash]);

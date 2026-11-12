@@ -9,6 +9,7 @@ import {
   hhmmToSeconds,
   isoToDisplayDate,
   parseNumber,
+  parseNumberInput,
   percentToDisplay,
   secondsToDecimalHours,
   secondsToHHmm,
@@ -133,5 +134,35 @@ describe("porcentajes", () => {
 
   it("ida y vuelta", () => {
     expect(displayToPercent(percentToDisplay(0.375))).toBe(0.375);
+  });
+});
+
+describe("parseNumberInput (inputs es-AR)", () => {
+  it("formato es-AR completo", () => {
+    expect(parseNumberInput("1.234,56")).toBe(1234.56);
+    expect(parseNumberInput("1.234.567,8")).toBe(1234567.8);
+    expect(parseNumberInput("1.234.567")).toBe(1234567);
+    expect(parseNumberInput("-1.234,5")).toBe(-1234.5);
+  });
+
+  it("sin miles, decimal con coma", () => {
+    expect(parseNumberInput("1234,56")).toBe(1234.56);
+    expect(parseNumberInput("0,5")).toBe(0.5);
+    expect(parseNumberInput("1234")).toBe(1234);
+    expect(parseNumberInput(" -42 ")).toBe(-42);
+  });
+
+  it("un solo punto como decimal", () => {
+    expect(parseNumberInput("1234.56")).toBe(1234.56);
+    expect(parseNumberInput("12.5")).toBe(12.5);
+    expect(parseNumberInput("0.75")).toBe(0.75);
+    expect(parseNumberInput("1.2345")).toBe(1.2345);
+  });
+
+  it("rechaza lo ambiguo o mal formado", () => {
+    for (const bad of ["1.234", "-1.234", "1,234.56", "1.23,4", "12.345,6.7", "1,2,3", ",5", "5,", ".5", "5.", "", "  ", "abc", "1e3", "1 234,5x"]) {
+      expect(parseNumberInput(bad), bad).toBeNull();
+    }
+    expect(parseNumberInput(null)).toBeNull();
   });
 });

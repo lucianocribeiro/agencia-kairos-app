@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getAirtableClient, type AirtableRecord } from "@/lib/airtable/client";
+import { getAirtableClient, type AirtableRecord, type Fields } from "@/lib/airtable/client";
 import { field, formula, recordIdIs, type Formula } from "@/lib/airtable/formula";
 import { TABLES } from "@/lib/airtable/schema";
 import { isRole, type Role } from "@/lib/roles";
@@ -116,4 +116,35 @@ export async function setPassword(userId: string, newPassword: string): Promise<
   );
   invalidateCachedUser(userId);
   return passwordFingerprint(hash);
+}
+
+/**
+ * Alta de usuario con contraseña temporal (Admin → Usuarios). El hash sale de
+ * hashNewPassword; «Debe cambiar password» queda en sí. Devuelve el ID nuevo.
+ * `fields` no puede traer el hash (se ignora si viene).
+ */
+export async function createUserWithTemporaryPassword(fields: Fields, password: string): Promise<string> {
+  const hash = await hashNewPassword(password);
+  const clean = { ...fields };
+  delete clean[U.passwordHash];
+  const [created] = await getAirtableClient().create(
+    TABLES.usuarios.id,
+    [{ ...clean, [U.passwordHash]: hash, [U.debeCambiarPassword]: true }],
+    { returnFields: [] },
+  );
+  return created.id;
+}
+
+/**
+ * Reset de contraseña por un Admin: hash nuevo y «Debe cambiar password» = sí.
+ * Las sesiones abiertas de ese usuario mueren por el chequeo de `pf`.
+ */
+export async function setTemporaryPassword(userId: string, password: string): Promise<void> {
+  const hash = await hashNewPassword(password);
+  await getAirtableClient().update(
+    TABLES.usuarios.id,
+    [{ id: userId, fields: { [U.passwordHash]: hash, [U.debeCambiarPassword]: true } }],
+    { returnFields: [] },
+  );
+  invalidateCachedUser(userId);
 }

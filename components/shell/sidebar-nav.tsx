@@ -153,7 +153,7 @@ export function SidebarNav({ role, pathname, collapsed, headerAction, onNavigate
         )}
       >
         <Link href={HOME_BY_ROLE[role]} onClick={onNavigate} aria-label="Ir al inicio" className="rounded-md">
-          <Logo compact={collapsed} />
+          <Logo compact={collapsed} eager />
         </Link>
         {headerAction}
       </div>

@@ -69,8 +69,8 @@ beforeEach(() => {
   clearUserCache();
   vi.restoreAllMocks();
   vi.spyOn(console, "error").mockImplementation(() => {});
-  const cliente = fake.seed(C.id, { [C.fields.nombre]: "QA Cliente Secreto", [C.fields.sigla]: "QZ", [C.fields.estado]: "Cliente" });
-  const otroCliente = fake.seed(C.id, { [C.fields.nombre]: "Otro Cliente", [C.fields.sigla]: "OT", [C.fields.estado]: "Cliente" });
+  const cliente = fake.seed(C.id, { [C.fields.nombre]: "QA Cliente Secreto", [C.fields.sigla]: "QZ", [C.fields.estado]: "Activo" });
+  const otroCliente = fake.seed(C.id, { [C.fields.nombre]: "Otro Cliente", [C.fields.sigla]: "OT", [C.fields.estado]: "Activo" });
   const proyecto = (codigo: string, estado: string, c = cliente) =>
     fake.seed(P.id, { [P.fields.codigo]: codigo, [P.fields.estado]: estado, [P.fields.cliente]: [c], [P.fields.valorHora]: VALOR_HORA, [P.fields.monedaValorHora]: "USD" });
   const uno = proyecto("QZ - Uno", "Activo");
@@ -524,6 +524,22 @@ describe("Horas (Admin)", () => {
 });
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
+
+describe("Horas (Admin) · cliente Inactivo (F2-01 v2, fix 6)", () => {
+  beforeEach(() => loginAs(ids.admin));
+
+  it("un registro histórico de un proyecto cuyo cliente pasó a Inactivo sigue mostrando el nombre del cliente", async () => {
+    const id = seedHora(ids.eva, ids.otro, "2026-10-20", "09:00", "10:00");
+    fake.rows(C.id).find((r) => r.id === ids.otroCliente)!.fields[C.fields.estado] = "Inactivo";
+    const res = await call(AD_HORAS, "GET", { search: { desde: "2026-10-01", hasta: "2026-10-31" } });
+    expect(res.status).toBe(200);
+    expect(res.json.records.find((r: { id: string }) => r.id === id).cliente).toEqual({ id: ids.otroCliente, nombre: "Otro Cliente" });
+    // y el filtro por ese cliente (por ID) sigue funcionando para ver lo histórico
+    expect((await call(AD_HORAS, "GET", { search: { desde: "2026-10-01", hasta: "2026-10-31", cliente: ids.otroCliente } })).json.records).toHaveLength(1);
+    const { loadHorasOptions } = await import("@/lib/horas/server/admin-service");
+    expect((await loadHorasOptions()).clientes.find((c) => c.id === ids.otroCliente)).toEqual({ id: ids.otroCliente, nombre: "Otro Cliente", activo: false });
+  });
+});
 
 describe("Dashboard", () => {
   beforeEach(async () => {

@@ -18,7 +18,7 @@ export const USUARIO_FIELDS: readonly FieldSpec[] = [
     pattern: { regex: /^[A-Z]{2,4}$/, message: "La sigla tiene que tener entre 2 y 4 letras." },
   },
   { key: "socio", label: "Socio", kind: "link" },
-  { key: "proyectosAsignados", label: "Proyectos asignados", kind: "link", multiple: true, hint: "Solo proyectos activos." },
+  { key: "proyectosAsignados", label: "Proyectos asignados", kind: "link", multiple: true, hint: "Solo proyectos activos de clientes activos." },
 ];
 
 export const USUARIO_MESSAGES = {

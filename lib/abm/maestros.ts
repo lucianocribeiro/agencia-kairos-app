@@ -5,6 +5,7 @@
  * lib/abm/server/maestros-config.ts.
  */
 import { formatNumber } from "@/lib/format";
+import { CLIENTE_ACTIVO, CLIENTE_ESTADOS } from "./cliente-estado";
 import { parseValues, type FieldErrors, type FieldSpec, type Mode, type RawValues, type Values } from "./fields";
 
 export const MAESTRO_SLUGS = [
@@ -37,6 +38,8 @@ export interface MaestroSpec {
   columns: readonly string[];
   /** Si la tabla tiene Estado: filtro en la lista (los vacíos se ven como "Sin estado"). */
   estadoKey?: string;
+  /** Valor inicial del filtro de Estado (vacío = Todos). */
+  estadoDefault?: string;
   /** Borrado físico (siempre sujeto al chequeo de referencias). */
   deletable: boolean;
   /** Reglas entre campos. Corre en cliente y servidor. */
@@ -48,10 +51,11 @@ export const SIN_ESTADO = "Sin estado";
 const CONDICION_IVA_CLIENTE = ["Responsable Inscripto", "Monotributista", "Exento", "Consumidor Final", "Cliente del Exterior"] as const;
 const CONDICION_IVA_PROVEEDOR = ["Responsable Inscripto", "Monotributista", "Exento", "Consumidor Final", "Proveedor del Exterior"] as const;
 
+export { CLIENTE_ACTIVO, CLIENTE_ESTADOS } from "./cliente-estado";
+
 const CLIENTE_SIGLA_RE = /^[A-Z]{2}$/;
 export const MAESTRO_MESSAGES = {
-  clienteSiglaRequerida: "Un Cliente necesita una sigla de 2 letras.",
-  clienteSiglaFormato: "La sigla de un Cliente tiene que tener exactamente 2 letras.",
+  clienteSiglaFormato: "La sigla de un cliente tiene que tener exactamente 2 letras.",
   fechaSaldoRequerida: "Indicá la fecha del saldo inicial.",
 } as const;
 
@@ -62,11 +66,13 @@ export const MAESTRO_SPECS: Record<MaestroSlug, MaestroSpec> = {
     newLabel: "Nuevo cliente",
     primaryKey: "nombre",
     estadoKey: "estado",
-    deletable: false,
+    estadoDefault: CLIENTE_ACTIVO,
+    // Solo sin referencias (proyectos, ventas, Tesorería); si no, se pasa a Inactivo.
+    deletable: true,
     fields: [
       { key: "nombre", label: "Nombre", kind: "text", required: true },
-      { key: "estado", label: "Estado", kind: "select", required: true, options: ["Cliente", "Lead", "Ex cliente", "Perdido"] },
-      { key: "sigla", label: "Sigla", kind: "text", uppercase: true, hint: "Obligatoria para Clientes: 2 letras." },
+      { key: "estado", label: "Estado", kind: "select", required: true, options: CLIENTE_ESTADOS },
+      { key: "sigla", label: "Sigla", kind: "text", uppercase: true, required: true, hint: "2 letras. Única." },
       { key: "cuit", label: "CUIT", kind: "cuit", placeholder: "XX-XXXXXXXX-X" },
       { key: "condicionIva", label: "Condición IVA", kind: "select", options: CONDICION_IVA_CLIENTE },
       { key: "contacto", label: "Contacto", kind: "text" },
@@ -75,13 +81,11 @@ export const MAESTRO_SPECS: Record<MaestroSlug, MaestroSpec> = {
       { key: "observaciones", label: "Observaciones", kind: "multiline" },
     ],
     columns: ["nombre", "sigla", "estado", "cuit", "condicionIva", "contacto"],
+    // Sigla: obligatoria (required) y de 2 letras para todo cliente, Activo o Inactivo. La unicidad la chequea el servidor.
     refine(values) {
       const errors: FieldErrors = {};
-      if (values.estado === "Cliente") {
-        const sigla = typeof values.sigla === "string" ? values.sigla : "";
-        if (!sigla) errors.sigla = MAESTRO_MESSAGES.clienteSiglaRequerida;
-        else if (!CLIENTE_SIGLA_RE.test(sigla)) errors.sigla = MAESTRO_MESSAGES.clienteSiglaFormato;
-      }
+      const sigla = typeof values.sigla === "string" ? values.sigla : "";
+      if (sigla && !CLIENTE_SIGLA_RE.test(sigla)) errors.sigla = MAESTRO_MESSAGES.clienteSiglaFormato;
       return errors;
     },
   },
@@ -96,7 +100,7 @@ export const MAESTRO_SPECS: Record<MaestroSlug, MaestroSpec> = {
     fields: [
       { key: "codigo", label: "Código", kind: "readonly", hint: "Lo arma el sistema: Sigla del cliente - Nombre corto." },
       { key: "nombreCorto", label: "Nombre corto", kind: "text", required: true },
-      { key: "cliente", label: "Cliente", kind: "link", required: true, hint: "Solo clientes con Estado Cliente." },
+      { key: "cliente", label: "Cliente", kind: "link", required: true, hint: "Solo clientes activos." },
       { key: "unidadNegocio", label: "Unidad de negocio", kind: "link" },
       { key: "monedaValorHora", label: "Moneda valor hora", kind: "select", options: ["ARS", "USD"] },
       { key: "valorHora", label: "Valor hora", kind: "number", min: 0 },

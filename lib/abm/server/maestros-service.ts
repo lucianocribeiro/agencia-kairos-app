@@ -44,7 +44,7 @@ function toValues(config: MaestroConfig, fields: Fields): Values {
     else if (raw === undefined) values[spec.key] = spec.kind === "checkbox" ? false : spec.kind === "link" || config.links?.[spec.key] ? [] : null;
     else values[spec.key] = raw as Values[string];
   }
-  return values;
+  return config.normalize ? config.normalize(values) : values;
 }
 
 /** Carga la lista y las opciones de links. Todas las páginas (paginación completa del cliente). */
@@ -250,14 +250,54 @@ export async function updateMaestro(slug: string, id: string, raw: RawValues): P
   return write(config, raw, { mode: "edit", id });
 }
 
-/** Borra solo si el maestro admite borrado y el registro no tiene referencias. */
-export async function deleteMaestro(slug: string, id: string): Promise<ServiceResult<{ id: string }>> {
-  const config = configFor(slug);
+/**
+ * Respuesta del chequeo previo. Solo categorías y cantidades (claves de schema.ts,
+ * p. ej. { proyectos: 2, ventas: 0, tesoreria: 3 }), nunca IDs de campo.
+ */
+export interface DeleteCheck {
+  blocked: boolean;
+  /** Si está bloqueado, el mismo mensaje que daría el 409; si no, null. */
+  message: string | null;
+  counts: Record<string, number>;
+}
+
+/** Link inverso → nombre de la categoría (la clave del campo en schema.ts). */
+function referenceCategory(config: MaestroConfig, fieldId: string): string {
+  const entry = Object.entries(TABLES[config.table].fields).find(([, id]) => id === fieldId);
+  return entry?.[0] ?? "otros";
+}
+
+/** Lee las referencias del registro ahora. 404/405 como el borrado. */
+async function checkDeletable(config: MaestroConfig | null, id: string): Promise<ServiceResult<DeleteCheck>> {
   if (!config || !/^rec[A-Za-z0-9]{14}$/.test(id)) return fail(404, ABM_MESSAGES.noEncontrado);
   if (!config.spec.deletable) return fail(405, ABM_MESSAGES.noBorrable);
   const refs = await findReferences(tableId(config), id, config.references);
   if (refs === null) return fail(404, ABM_MESSAGES.noEncontrado);
-  if (refs.length > 0) return fail(409, REFERENCED_MESSAGE);
-  await getAirtableClient().delete(tableId(config), [id]);
+  const counts: Record<string, number> = {};
+  for (const fieldId of config.references) counts[referenceCategory(config, fieldId)] = refs.find((r) => r.fieldId === fieldId)?.count ?? 0;
+  const message = refs.length === 0 ? null : (config.referencedMessage?.(refs) ?? REFERENCED_MESSAGE);
+  return { ok: true, data: { blocked: message !== null, message, counts } };
+}
+
+/**
+ * ¿Se puede borrar? Lo usa el formulario antes de pedir confirmación: con
+ * referencias muestra el mensaje; sin referencias abre el diálogo. El borrado
+ * vuelve a leer las referencias igual (esto es solo un aviso previo).
+ */
+export async function deleteCheckMaestro(slug: string, id: string): Promise<ServiceResult<DeleteCheck>> {
+  return checkDeletable(configFor(slug), id);
+}
+
+/**
+ * Borra solo si el maestro admite borrado y el registro no tiene referencias.
+ * Las referencias se releen inmediatamente antes del delete (no hay
+ * transacciones: ver AGENTS.md, "Borrado de Clientes", para la carrera residual).
+ */
+export async function deleteMaestro(slug: string, id: string): Promise<ServiceResult<{ id: string }>> {
+  const config = configFor(slug);
+  const check = await checkDeletable(config, id);
+  if (!check.ok) return check;
+  if (check.data.message) return fail(409, check.data.message);
+  await getAirtableClient().delete(tableId(config!), [id]);
   return { ok: true, data: { id } };
 }

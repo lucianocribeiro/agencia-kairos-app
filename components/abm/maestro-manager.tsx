@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
-import { Button, Card, CardContent, CardHeader, CardTitle, InlineMessage, useToast } from "@/components/ui";
+import { Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, InlineMessage, useToast } from "@/components/ui";
 import { editableFields, formatForDisplay, formatForInput, type FieldErrors, type RawValues } from "@/lib/abm/fields";
 import { MAESTRO_SPECS, SIN_ESTADO, sociosSumWarning, validateMaestro, type MaestroSlug } from "@/lib/abm/maestros";
 import type { AbmData, RecordDTO } from "@/lib/abm/types";
@@ -56,6 +56,7 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
             ...(data.records.some((r) => !r.values[spec.estadoKey!]) ? [SIN_ESTADO] : []),
           ],
           value: (r) => display(r, spec.estadoKey!),
+          ...(spec.estadoDefault ? { defaultValue: spec.estadoDefault } : {}),
         },
       ]
     : [];
@@ -105,6 +106,18 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
     toast.success(editing.mode === "create" ? "Registro creado." : "Cambios guardados.");
     close();
     router.refresh();
+  }
+
+  /** Antes de confirmar: con referencias se muestra el motivo (sin diálogo); sin referencias, el diálogo. */
+  async function askDelete() {
+    if (editing?.mode !== "edit") return;
+    setSaving(true);
+    const res = await callApi("GET", `/api/admin/maestros/${slug}/${editing.record.id}/referencias`);
+    setSaving(false);
+    if (!res.ok) return setFormError(res.error ?? "No se pudo borrar.");
+    if (res.data.blocked === true) return setFormError(typeof res.data.message === "string" ? res.data.message : "No se puede borrar.");
+    setFormError(null);
+    setConfirmDelete(true);
   }
 
   async function remove() {
@@ -173,29 +186,27 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
                   Cancelar
                 </Button>
                 {canDelete && (
-                  <div className="ml-auto flex items-center gap-2">
-                    {confirmDelete ? (
-                      <>
-                        <span className="text-sm text-muted">¿Seguro que querés borrarlo?</span>
-                        <Button variant="secondary" size="sm" onClick={remove} disabled={saving} className="text-danger">
-                          Sí, borrar
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)} disabled={saving}>
-                          No
-                        </Button>
-                      </>
-                    ) : (
-                      <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)} disabled={saving}>
-                        Borrar
-                      </Button>
-                    )}
-                  </div>
+                  <Button variant="ghost" size="sm" onClick={askDelete} disabled={saving} className="ml-auto">
+                    Borrar
+                  </Button>
                 )}
               </div>
             </form>
           </CardContent>
         </Card>
       )}
+
+      <ConfirmDialog
+        open={confirmDelete && editing?.mode === "edit"}
+        title={`¿Borrar ${editing?.mode === "edit" ? display(editing.record, spec.primaryKey) || "este registro" : "este registro"}?`}
+        confirmLabel="Sí, borrar"
+        busy={saving}
+        busyLabel="Borrando…"
+        onConfirm={remove}
+        onCancel={() => setConfirmDelete(false)}
+      >
+        No se puede deshacer.
+      </ConfirmDialog>
 
       <RecordTable
         records={data.records}

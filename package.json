@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "check:bundle": "node scripts/check-bundle.mjs",
     "setup:intentos-login": "node scripts/setup-intentos-login.mjs",
+    "migrate:clientes-estado": "node scripts/migrate-clientes-estado.mjs",
     "bootstrap:admin": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/bootstrap-admin.mjs"
   },
   "dependencies": {

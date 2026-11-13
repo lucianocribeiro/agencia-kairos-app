@@ -19,6 +19,8 @@ export interface Filter {
   label: string;
   options: readonly string[];
   value: (record: RecordDTO) => string;
+  /** Valor inicial (vacío = Todos). */
+  defaultValue?: string;
 }
 
 interface RecordTableProps {
@@ -38,7 +40,9 @@ const normalize = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "
 /** Lista con búsqueda de texto, filtros por select y orden por el campo principal. Sin límite de filas. */
 export function RecordTable({ records, columns, sortBy, filters = [], onEdit, rowLabel }: RecordTableProps) {
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState<Record<string, string>>({});
+  const [active, setActive] = useState<Record<string, string>>(() =>
+    Object.fromEntries(filters.filter((f) => f.defaultValue).map((f) => [f.key, f.defaultValue!])),
+  );
 
   const rows = useMemo(() => {
     const q = normalize(query.trim());

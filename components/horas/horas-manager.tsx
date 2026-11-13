@@ -269,7 +269,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
             <Select value={filters.proyecto} onChange={(e) => setFilters({ ...filters, proyecto: e.target.value })} placeholder="Todos" options={options.proyectos.map((p) => ({ value: p.id, label: proyectoLabel(p) }))} />
           </FormField>
           <FormField label="Cliente">
-            <Select value={filters.cliente} onChange={(e) => setFilters({ ...filters, cliente: e.target.value })} placeholder="Todos" options={options.clientes.map((c) => ({ value: c.id, label: c.nombre }))} />
+            <Select value={filters.cliente} onChange={(e) => setFilters({ ...filters, cliente: e.target.value })} placeholder="Todos" options={options.clientes.filter((c) => c.activo).map((c) => ({ value: c.id, label: c.nombre }))} />
           </FormField>
         </div>
       </div>

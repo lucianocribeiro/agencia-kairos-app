@@ -2,6 +2,7 @@ import "server-only";
 
 import { getAirtableClient } from "@/lib/airtable/client";
 import { TABLES } from "@/lib/airtable/schema";
+import { isClienteActivo } from "@/lib/abm/cliente-estado";
 import type { RawValues } from "@/lib/abm/fields";
 import type { ServiceResult } from "@/lib/abm/types";
 import { todayInBuenosAires } from "../dates";
@@ -39,7 +40,7 @@ export async function loadHorasOptions(): Promise<HorasOptions> {
   const [usuarios, proyectos, clientes] = await Promise.all([
     client.list(TABLES.usuarios.id, { fields: [U.nombre, U.estado] }),
     client.list(TABLES.proyectos.id, { fields: [P.codigo, P.estado, P.cliente] }),
-    client.list(TABLES.clientes.id, { fields: [C.nombre] }),
+    client.list(TABLES.clientes.id, { fields: [C.nombre, C.estado] }),
   ]);
   return {
     usuarios: usuarios
@@ -53,7 +54,8 @@ export async function loadHorasOptions(): Promise<HorasOptions> {
         cliente: (r.fields[P.cliente] as string[] | undefined)?.[0] ?? null,
       }))
       .sort((a, b) => collator.compare(a.codigo, b.codigo)),
-    clientes: clientes.map((r) => ({ id: r.id, nombre: String(r.fields[C.nombre] ?? "") || "(sin nombre)" })).sort((a, b) => collator.compare(a.nombre, b.nombre)),
+    clientes: clientes
+      .map((r) => ({ id: r.id, nombre: String(r.fields[C.nombre] ?? "") || "(sin nombre)", activo: isClienteActivo(r.fields[C.estado]) })).sort((a, b) => collator.compare(a.nombre, b.nombre)),
   };
 }
 

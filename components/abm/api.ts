@@ -11,7 +11,7 @@ export interface ApiResult {
 }
 
 /** Llama a una API propia con JSON. Nunca lanza: los errores de red vuelven como status 0. */
-export async function callApi(method: "POST" | "PATCH" | "DELETE", url: string, body?: unknown): Promise<ApiResult> {
+export async function callApi(method: "GET" | "POST" | "PATCH" | "DELETE", url: string, body?: unknown): Promise<ApiResult> {
   try {
     const res = await fetch(url, {
       method,

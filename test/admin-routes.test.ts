@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { NextRequest } from "next/server";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { LEGACY_CLIENTE_ACTIVO, LEGACY_CLIENTE_ESTADOS } from "@/lib/abm/cliente-estado";
 import { TABLES } from "@/lib/airtable/schema";
 import { createFakeAirtable } from "./fake-airtable";
 
@@ -196,8 +197,9 @@ describe("Usuarios · alta", () => {
   });
 
   it("proyectos asignados: solo Activos; para un Admin no se guardan", async () => {
-    const activo = fake.seed(PR.id, { [PR.fields.codigo]: "QZ - A", [PR.fields.estado]: "Activo" });
-    const cerrado = fake.seed(PR.id, { [PR.fields.codigo]: "QZ - C", [PR.fields.estado]: "Cerrado" });
+    const cli = fake.seed(TABLES.clientes.id, { [TABLES.clientes.fields.nombre]: "QZ", [TABLES.clientes.fields.estado]: "Activo" });
+    const activo = fake.seed(PR.id, { [PR.fields.codigo]: "QZ - A", [PR.fields.estado]: "Activo", [PR.fields.cliente]: [cli] });
+    const cerrado = fake.seed(PR.id, { [PR.fields.codigo]: "QZ - C", [PR.fields.estado]: "Cerrado", [PR.fields.cliente]: [cli] });
     const sinEstado = fake.seed(PR.id, { [PR.fields.codigo]: "QZ - S" });
     for (const p of [cerrado, sinEstado]) {
       expect((await call(USUARIOS, "POST", nuevo({ proyectosAsignados: [p] }))).json).toMatchObject({
@@ -288,5 +290,145 @@ describe("Maestros por la ruta (smoke de cableado)", () => {
     expect((await call(ITEM, "PATCH", { nombre: "QA UN 2" }, { tabla: "unidades-de-negocio", id })).status).toBe(200);
     expect((await call(ITEM, "DELETE", undefined, { tabla: "unidades-de-negocio", id })).status).toBe(200);
     expect((await call(COLL, "POST", { nombre: "x" }, { tabla: "horas" })).status).toBe(404);
+  });
+});
+
+describe("Clientes · Estado Activo / Inactivo y borrado (F2-01)", () => {
+  const COLL = "app/api/admin/maestros/[tabla]/route.ts";
+  const ITEM = "app/api/admin/maestros/[tabla]/[id]/route.ts";
+  const REFS = "app/api/admin/maestros/[tabla]/[id]/referencias/route.ts";
+  const C = TABLES.clientes;
+  beforeEach(() => loginAs(adminId));
+
+  it("la ruta nueva de referencias existe y exporta solo GET", () => {
+    expect(Object.keys(ROUTE_MODULES[`/${REFS}`]).filter((k) => HTTP.includes(k as (typeof HTTP)[number]))).toEqual(["GET"]);
+  });
+
+  it("Empleado → 403 en el chequeo previo y en el borrado de un cliente; no se borra nada", async () => {
+    const c = fake.seed(C.id, { [C.fields.nombre]: "QA", [C.fields.sigla]: "QA", [C.fields.estado]: "Activo" });
+    await loginAs(empleadoId);
+    expect((await call(REFS, "GET", undefined, { tabla: "clientes", id: c })).status).toBe(403);
+    expect((await call(ITEM, "DELETE", undefined, { tabla: "clientes", id: c })).status).toBe(403);
+    expect((await call(COLL, "POST", { nombre: "QB", sigla: "QB", estado: "Activo" }, { tabla: "clientes" })).status).toBe(403);
+    expect(fake.rows(C.id).map((r) => r.id)).toEqual([c]);
+    expect(fake.calls.some((x) => x.method !== "list")).toBe(false);
+  });
+
+  it("alta: sin sigla → 400; sigla duplicada → 409; válida → 201", async () => {
+    fake.seed(C.id, { [C.fields.nombre]: "Existente", [C.fields.sigla]: "EX", [C.fields.estado]: "Inactivo" });
+    expect((await call(COLL, "POST", { nombre: "QA", estado: "Activo" }, { tabla: "clientes" })).json).toMatchObject({
+      fieldErrors: { sigla: "Este campo es obligatorio." },
+    });
+    const dup = await call(COLL, "POST", { nombre: "QA", estado: "Activo", sigla: "ex" }, { tabla: "clientes" });
+    expect(dup.status).toBe(409);
+    const ok = await call(COLL, "POST", { nombre: "QA", estado: "Activo", sigla: "qa" }, { tabla: "clientes" });
+    expect(ok.status).toBe(201);
+  });
+
+  it("referenciado: el chequeo y el DELETE dan el mensaje con conteos; sin referencias se borra", async () => {
+    const c = fake.seed(C.id, { [C.fields.nombre]: "QA", [C.fields.sigla]: "QA", [C.fields.estado]: "Activo", [C.fields.proyectos]: ["recPPPPPPPPPPPPPP"] });
+    const msg = "No se puede borrar: tiene 1 proyecto. Pasalo a Inactivo.";
+    const check = await call(REFS, "GET", undefined, { tabla: "clientes", id: c });
+    expect(check.json).toEqual({ ok: true, blocked: true, message: msg, counts: { proyectos: 1, ventas: 0, tesoreria: 0 } });
+    expect(check.text).not.toMatch(/fld[A-Za-z0-9]{14}/); // solo categorías y cantidades, nunca IDs de campo
+    const blocked = await call(ITEM, "DELETE", undefined, { tabla: "clientes", id: c });
+    expect(blocked).toMatchObject({ status: 409, json: { error: msg } });
+    delete fake.rows(C.id).find((r) => r.id === c)!.fields[C.fields.proyectos];
+    expect((await call(REFS, "GET", undefined, { tabla: "clientes", id: c })).json).toEqual({
+      ok: true,
+      blocked: false,
+      message: null,
+      counts: { proyectos: 0, ventas: 0, tesoreria: 0 },
+    });
+    expect((await call(ITEM, "DELETE", undefined, { tabla: "clientes", id: c })).status).toBe(200);
+    expect(fake.rows(C.id)).toHaveLength(0);
+  });
+
+  it("el picker de Cliente en Proyectos ofrece Activos (y el legacy «Cliente»); elegir un Inactivo o un Lead → 400", async () => {
+    const { loadMaestro } = await import("@/lib/abm/server/maestros-service");
+    const activo = fake.seed(C.id, { [C.fields.nombre]: "QA Activo", [C.fields.sigla]: "QA", [C.fields.estado]: "Activo" });
+    const inactivo = fake.seed(C.id, { [C.fields.nombre]: "QA Inactivo", [C.fields.sigla]: "QI", [C.fields.estado]: "Inactivo" });
+    const legacy = fake.seed(C.id, { [C.fields.nombre]: "QA Legacy", [C.fields.sigla]: "QL", [C.fields.estado]: LEGACY_CLIENTE_ACTIVO });
+    const leads = LEGACY_CLIENTE_ESTADOS.slice(1).map((estado, i) =>
+      fake.seed(C.id, { [C.fields.nombre]: `QA ${estado}`, [C.fields.sigla]: `Q${"MNO"[i]}`, [C.fields.estado]: estado }),
+    );
+    const ids = (await loadMaestro("proyectos")).options.cliente.map((o) => o.id);
+    expect(ids.sort()).toEqual([activo, legacy].sort());
+    for (const bad of [inactivo, ...leads]) {
+      const res = await call(COLL, "POST", { nombreCorto: "X", cliente: [bad], estado: "Activo" }, { tabla: "proyectos" });
+      expect(res.status).toBe(400);
+      expect(res.json.fieldErrors.cliente).toBeTruthy();
+    }
+    const ok = await call(COLL, "POST", { nombreCorto: "X", cliente: [legacy], estado: "Activo" }, { tabla: "proyectos" });
+    expect(ok.status).toBe(201);
+  });
+
+  it("Horas: el filtro de clientes marca solo los Activos (los Inactivos quedan para el nombre)", async () => {
+    const { loadHorasOptions } = await import("@/lib/horas/server/admin-service");
+    const activo = fake.seed(C.id, { [C.fields.nombre]: "QA Activo", [C.fields.sigla]: "QA", [C.fields.estado]: "Activo" });
+    const inactivo = fake.seed(C.id, { [C.fields.nombre]: "QA Inactivo", [C.fields.sigla]: "QI", [C.fields.estado]: "Inactivo" });
+    const legacy = fake.seed(C.id, { [C.fields.nombre]: "QA Legacy", [C.fields.sigla]: "QL", [C.fields.estado]: LEGACY_CLIENTE_ACTIVO });
+    const lead = fake.seed(C.id, { [C.fields.nombre]: "QA Lead", [C.fields.sigla]: "QD", [C.fields.estado]: LEGACY_CLIENTE_ESTADOS[1] });
+    const { clientes } = await loadHorasOptions();
+    expect(clientes.filter((c) => c.activo).map((c) => c.id).sort()).toEqual([activo, legacy].sort());
+    expect(clientes.find((c) => c.id === lead)?.activo).toBe(false);
+    expect(clientes.find((c) => c.id === inactivo)).toMatchObject({ activo: false, nombre: "QA Inactivo" });
+  });
+});
+
+describe("Usuarios · Proyectos asignados solo de clientes Activos (F2-01 v2, fix 1)", () => {
+  const C = TABLES.clientes;
+  const USUARIOS_FILE = "app/api/admin/usuarios/route.ts";
+  const USUARIO_FILE = "app/api/admin/usuarios/[id]/route.ts";
+  beforeEach(() => loginAs(adminId));
+
+  function seed() {
+    const cli = (nombre: string, estado: string) => fake.seed(C.id, { [C.fields.nombre]: nombre, [C.fields.estado]: estado });
+    const activo = cli("QA Activo", "Activo");
+    const legacy = cli("QA Legacy", LEGACY_CLIENTE_ACTIVO);
+    const inactivo = cli("QA Inactivo", "Inactivo");
+    const lead = cli("QA Lead", LEGACY_CLIENTE_ESTADOS[1]);
+    const proj = (codigo: string, cliente: string | null, estado = "Activo") =>
+      fake.seed(PR.id, { [PR.fields.codigo]: codigo, [PR.fields.estado]: estado, ...(cliente ? { [PR.fields.cliente]: [cliente] } : {}) });
+    return {
+      deActivo: proj("QA - Activo", activo),
+      deLegacy: proj("QL - Legacy", legacy),
+      deInactivo: proj("QI - Inactivo", inactivo),
+      deLead: proj("QD - Lead", lead),
+      sinCliente: proj("QS - Sin cliente", null),
+      cerradoDeActivo: proj("QA - Cerrado", activo, "Cerrado"),
+    };
+  }
+
+  it("las opciones son solo proyectos Activos de clientes Activos (el legacy «Cliente» cuenta como Activo)", async () => {
+    const p = seed();
+    const { loadUsuarios } = await import("@/lib/abm/server/usuarios-service");
+    const ids = (await loadUsuarios()).options.proyectosAsignados.map((o) => o.id);
+    expect(ids.sort()).toEqual([p.deActivo, p.deLegacy].sort());
+  });
+
+  it("guardar con un proyecto de un cliente Inactivo (o Lead, o sin cliente) → 400 y no se escribe", async () => {
+    const p = seed();
+    for (const bad of [p.deInactivo, p.deLead, p.sinCliente, p.cerradoDeActivo]) {
+      const res = await call(USUARIOS_FILE, "POST", nuevo({ proyectosAsignados: [p.deActivo, bad] }));
+      expect(res.status).toBe(400);
+      expect(res.json.fieldErrors).toEqual({ proyectosAsignados: "Elegí una opción válida." });
+    }
+    expect(fake.rows(TABLES.usuarios.id).some((r) => r.fields[U.email] === "nico@kairos.test")).toBe(false);
+    const ok = await call(USUARIOS_FILE, "POST", nuevo({ proyectosAsignados: [p.deActivo, p.deLegacy] }));
+    expect(ok.status).toBe(201);
+  }, 30_000);
+
+  it("una asignación existente a un proyecto de cliente Inactivo se conserva al editar, pero no se puede agregar otra", async () => {
+    const p = seed();
+    const id = fake.seed(TABLES.usuarios.id, {
+      [U.nombre]: "Vieja", [U.email]: "vieja@kairos.test", [U.rol]: "Empleado", [U.sigla]: "VJ", [U.estado]: "Activo",
+      [U.debeCambiarPassword]: false, [U.passwordHash]: hash, [U.proyectosAsignados]: [p.deInactivo],
+    });
+    const base = { nombre: "Vieja", email: "vieja@kairos.test", rol: "Empleado", sigla: "VJ" };
+    expect((await call(USUARIO_FILE, "PATCH", { ...base, proyectosAsignados: [p.deInactivo, p.deActivo] }, { id })).status).toBe(200);
+    expect(fake.rows(TABLES.usuarios.id).find((r) => r.id === id)!.fields[U.proyectosAsignados]).toEqual([p.deInactivo, p.deActivo]);
+    const res = await call(USUARIO_FILE, "PATCH", { ...base, proyectosAsignados: [p.deInactivo, p.deActivo, p.deLead] }, { id });
+    expect(res.status).toBe(400);
   });
 });

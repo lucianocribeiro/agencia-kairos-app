@@ -137,6 +137,7 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
 
   const title = editing?.mode === "edit" ? display(editing.record, spec.primaryKey) || "Editar" : spec.newLabel;
   const protegido = editing?.mode === "edit" && spec.protegido?.when(editing.record.values) ? spec.protegido : null;
+  const bloqueado = editing?.mode === "edit" && (editing.record.referenceCount ?? 0) > 0 ? (spec.bloqueadoConReferencias ?? null) : null;
   const canDelete = spec.deletable && editing?.mode === "edit" && !protegido;
 
   return (
@@ -162,6 +163,7 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
             <form onSubmit={submit} noValidate className="flex flex-col gap-5">
               {formError && <InlineMessage tone="danger">{formError}</InlineMessage>}
               {protegido && <InlineMessage tone="info">{protegido.mensaje}</InlineMessage>}
+              {bloqueado && <InlineMessage tone="info">{bloqueado.mensaje}</InlineMessage>}
               <div className="grid gap-4 md:grid-cols-2">
                 {spec.fields
                   .filter((f) => !f.hideInForm && (f.kind !== "readonly" || editing.mode === "edit"))
@@ -174,7 +176,7 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
                         error={errors[f.key]}
                         options={data.options[f.key]}
                         labels={data.labels[f.key]}
-                        disabled={saving || (editing.mode === "edit" && f.lockedOnEdit) || !!protegido?.keys.includes(f.key)}
+                        disabled={saving || (editing.mode === "edit" && f.lockedOnEdit) || !!protegido?.keys.includes(f.key) || !!bloqueado?.keys.includes(f.key)}
                         display={editing.mode === "edit" ? display(editing.record, f.key) : undefined}
                       />
                     </div>

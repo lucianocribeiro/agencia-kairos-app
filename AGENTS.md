@@ -125,3 +125,4 @@ Es un chequeo no atómico con compensación. Queda una ventana chica en la que u
   - Fallas inyectables: `transferencia:crear:respuesta`, `transferencia:crear:verificar`, `transferencia:editar:verificar`, `transferencia:borrar:respuesta`.
 - Fechas de Tesorería: `isIsoDate` de `lib/horas/dates.ts` (fechas reales).
 - Campo «Transferencia» (fldx7UFCK79B1XzIr) creado por Meta API en CC-F2-04.
+- Cuentas: la Moneda no cambia si la cuenta tiene movimientos (`MaestroSpec.bloqueadoConReferencias` en la UI; `cuentasBeforeWrite` en maestros-config.ts: 409 antes de escribir y, si la Moneda cambió, verificación posterior que relee las referencias: un movimiento creado en el medio → se deshace → 409; relectura fallida → se deshace → 503). Así la moneda que usan la verificación de las transferencias y la red de seguridad no cambia por debajo. Mismo riesgo residual que el resto de las verificaciones posteriores (ventana de milisegundos sin transacciones).

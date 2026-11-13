@@ -139,3 +139,32 @@ describe("Tipos de operación · tipo de transferencia protegido (CC-F2-04 v2)",
     expect([...container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Borrar")).toBe(true);
   });
 });
+
+describe("Cuentas · Moneda bloqueada con movimientos (CC-F2-04 v4)", () => {
+  it("con movimientos la Moneda se ve bloqueada; sin movimientos, editable", async () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+    const cuenta = (id: string, nombre: string, referenceCount: number) => ({
+      id,
+      referenceCount,
+      values: { nombre, moneda: "ARS", banco: null, cbu: null, saldoInicial: null, fechaSaldoInicial: null },
+    });
+    const data: AbmData = { records: [cuenta("recCUENTA00000001", "Con movimientos", 3), cuenta("recCUENTA00000002", "Sin movimientos", 0)], labels: {}, options: {} };
+    act(() =>
+      root.render(
+        <ToastProvider>
+          <MaestroManager slug="cuentas" data={data} />
+        </ToastProvider>,
+      ),
+    );
+    const open = (name: string) => act(() => (container.querySelector(`button[aria-label="Editar ${name}"]`) as HTMLButtonElement).click());
+    const monedaDisabled = () => [...container.querySelectorAll("form select")].some((el) => (el as HTMLSelectElement).disabled);
+    await open("Con movimientos");
+    expect(container.textContent).toContain("no se puede cambiar la moneda");
+    expect(monedaDisabled()).toBe(true);
+    expect((container.querySelector("form input") as HTMLInputElement).disabled).toBe(false); // nombre sí
+    await act(async () => ([...container.querySelectorAll("button")].find((b) => b.textContent === "Cancelar") as HTMLButtonElement).click());
+    await open("Sin movimientos");
+    expect(monedaDisabled()).toBe(false);
+  });
+});

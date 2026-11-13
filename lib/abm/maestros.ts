@@ -50,6 +50,12 @@ export interface MaestroSpec {
    * pueden cambiar y no se puede borrar (409); `reservado` impide que otro registro tome
    * ese nombre. El servidor lo hace cumplir; el formulario muestra esos campos bloqueados.
    */
+  /**
+   * Campos que no se pueden cambiar si el registro tiene referencias (p. ej. la Moneda
+   * de una cuenta con movimientos). El servidor lo hace cumplir antes y después de
+   * escribir; el formulario los muestra bloqueados cuando `referenceCount > 0`.
+   */
+  bloqueadoConReferencias?: { keys: readonly string[]; mensaje: string };
   protegido?: {
     when: (values: Values) => boolean;
     keys: readonly string[];
@@ -70,6 +76,7 @@ const CLIENTE_SIGLA_RE = /^[A-Z]{2}$/;
 export const MAESTRO_MESSAGES = {
   clienteSiglaFormato: "La sigla de un cliente tiene que tener exactamente 2 letras.",
   fechaSaldoRequerida: "Indicá la fecha del saldo inicial.",
+  monedaConMovimientos: "Esta cuenta ya tiene movimientos en Tesorería: no se puede cambiar la moneda. Creá una cuenta nueva.",
 } as const;
 
 export const MAESTRO_SPECS: Record<MaestroSlug, MaestroSpec> = {
@@ -172,6 +179,8 @@ export const MAESTRO_SPECS: Record<MaestroSlug, MaestroSpec> = {
       { key: "fechaSaldoInicial", label: "Fecha saldo inicial", kind: "date", placeholder: "DD/MM/AAAA" },
     ],
     columns: ["nombre", "moneda", "banco", "cbu", "saldoInicial", "fechaSaldoInicial"],
+    // La moneda de una cuenta nunca se convierte: con movimientos, se crea una cuenta nueva.
+    bloqueadoConReferencias: { keys: ["moneda"], mensaje: MAESTRO_MESSAGES.monedaConMovimientos },
     refine(values) {
       const errors: FieldErrors = {};
       if (values.saldoInicial !== null && values.saldoInicial !== undefined && !values.fechaSaldoInicial) {

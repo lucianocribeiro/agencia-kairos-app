@@ -243,7 +243,7 @@ async function write(
 
   // 3. Verificación posterior (fail-closed): conflicto → 409; si no se puede leer → 503. Siempre deshaciendo.
   const checks = uniqueChecks(config, fields, savedId, target.mode);
-  if (plan.verify) checks.push({ name: "cascade", run: plan.verify });
+  if (plan.verify) checks.push({ name: config.table === "proyectos" || config.table === "clientes" ? "cascade" : `verify:${config.table}`, run: plan.verify });
   const failed = await runPostWriteChecks(tx, savedId, checks);
   if (failed) return failed;
   return { ok: true, data: { id: savedId } };

@@ -620,3 +620,50 @@ describe("Tipos de operación · «Transferencia entre cuentas propias» protegi
     expect(await deleteMaestro("tipos-de-operacion", otro)).toMatchObject({ ok: true });
   });
 });
+
+describe("Cuentas · la Moneda no cambia si hay movimientos en Tesorería (CC-F2-04 v4)", () => {
+  const CU = TABLES.cuentas;
+  const MSG = "Esta cuenta ya tiene movimientos en Tesorería: no se puede cambiar la moneda. Creá una cuenta nueva.";
+  const seedCuenta = (extra: Record<string, unknown> = {}) => fake.seed(CU.id, { [CU.fields.nombre]: "QA Banco", [CU.fields.moneda]: "ARS", ...extra });
+  const base = { nombre: "QA Banco", moneda: "ARS", banco: "", cbu: "", saldoInicial: "", fechaSaldoInicial: "" };
+
+  it("con movimientos: cambiar la Moneda → 409 y no se escribe nada", async () => {
+    const id = seedCuenta({ [CU.fields.tesoreria]: ["recTESORERIA00001"] });
+    expect(await updateMaestro("cuentas", id, { ...base, moneda: "USD" })).toMatchObject({ ok: false, status: 409, error: MSG, fieldErrors: { moneda: MSG } });
+    expect(fake.calls.some((c) => c.method === "update")).toBe(false);
+    expect(fieldsOf(CU.id, id)[CU.fields.moneda]).toBe("ARS");
+  });
+
+  it("con movimientos: los demás campos se pueden editar (Moneda igual)", async () => {
+    const id = seedCuenta({ [CU.fields.tesoreria]: ["recTESORERIA00001"] });
+    expect(await updateMaestro("cuentas", id, { ...base, banco: "QA Banco Nuevo" })).toMatchObject({ ok: true });
+    expect(fieldsOf(CU.id, id)).toMatchObject({ [CU.fields.banco]: "QA Banco Nuevo", [CU.fields.moneda]: "ARS" });
+  });
+
+  it("sin movimientos: cambiar la Moneda está permitido", async () => {
+    const id = seedCuenta();
+    expect(await updateMaestro("cuentas", id, { ...base, moneda: "USD" })).toMatchObject({ ok: true });
+    expect(fieldsOf(CU.id, id)[CU.fields.moneda]).toBe("USD");
+  });
+
+  it("carrera: un movimiento creado mientras se cambia la Moneda → se deshace → 409", async () => {
+    const id = seedCuenta();
+    fake.failWhen((call) => {
+      // el update se aplica y, en el medio, otro request carga un movimiento en la cuenta
+      if (call.method === "update" && call.tableId === CU.id && !fieldsOf(CU.id, id)[CU.fields.tesoreria]) fieldsOf(CU.id, id)[CU.fields.tesoreria] = ["recTESORERIA00002"];
+      return false;
+    });
+    expect(await updateMaestro("cuentas", id, { ...base, moneda: "USD" })).toMatchObject({ ok: false, status: 409, error: MSG });
+    expect(fieldsOf(CU.id, id)[CU.fields.moneda]).toBe("ARS");
+  });
+
+  it("si la relectura posterior falla → se deshace → 503 (fail-closed)", async () => {
+    const id = seedCuenta();
+    let gets = 0;
+    // fake.get = list con RECORD_ID() = "id": el 1.º es la lectura previa, el 2.º la relectura de la verificación
+    fake.failWhen((call) => call.method === "list" && call.tableId === CU.id && String((call.options as { filterByFormula?: unknown }).filterByFormula ?? "") === `RECORD_ID() = "${id}"` && ++gets === 2, new Error("caída"));
+    const res = await updateMaestro("cuentas", id, { ...base, moneda: "USD" });
+    expect(res).toMatchObject({ ok: false, status: 503 });
+    expect(fieldsOf(CU.id, id)[CU.fields.moneda]).toBe("ARS");
+  });
+});

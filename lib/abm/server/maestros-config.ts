@@ -225,6 +225,30 @@ async function clientesBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
   };
 }
 
+/**
+ * Cuentas: la Moneda no cambia si la cuenta tiene movimientos en Tesorería (antes de
+ * escribir → 409). Como no hay transacciones, si la Moneda cambió se vuelven a leer las
+ * referencias después de escribir: si apareció un movimiento en el medio → se deshace
+ * (409); si la relectura falla → se deshace (503, fail-closed).
+ */
+async function cuentasBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
+  if (ctx.mode !== "edit" || !ctx.existing || !ctx.id) return {};
+  const A = T.cuentas.fields;
+  if (!("moneda" in ctx.values) || ctx.values.moneda === (ctx.existing[A.moneda] ?? null)) return {};
+  const mensaje = MAESTRO_SPECS.cuentas.bloqueadoConReferencias!.mensaje;
+  const movimientos = (ctx.existing[A.tesoreria] as unknown[] | undefined)?.length ?? 0;
+  if (movimientos > 0) return { conflict: { error: mensaje, fieldErrors: { moneda: mensaje } } };
+  const id = ctx.id;
+  return {
+    verify: async () => {
+      const record = await getAirtableClient().get(T.cuentas.id, id, { fields: [A.tesoreria] });
+      if (!record) throw new WrittenRecordMissingError(id);
+      const ahora = (record.fields[A.tesoreria] as unknown[] | undefined)?.length ?? 0;
+      return ahora > 0 ? { error: mensaje, fieldErrors: { moneda: mensaje } } : null;
+    },
+  };
+}
+
 export const MAESTRO_CONFIGS: Record<MaestroSlug, MaestroConfig> = {
   clientes: {
     spec: MAESTRO_SPECS.clientes,
@@ -307,6 +331,7 @@ export const MAESTRO_CONFIGS: Record<MaestroSlug, MaestroConfig> = {
     },
     unique: ["nombre"],
     references: REFERENCE_FIELDS.cuentas,
+    beforeWrite: cuentasBeforeWrite,
   },
 
   categorias: {

@@ -270,7 +270,7 @@ describe("transferencias", () => {
     expect(res.status).toBe(503);
     expect(rows()).toHaveLength(2);
     const restored = rows().find((r) => r.fields[M.movimiento] === "Pago")!.fields;
-    const { [M.numero]: _n, ...sinNumero } = before.find((f) => f[M.movimiento] === "Pago")!;
+    const sinNumero = Object.fromEntries(Object.entries(before.find((f) => f[M.movimiento] === "Pago")!).filter(([k]) => k !== M.numero));
     expect(restored).toMatchObject(sinNumero);
     vi.unstubAllEnvs();
     expect((await borrarTrf(id)).status).toBe(200);

@@ -396,6 +396,57 @@ export const TABLES = {
     },
   },
 
+  /**
+   * Tesorería: un registro por movimiento. Importe siempre positivo en la moneda de
+   * la cuenta; Movimiento dice si entra o sale. Transferencia propia = 2 registros
+   * con el mismo `transferencia`. Los importes en pesos los calcula la app
+   * (lib/tesoreria); las fórmulas de Airtable no se leen.
+   */
+  tesoreria: {
+    id: "tblsY1CLYlxflED9i",
+    name: "Tesorería",
+    fields: {
+      /** autoNumber (solo lectura) */
+      numero: "fldGe8qHxAgDgYXrF",
+      fecha: "fldc7jXYNIgnqksoZ",
+      /** link → Cuentas */
+      cuenta: "fld8ZSqPwVKATiqxo",
+      /** singleSelect: ver `choices.movimiento` */
+      movimiento: "fldn2UYmCYLK2XQkN",
+      /** positivo, en moneda de la cuenta */
+      importe: "fldXjxzE9xg5qUOYt",
+      /** link → Tipos de operación */
+      tipoOperacion: "fldHtCpTpvokA9cfS",
+      /** link → Clientes (cobranzas) */
+      cliente: "fldSYDruIvvhN88R8",
+      /** link → Proveedores (pagos) */
+      proveedor: "fldwOJRMYaQp5At5N",
+      /** singleSelect S|N; vacío = según el tipo de operación */
+      sumaResultados: "fldLINpRMzwIZrPQU",
+      /** link → Categorías; vacío = la del tipo de operación */
+      categoria: "fldCtxdyd5br1XqWt",
+      /** link → Socios */
+      socio: "fldHrsLSVn1vzdmun",
+      /** solo cuentas en USD; hasta 4 decimales */
+      tipoCambio: "fldeI59QpM9rx0ucU",
+      descripcion: "fldiiy3Ff9kkrpnFb",
+      /** ID compartido por los 2 registros de una transferencia propia (lo escribe la app) */
+      transferencia: "fldx7UFCK79B1XzIr",
+      /** rollup (solo lectura) */
+      moneda: "fldl3YL2HRZciQpvT",
+      /** fórmula (solo lectura) */
+      mesAAAAMM: "flddUTzaQwf4kcFCp",
+      /** fórmula (solo lectura) */
+      entraSale: "fldPc72La6n5JxpOQ",
+      /** fórmula (solo lectura) */
+      importePesos: "fldGzB3GxYEfxAW3D",
+    },
+    choices: {
+      movimiento: ["Cobranza", "Pago"],
+      sumaResultados: ["S", "N"],
+    },
+  },
+
   horas: {
     id: "tblpeUSIYD7BFlGQU",
     name: "Horas",
@@ -467,6 +518,7 @@ export type FieldId = {
 }[TableKey];
 
 const F = {
+  tesoreria: TABLES.tesoreria.fields,
   ventas: TABLES.ventas.fields,
   compras: TABLES.compras.fields,
   usuarios: TABLES.usuarios.fields,
@@ -499,6 +551,11 @@ export const COMPUTED_FIELDS: ReadonlySet<string> = new Set<FieldId>([
   F.compras.netoPesos,
   F.compras.impactoResultados,
   F.compras.cuentaSocio,
+  F.tesoreria.numero,
+  F.tesoreria.moneda,
+  F.tesoreria.mesAAAAMM,
+  F.tesoreria.entraSale,
+  F.tesoreria.importePesos,
 ]);
 
 /**
@@ -531,6 +588,8 @@ export const REFERENCE_FIELDS = {
   // Ventas y Compras no tienen links inversos (nadie apunta a ellas).
   ventas: [],
   compras: [],
+  // Nadie apunta a Tesorería.
+  tesoreria: [],
   horas: [],
   intentosLogin: [],
 } as const satisfies Record<TableKey, readonly FieldId[]>;

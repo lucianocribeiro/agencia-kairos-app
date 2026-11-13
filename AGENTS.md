@@ -109,3 +109,11 @@ Es un chequeo no atómico con compensación. Queda una ventana chica en la que u
 - Edición (PATCH): se escriben solo las claves enviadas (validadas) y, en Ventas, el link Cliente recalculado sobre lo guardado con lo enviado encima. Política de concurrencia: **gana el último que escribe** el mismo campo (no hay control de versión; aceptado). Ediciones de campos distintos no se pisan.
 - Escala: la lista corta con 400 si el rango de Fechas tiene más de `MAX_FILAS_LISTA` (5.000) comprobantes; la ruta y las páginas tienen `maxDuration = 300`.
 - Nav: los hijos con la misma ruta que el grupo usan `exact: true` (`isActivePath(pathname, href, exact)`).
+
+## Tesorería (CC-F2-04)
+
+- Reglas puras en `lib/tesoreria/rules.ts` (`evaluarMovimiento`, `validarMovimiento`, `saldoCorrido`, `CONTROL`); importes en centavos con `toCents` de `lib/ventas-compras/money.ts`. La validación del servidor bloquea todo Control ≠ OK más las reglas del formulario (tercero según el movimiento, nunca los dos, transferencia solo por su formulario, decimales).
+- Servidor: `lib/tesoreria/server/movimientos.ts` (contexto, lista con saldo, alta/edición/borrado) y `transferencias.ts`. Rutas: `GET`/`POST /api/admin/tesoreria`, `PATCH`/`DELETE /api/admin/tesoreria/[id]`, `POST /api/admin/tesoreria/transferencias`, `PATCH`/`DELETE /api/admin/tesoreria/transferencias/[transferencia]`, todas con `adminRoute`; la lista con `maxDuration = 300` y límite de 5.000 filas en el rango.
+- Edición de un movimiento: valida el registro completo (guardado + enviado) y escribe solo lo enviado; gana el último que escribe. Un registro con `transferencia` no se edita ni se borra por las rutas de movimientos (409).
+- Transferencias: ID `TR-<uuid>` (randomUUID), tipo por nombre (`TIPO_TRANSFERENCIA`). Alta: 2 creates en secuencia con `Compensation` y verificación posterior del par (fail-closed). Edición: 2 updates con la foto previa (rollback de los 2). Borrado: si falla el 2.º delete, el 1.º se vuelve a crear desde la foto (mismos valores e ID; el N° autonumérico es nuevo) → 503; si eso falla → 500. Fallas inyectables: `transferencia:crear:2`, `transferencia:editar:2`, `transferencia:borrar:2`.
+- Campo «Transferencia» (fldx7UFCK79B1XzIr) creado por Meta API en CC-F2-04.

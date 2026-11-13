@@ -17,6 +17,7 @@ import {
   Tags,
   Truck,
   Users,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -75,6 +76,7 @@ export const NAV_BY_ROLE: Record<Role, readonly NavItem[]> = {
         { label: "Importar", href: "/compras/importar", icon: FileDown },
       ],
     },
+    { label: "Tesorería", href: "/tesoreria", icon: Wallet },
     { label: "Usuarios", href: "/usuarios", icon: Users },
     { label: "Maestros", href: "/maestros", icon: Database, children: MAESTROS },
   ],

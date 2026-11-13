@@ -23,11 +23,11 @@ describe("schema", () => {
     expect(FIELD_TABLE.size).toBe(fieldIds.length);
   });
 
-  it("incluye las 15 tablas", () => {
-    expect(Object.keys(TABLES)).toHaveLength(15);
+  it("incluye las 16 tablas", () => {
+    expect(Object.keys(TABLES)).toHaveLength(16);
   });
 
-  it("campos calculados de Horas, Ventas y Compras", () => {
+  it("campos calculados de Horas, Ventas, Compras y Tesorería", () => {
     const V = TABLES.ventas.fields;
     const C = TABLES.compras.fields;
     expect([...COMPUTED_FIELDS].sort()).toEqual(
@@ -35,6 +35,7 @@ describe("schema", () => {
         H.numero, H.horas, H.valorHora, H.moneda, H.cliente, H.importeAFacturar, H.mesTrabajado, H.mesAFacturarAAAAMM, H.creado,
         V.signo, V.tcAplicado, V.mesDevengadoAAAAMM, V.totalPesos, V.ivaPesos, V.netoPesos,
         C.signo, C.tcAplicado, C.mesDevengadoAAAAMM, C.totalPesos, C.ivaPesos, C.netoPesos, C.impactoResultados, C.cuentaSocio,
+        ...(["numero", "moneda", "mesAAAAMM", "entraSale", "importePesos"] as const).map((k) => TABLES.tesoreria.fields[k]),
       ].sort(),
     );
   });

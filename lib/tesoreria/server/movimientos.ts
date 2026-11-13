@@ -13,6 +13,7 @@ import {
   CONTROL,
   evaluarMovimiento,
   ordenSaldo,
+  patasConsistentes,
   validarMovimiento,
   type CuentaCtx,
   type Evaluacion,
@@ -402,7 +403,15 @@ export async function listTesoreria(q: TesoreriaQuery, now = new Date()): Promis
     const par = pares.get(m.transferencia) ?? [];
     return !(par.length === 2 && par.some((x) => x.movimiento === "Pago") && par.some((x) => x.movimiento === "Cobranza"));
   };
-  const evaluated = new Map<string, Evaluacion>(deLaCuenta.map((m) => [m.id, evaluarMovimiento(m, ctx, { parIncompleto: incompleto(m) })]));
+  const monedaDe = (c: string | null) => ctx.cuentas.find((x) => x.id === c)?.moneda;
+  const inconsistente = (m: MovimientoGuardado) => {
+    if (!m.transferencia || incompleto(m)) return false;
+    const [a, b] = pares.get(m.transferencia)!;
+    return !patasConsistentes(a, b, monedaDe);
+  };
+  const evaluated = new Map<string, Evaluacion>(
+    deLaCuenta.map((m) => [m.id, evaluarMovimiento(m, ctx, { parIncompleto: incompleto(m), parInconsistente: inconsistente(m) })]),
+  );
   const ordenados = [...deLaCuenta].sort(ordenSaldo);
   let saldo = toCents(cuenta.saldoInicial);
   let saldoInicioPeriodo = saldo;

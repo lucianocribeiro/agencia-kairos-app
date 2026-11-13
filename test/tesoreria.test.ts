@@ -317,36 +317,156 @@ describe("transferencias", () => {
     expect(conId(id).map((r) => r.fields[M.importe])).toEqual([250, 250]);
   });
 
-  it("edición: la verificación encuentra un registro distinto → se restauran los 2 → 503", async () => {
+  /** Valores actuales de las 2 patas (por movimiento). */
+  const patas = (id: string) => {
+    const par = conId(id);
+    const f = (mov: string) => par.find((r) => r.fields[M.movimiento] === mov)!;
+    return { pago: f("Pago"), cobranza: f("Cobranza") };
+  };
+  const updates = () => fake.calls.filter((c) => c.method === "update");
+
+  it("edición concurrente que llega DESPUÉS de nuestro update → 409, sin restaurar: quedan los valores de la otra persona", async () => {
     const id = (await crearTrf(trf())).json.transferencia;
+    fake.calls.length = 0;
     onList(2, () => {
-      rows()[1].fields[M.importe] = 1; // otro request pisó una pata entre el update y la relectura
+      // otra persona edita la transferencia entera entre nuestro update y la verificación
+      for (const r of conId(id)) {
+        r.fields[M.importe] = 777;
+        r.fields[M.descripcion] = "otra persona";
+      }
     });
     const res = await editarTrf(id, { importe: "300" });
-    expect(res.status).toBe(503);
-    expect(parOk(id, 250)).toBe(true);
-    expect(conId(id).every((r) => r.fields[M.descripcion] === "QA")).toBe(true);
+    expect(res).toEqual({ status: 409, json: { error: "Otra persona editó esta transferencia al mismo tiempo. Recargá para ver los datos actuales." } });
+    expect(updates()).toHaveLength(1); // solo el nuestro: no hubo restauración
+    expect(conId(id).map((r) => [r.fields[M.importe], r.fields[M.descripcion]])).toEqual([
+      [777, "otra persona"],
+      [777, "otra persona"],
+    ]);
   });
 
-  it("alta: falla la verificación (inyectada) → limpieza → 503, 0 registros", async () => {
-    fault("transferencia:crear:verificar");
-    expect((await crearTrf(trf())).status).toBe(503);
+  it("aplicado a medias (solo una pata) → se restaura solo esa → 503, las 2 originales", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    const { pago } = patas(id);
+    fake.calls.length = 0;
+    let n = 0;
+    fake.failWhen((call) => {
+      if (call.method !== "update" || n++ !== 0) return false;
+      // Airtable aplica solo el primer registro del pedido y responde con error
+      const first = (call.payload as { id: string; fields: Record<string, unknown> }[])[0];
+      Object.assign(rows().find((r) => r.id === first.id)!.fields, first.fields);
+      return true;
+    }, new Error("caída"));
+    const res = await editarTrf(id, { importe: "300" });
+    expect(res.status).toBe(503);
+    expect(updates()).toHaveLength(2);
+    expect((updates()[1].payload as { id: string }[]).map((r) => r.id)).toEqual([pago.id]); // solo la nuestra
+    expect(parOk(id, 250)).toBe(true);
+  });
+
+  it("aplicado a medias y la restauración no se verifica → 500 (nunca 2xx)", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    let n = 0;
+    fake.failWhen((call) => {
+      if (call.method !== "update") return false;
+      n++;
+      if (n === 1) {
+        const first = (call.payload as { id: string; fields: Record<string, unknown> }[])[0];
+        Object.assign(rows().find((r) => r.id === first.id)!.fields, first.fields);
+      }
+      return true; // también falla la restauración (sin aplicarse)
+    }, new Error("caída"));
+    expect((await editarTrf(id, { importe: "300" })).status).toBe(500);
+  });
+
+  it("las 2 nuestras después de una verificación fallida transitoria → 200", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    fake.calls.length = 0;
+    fault("transferencia:editar:verificar");
+    expect((await editarTrf(id, { importe: "300" })).status).toBe(200);
+    expect(parOk(id, 300)).toBe(true);
+    expect(updates()).toHaveLength(1);
+  });
+
+  it("las 2 originales (el update no se aplicó) → 503, no se escribe nada más", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    fake.calls.length = 0;
+    fake.failWhen((call) => call.method === "update", new Error("caída"));
+    expect((await editarTrf(id, { importe: "300" })).status).toBe(503);
+    expect(updates()).toHaveLength(1);
+    expect(parOk(id, 250)).toBe(true);
+  });
+
+  it("ajena + nuestra → 500, no se escribe nada, y la lista marca «Transferencia inconsistente»", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    fake.calls.length = 0;
+    onList(2, () => {
+      patas(id).cobranza.fields[M.importe] = 1; // otra persona tocó una pata
+    });
+    expect((await editarTrf(id, { importe: "300" })).status).toBe(500);
+    expect(updates()).toHaveLength(1);
+    const { pago, cobranza } = patas(id);
+    expect([pago.fields[M.importe], cobranza.fields[M.importe]]).toEqual([300, 1]);
+    const fila = (await list(`?cuenta=${ids.ars1}`)).json.filas.find((f: { transferencia: string }) => f.transferencia === id);
+    expect(fila.control).toBe(CONTROL.transferenciaInconsistente);
+  });
+
+  it("edición: mismos valores pero otro registro (otro ID) → no se acepta", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    onList(2, () => {
+      // la Cobranza fue reemplazada por un registro igual con otro ID
+      const c = patas(id).cobranza;
+      rows().splice(rows().indexOf(c), 1);
+      rows().push({ id: "recREEMPLAZO00001", createdTime: "", fields: { ...c.fields, [M.importe]: 300 } });
+    });
+    const res = await editarTrf(id, { importe: "300" });
+    expect(res.status).not.toBe(200);
+    expect(res.status).toBe(500);
+  });
+
+  it("alta: mismos valores pero otros registros (no los que devolvió el create) → limpieza → 503", async () => {
+    onList(0, () => {
+      const r = rows()[1];
+      rows().splice(1, 1);
+      rows().push({ id: "recREEMPLAZO00002", createdTime: "", fields: { ...r.fields } });
+    });
+    const res = await crearTrf(trf());
+    expect(res.status).toBe(503);
     expect(rows()).toHaveLength(0);
   });
 
-  it("edición: falla la verificación (inyectada) → restaurados → 503", async () => {
+  it("par inconsistente: se detecta por cada campo y por monedas distintas; un par correcto no", async () => {
     const id = (await crearTrf(trf())).json.transferencia;
-    fault("transferencia:editar:verificar");
-    expect((await editarTrf(id, { importe: "300" })).status).toBe(503);
-    expect(parOk(id, 250)).toBe(true);
+    const control = async () => (await list(`?cuenta=${ids.ars1}`)).json.filas.find((f: { transferencia: string }) => f.transferencia === id).control;
+    expect(await control()).toBe(CONTROL.ok);
+    const usd = ids.usd;
+    for (const [field, value] of [
+      [M.fecha, "2026-10-21"],
+      [M.importe, 251],
+      [M.tipoCambio, 2],
+      [M.descripcion, "otra"],
+      [M.cuenta, [usd]],
+    ] as const) {
+      const c = patas(id).cobranza;
+      const before = c.fields[field];
+      c.fields[field] = value as never;
+      expect(await control(), field).toBe(CONTROL.transferenciaInconsistente);
+      if (before === undefined) delete c.fields[field];
+      else c.fields[field] = before;
+      expect(await control()).toBe(CONTROL.ok);
+    }
   });
 
-  it("edición: la restauración no se puede verificar → 500 (nunca 2xx)", async () => {
+  it("editar un par inconsistente por el formulario de transferencia lo deja consistente", async () => {
     const id = (await crearTrf(trf())).json.transferencia;
-    fault("transferencia:editar:verificar");
-    let updates = 0;
-    fake.failWhen((call) => call.method === "update" && ++updates === 2, new Error("caída")); // falla la restauración
-    expect((await editarTrf(id, { importe: "300" })).status).toBe(500);
+    patas(id).cobranza.fields[M.importe] = 999;
+    expect((await list(`?cuenta=${ids.ars2}`)).json.filas[0].control).toBe(CONTROL.transferenciaInconsistente);
+    expect((await editarTrf(id, { importe: "260" })).status).toBe(200);
+    expect(parOk(id, 260)).toBe(true);
+    expect((await list(`?cuenta=${ids.ars2}`)).json.filas[0].control).toBe(CONTROL.ok);
+    // y se puede borrar por la ruta del par
+    patas(id).cobranza.fields[M.importe] = 1;
+    expect((await borrarTrf(id)).status).toBe(200);
+    expect(conId(id)).toHaveLength(0);
   });
 
   it("edición de un par incompleto → 409", async () => {

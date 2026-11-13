@@ -10,7 +10,7 @@ import type { RawValues } from "@/lib/abm/fields";
 import { WRITE_MESSAGES } from "@/lib/abm/server/compensation";
 import { injectFault } from "@/lib/abm/server/fault-injection";
 import type { ServiceResult } from "@/lib/abm/types";
-import { TESORERIA_MESSAGES, TIPO_TRANSFERENCIA, validarMovimiento, type MovimientoDatos, type TesoreriaCtx } from "../rules";
+import { patasConsistentes, TESORERIA_MESSAGES, TIPO_TRANSFERENCIA, validarMovimiento, type MovimientoDatos, type TesoreriaCtx } from "../rules";
 import { compact, loadTesoreriaCtx, parseInput, READ_FIELDS, toFields, toMovimiento, type MovimientoGuardado } from "./movimientos";
 
 /**
@@ -125,12 +125,21 @@ export function mismosValores(m: MovimientoDatos, expected: MovimientoDatos): bo
   return KEYS.every((k) => (k === "descripcion" ? (m[k] || "") === (expected[k] || "") : (m[k] ?? null) === (expected[k] ?? null)));
 }
 
-/** Par completo y con los valores esperados (un Pago y una Cobranza, nada más). */
-function parCorrecto(par: readonly MovimientoGuardado[], pago: MovimientoDatos, cobranza: MovimientoDatos): boolean {
+/**
+ * Par completo y con los valores esperados (un Pago y una Cobranza, nada más). Con
+ * `ids`, además tienen que ser exactamente esos registros.
+ */
+export function parCorrecto(
+  par: readonly MovimientoGuardado[],
+  pago: MovimientoDatos,
+  cobranza: MovimientoDatos,
+  ids?: { pago: string; cobranza: string },
+): boolean {
   if (par.length !== 2) return false;
   const p = par.find((m) => m.movimiento === "Pago");
   const c = par.find((m) => m.movimiento === "Cobranza");
-  return !!p && !!c && mismosValores(p, pago) && mismosValores(c, cobranza);
+  if (!p || !c || !mismosValores(p, pago) || !mismosValores(c, cobranza)) return false;
+  return !ids || (p.id === ids.pago && c.id === ids.cobranza);
 }
 
 function payloadOk(fields: Fields[]): boolean {
@@ -188,11 +197,14 @@ export async function createTransferencia(raw: RawValues): Promise<ServiceResult
   if (!payloadOk([pagoFields, cobranzaFields])) return fail(500, TRANSFERENCIA_MESSAGES.error);
 
   try {
-    await getAirtableClient().create(T.id, [pagoFields, cobranzaFields], { returnFields: [] });
+    const created = await getAirtableClient().create(T.id, [pagoFields, cobranzaFields], { returnFields: [] });
     injectFault("transferencia:crear:respuesta"); // escritura aplicada pero respondida con error
+    // Con la respuesta OK, la verificación exige exactamente los registros creados (en orden: Pago, Cobranza).
+    const esperados = created.length === 2 ? { pago: created[0].id, cobranza: created[1].id } : null;
+    if (!esperados) throw new Error("respuesta del create sin los 2 registros");
     injectFault("transferencia:crear:verificar");
     const leidos = await leerPorTransferencia(id);
-    if (!parCorrecto(leidos, par.pago, par.cobranza)) throw new Error("verificación: el par no coincide");
+    if (!parCorrecto(leidos, par.pago, par.cobranza, esperados)) throw new Error("verificación: el par no coincide");
     return { ok: true, data: { transferencia: id, ids: leidos.map((m) => m.id) } };
   } catch {
     return (await limpiarTransferencia(id, "alta")) ? fail(503, TRANSFERENCIA_MESSAGES.revertido) : fail(500, TRANSFERENCIA_MESSAGES.incompleto);
@@ -210,37 +222,36 @@ async function parCompleto(id: string): Promise<{ pago: MovimientoGuardado; cobr
   return { pago, cobranza };
 }
 
-/** Restaura los 2 registros desde la foto en UN pedido y verifica. true = restaurado y verificado. */
-async function restaurar(id: string, foto: { pago: MovimientoGuardado; cobranza: MovimientoGuardado }, fields: { pago: Fields; cobranza: Fields }): Promise<boolean> {
-  try {
-    await getAirtableClient().update(
-      T.id,
-      [
-        { id: foto.pago.id, fields: fields.pago },
-        { id: foto.cobranza.id, fields: fields.cobranza },
-      ],
-      { returnFields: [] },
-    );
-  } catch {
-    // puede haberse aplicado: lo decide la relectura
-  }
-  try {
-    if (parCorrecto(await leerPorTransferencia(id), foto.pago, foto.cobranza)) {
-      log("Edición de transferencia revertida", { transferencia: id, ids: [foto.pago.id, foto.cobranza.id] });
-      return true;
-    }
-  } catch {
-    // cae al log de abajo
-  }
-  log("TRANSFERENCIA INCOMPLETA: no se pudo verificar la restauración", { transferencia: id, ids: [foto.pago.id, foto.cobranza.id] });
-  return false;
+export const EDICION_MESSAGES = {
+  concurrente: "Otra persona editó esta transferencia al mismo tiempo. Recargá para ver los datos actuales.",
+} as const;
+
+type Estado = "nuestra" | "original" | "ajena";
+
+/**
+ * Clasifica una pata después de la edición: «nuestra» = tiene lo que este pedido quiso
+ * escribir; «original» = igual a la foto; «ajena» = cualquier otra cosa (otra persona la
+ * cambió, o no está). Si lo nuevo y la foto son iguales, cuenta como «nuestra».
+ */
+function clasificar(leida: MovimientoGuardado | undefined, id: string, nuestra: MovimientoDatos, original: MovimientoDatos): Estado {
+  if (!leida || leida.id !== id) return "ajena";
+  if (mismosValores(leida, nuestra)) return "nuestra";
+  if (mismosValores(leida, original)) return "original";
+  return "ajena";
 }
 
 /**
  * Edición: foto de los 2 registros; justo antes de escribir se releen y se comparan con
  * la foto (cualquier diferencia → 409 sin escribir). Los 2 se actualizan en UN pedido y
- * se verifican todos los campos de los 2. Error, diferencia o relectura fallida →
- * restaurar los 2 desde la foto (un pedido) y verificar → 503; sin verificar → 500.
+ * se verifican (valores e IDs). Si algo falla, se releen y se clasifica cada pata
+ * («nuestra» / «original» / «ajena») y se deshace SOLO lo propio:
+ * - las 2 nuestras → 200 (la verificación había fallado de forma transitoria);
+ * - las 2 originales → el update no se aplicó → 503, sin escribir;
+ * - nuestras + originales (aplicado a medias) → se restauran solo las nuestras a la foto
+ *   (un pedido) y se verifica → 503; sin verificar → 500;
+ * - alguna ajena → no se escribe nada: si las patas forman un par consistente → 409
+ *   (otra persona editó); si no → 500 (la red de seguridad lo marca en la lista).
+ * Nunca se restaura una pata ajena. Riesgo residual en AGENTS.md (no hay compare-and-swap).
  */
 export async function updateTransferencia(id: string, raw: RawValues): Promise<ServiceResult<{ transferencia: string }>> {
   const foto = await parCompleto(id);
@@ -263,26 +274,79 @@ export async function updateTransferencia(id: string, raw: RawValues): Promise<S
   const nuevos = { pago: toFields(par.pago, cuenta(par.pago.cuenta)), cobranza: toFields(par.cobranza, cuenta(par.cobranza.cuenta)) };
   const anteriores = { pago: toFields(foto.pago, cuenta(foto.pago.cuenta)), cobranza: toFields(foto.cobranza, cuenta(foto.cobranza.cuenta)) };
   if (!payloadOk([nuevos.pago, nuevos.cobranza, anteriores.pago, anteriores.cobranza])) return fail(500, TRANSFERENCIA_MESSAGES.error);
+  const ids = { pago: foto.pago.id, cobranza: foto.cobranza.id };
 
   // Cambio concurrente: se relee justo antes de escribir.
   const ahora = await leerPorTransferencia(id);
-  if (!parCorrecto(ahora, foto.pago, foto.cobranza)) return fail(409, TRANSFERENCIA_MESSAGES.cambio);
+  if (!parCorrecto(ahora, foto.pago, foto.cobranza, ids)) return fail(409, TRANSFERENCIA_MESSAGES.cambio);
 
   try {
     await getAirtableClient().update(
       T.id,
       [
-        { id: foto.pago.id, fields: nuevos.pago },
-        { id: foto.cobranza.id, fields: nuevos.cobranza },
+        { id: ids.pago, fields: nuevos.pago },
+        { id: ids.cobranza, fields: nuevos.cobranza },
       ],
       { returnFields: [] },
     );
     injectFault("transferencia:editar:verificar");
-    if (!parCorrecto(await leerPorTransferencia(id), par.pago, par.cobranza)) throw new Error("verificación: el par no coincide");
-    return { ok: true, data: { transferencia: id } };
+    if (parCorrecto(await leerPorTransferencia(id), par.pago, par.cobranza, ids)) return { ok: true, data: { transferencia: id } };
   } catch {
-    return (await restaurar(id, foto, anteriores)) ? fail(503, TRANSFERENCIA_MESSAGES.revertido) : fail(500, TRANSFERENCIA_MESSAGES.incompleto);
+    // se resuelve abajo, releyendo y clasificando
   }
+  return reconciliarEdicion(id, ids, par, foto, anteriores, ctx);
+}
+
+async function reconciliarEdicion(
+  id: string,
+  ids: { pago: string; cobranza: string },
+  nuevo: { pago: MovimientoDatos; cobranza: MovimientoDatos },
+  foto: { pago: MovimientoGuardado; cobranza: MovimientoGuardado },
+  anteriores: { pago: Fields; cobranza: Fields },
+  ctx: TesoreriaCtx,
+): Promise<ServiceResult<{ transferencia: string }>> {
+  let leidos: MovimientoGuardado[];
+  try {
+    leidos = await leerPorTransferencia(id);
+  } catch {
+    log("TRANSFERENCIA INCOMPLETA: no se pudo releer después de la edición", { transferencia: id, ids: [ids.pago, ids.cobranza] });
+    return fail(500, TRANSFERENCIA_MESSAGES.incompleto);
+  }
+  const pago = leidos.find((m) => m.id === ids.pago);
+  const cobranza = leidos.find((m) => m.id === ids.cobranza);
+  const estado = { pago: clasificar(pago, ids.pago, nuevo.pago, foto.pago), cobranza: clasificar(cobranza, ids.cobranza, nuevo.cobranza, foto.cobranza) };
+  const estados = [estado.pago, estado.cobranza];
+
+  if (estados.every((e) => e === "nuestra") && leidos.length === 2) return { ok: true, data: { transferencia: id } };
+  if (estados.every((e) => e === "original") && leidos.length === 2) {
+    log("Edición de transferencia no aplicada", { transferencia: id, ids: [ids.pago, ids.cobranza] });
+    return fail(503, TRANSFERENCIA_MESSAGES.revertido);
+  }
+  if (estados.includes("ajena") || leidos.length !== 2) {
+    // Otra persona cambió algo: no se escribe nada.
+    const monedaDe = (c: string | null) => ctx.cuentas.find((x) => x.id === c)?.moneda;
+    const consistente = !!pago && !!cobranza && leidos.length === 2 && patasConsistentes(pago, cobranza, monedaDe);
+    log("Edición de transferencia en conflicto con otra", { transferencia: id, ids: [ids.pago, ids.cobranza], estado, consistente });
+    return consistente ? fail(409, EDICION_MESSAGES.concurrente) : fail(500, TRANSFERENCIA_MESSAGES.incompleto);
+  }
+
+  // Aplicado a medias: se restauran solo las patas nuestras.
+  const restaurar = (["pago", "cobranza"] as const).filter((k) => estado[k] === "nuestra").map((k) => ({ id: ids[k], fields: anteriores[k] }));
+  try {
+    await getAirtableClient().update(T.id, restaurar, { returnFields: [] });
+  } catch {
+    // lo decide la relectura
+  }
+  try {
+    if (parCorrecto(await leerPorTransferencia(id), foto.pago, foto.cobranza, ids)) {
+      log("Edición de transferencia aplicada a medias: revertida", { transferencia: id, ids: restaurar.map((r) => r.id) });
+      return fail(503, TRANSFERENCIA_MESSAGES.revertido);
+    }
+  } catch {
+    // cae al log de abajo
+  }
+  log("TRANSFERENCIA INCOMPLETA: no se pudo verificar la restauración", { transferencia: id, ids: restaurar.map((r) => r.id) });
+  return fail(500, TRANSFERENCIA_MESSAGES.incompleto);
 }
 
 /**

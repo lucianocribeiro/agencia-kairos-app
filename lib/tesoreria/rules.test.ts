@@ -5,6 +5,7 @@ import {
   evaluarMovimiento,
   importeConSigno,
   importePesos,
+  patasConsistentes,
   saldoCorrido,
   tcAplicado,
   TESORERIA_MESSAGES,
@@ -197,5 +198,29 @@ describe("saldo corrido", () => {
       ["c", 116000],
     ]);
     expect(saldoCorrido(0, rows).at(-1)!.saldo).toBe(16000);
+  });
+});
+
+describe("patas de una transferencia", () => {
+  const pata = (over: Partial<MovimientoDatos> = {}) => mov({ tipoOperacion: "recTIPOTRANSF0000", sumaResultados: "N", transferencia: "TR-x", ...over });
+  const moneda = (c: string | null) => ctx.cuentas.find((x) => x.id === c)?.moneda;
+
+  it("consistentes: un Pago y una Cobranza con la misma fecha, importe, TC y descripción, misma moneda", () => {
+    expect(patasConsistentes(pata(), pata({ movimiento: "Cobranza", cuenta: "otra" }))).toBe(true);
+  });
+
+  it.each([
+    ["fecha", { fecha: "2026-10-16" }],
+    ["importe", { importe: 101 }],
+    ["tipo de cambio", { tipoCambio: 2 }],
+    ["descripción", { descripcion: "otra" }],
+    ["dos Pagos", { movimiento: "Pago" }],
+  ])("inconsistentes por %s", (_n, over) => {
+    expect(patasConsistentes(pata(), pata({ movimiento: "Cobranza", ...over }))).toBe(false);
+  });
+
+  it("monedas distintas (si se pasa la moneda de las cuentas)", () => {
+    expect(patasConsistentes(pata({ cuenta: ARS.id }), pata({ movimiento: "Cobranza", cuenta: USD.id }))).toBe(true);
+    expect(patasConsistentes(pata({ cuenta: ARS.id }), pata({ movimiento: "Cobranza", cuenta: USD.id }), moneda)).toBe(false);
   });
 });

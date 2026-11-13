@@ -67,6 +67,8 @@ export interface MovimientoDatos {
 export const CONTROL = {
   /** Red de seguridad: el ID de transferencia no lo comparten exactamente un Pago y una Cobranza. */
   transferenciaIncompleta: "Transferencia incompleta",
+  /** Par completo cuyas patas difieren (fecha, importe, TC, descripción) o con cuentas de distinta moneda. */
+  transferenciaInconsistente: "Transferencia inconsistente",
   faltaCuenta: "Falta cuenta",
   cuentaInexistente: "Cuenta inexistente",
   movimiento: "Indicá Cobranza o Pago",
@@ -133,7 +135,7 @@ const find = <T extends { id: string }>(list: readonly T[], id: string | null) =
  * Excel). `parIncompleto`: el registro tiene ID de transferencia pero ese ID no lo
  * comparten exactamente un Pago y una Cobranza → «Transferencia incompleta» (primero).
  */
-export function evaluarMovimiento(m: MovimientoDatos, ctx: TesoreriaCtx, opts: { parIncompleto?: boolean } = {}): Evaluacion {
+export function evaluarMovimiento(m: MovimientoDatos, ctx: TesoreriaCtx, opts: { parIncompleto?: boolean; parInconsistente?: boolean } = {}): Evaluacion {
   const cuenta = find(ctx.cuentas, m.cuenta);
   const tipo = find(ctx.tipos, m.tipoOperacion);
   const esDeSocio = !!tipo?.esDeSocio;
@@ -145,6 +147,7 @@ export function evaluarMovimiento(m: MovimientoDatos, ctx: TesoreriaCtx, opts: {
 
   const checks: [boolean, string][] = [
     [!!m.transferencia && !!opts.parIncompleto, CONTROL.transferenciaIncompleta],
+    [!!m.transferencia && !!opts.parInconsistente, CONTROL.transferenciaInconsistente],
     [!m.cuenta, CONTROL.faltaCuenta],
     [!cuenta, CONTROL.cuentaInexistente],
     [m.movimiento !== "Cobranza" && m.movimiento !== "Pago", CONTROL.movimiento],
@@ -174,6 +177,26 @@ export function evaluarMovimiento(m: MovimientoDatos, ctx: TesoreriaCtx, opts: {
     cuentaSocio: esDeSocio ? -(pesos ?? 0) || 0 : 0,
     control,
   };
+}
+
+// ── Transferencias ───────────────────────────────────────────────────────────
+
+type Pata = Pick<MovimientoDatos, "fecha" | "importe" | "tipoCambio" | "descripcion" | "cuenta" | "movimiento">;
+
+/**
+ * ¿Las 2 patas de una transferencia son consistentes? Un Pago y una Cobranza con la
+ * misma fecha, importe, tipo de cambio y descripción, en cuentas de la misma moneda.
+ * `monedaDe` da la moneda de una cuenta (si no se pasa, no se compara la moneda).
+ */
+export function patasConsistentes(a: Pata, b: Pata, monedaDe?: (cuenta: string | null) => string | null | undefined): boolean {
+  const movs = [a.movimiento, b.movimiento].sort().join();
+  if (movs !== "Cobranza,Pago") return false;
+  if ((a.fecha ?? null) !== (b.fecha ?? null)) return false;
+  if ((a.importe ?? null) !== (b.importe ?? null)) return false;
+  if ((a.tipoCambio ?? null) !== (b.tipoCambio ?? null)) return false;
+  if ((a.descripcion || "") !== (b.descripcion || "")) return false;
+  if (monedaDe && (monedaDe(a.cuenta) ?? null) !== (monedaDe(b.cuenta) ?? null)) return false;
+  return true;
 }
 
 // ── Saldo ────────────────────────────────────────────────────────────────────

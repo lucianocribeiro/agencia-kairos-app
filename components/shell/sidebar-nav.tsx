@@ -48,7 +48,7 @@ function SidebarLink({
   onNavigate?: () => void;
   nested?: boolean;
 }) {
-  const active = isActivePath(pathname, item.href);
+  const active = isActivePath(pathname, item.href, item.exact);
   const Icon = item.icon;
   return (
     <li>

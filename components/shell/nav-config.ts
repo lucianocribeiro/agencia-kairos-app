@@ -9,6 +9,7 @@ import {
   FolderKanban,
   Handshake,
   Landmark,
+  List,
   Receipt,
   LayoutDashboard,
   ShoppingCart,
@@ -25,6 +26,8 @@ export interface NavLink {
   label: string;
   href: string;
   icon: LucideIcon;
+  /** Activo solo en esa ruta exacta (p. ej. /ventas, que tiene /ventas/importar abajo). */
+  exact?: boolean;
 }
 
 export interface NavGroup extends NavLink {
@@ -54,8 +57,24 @@ export const NAV_BY_ROLE: Record<Role, readonly NavItem[]> = {
   Admin: [
     { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { label: "Horas", href: "/horas", icon: Clock },
-    { label: "Ventas", href: "/ventas", icon: Receipt, children: [{ label: "Importar", href: "/ventas/importar", icon: FileDown }] },
-    { label: "Compras", href: "/compras", icon: ShoppingCart, children: [{ label: "Importar", href: "/compras/importar", icon: FileDown }] },
+    {
+      label: "Ventas",
+      href: "/ventas",
+      icon: Receipt,
+      children: [
+        { label: "Comprobantes", href: "/ventas", icon: List, exact: true },
+        { label: "Importar", href: "/ventas/importar", icon: FileDown },
+      ],
+    },
+    {
+      label: "Compras",
+      href: "/compras",
+      icon: ShoppingCart,
+      children: [
+        { label: "Comprobantes", href: "/compras", icon: List, exact: true },
+        { label: "Importar", href: "/compras/importar", icon: FileDown },
+      ],
+    },
     { label: "Usuarios", href: "/usuarios", icon: Users },
     { label: "Maestros", href: "/maestros", icon: Database, children: MAESTROS },
   ],
@@ -64,6 +83,6 @@ export const NAV_BY_ROLE: Record<Role, readonly NavItem[]> = {
 
 export { HOME_BY_ROLE } from "@/lib/roles";
 
-export function isActivePath(pathname: string, href: string): boolean {
-  return pathname === href || pathname.startsWith(`${href}/`);
+export function isActivePath(pathname: string, href: string, exact = false): boolean {
+  return pathname === href || (!exact && pathname.startsWith(`${href}/`));
 }

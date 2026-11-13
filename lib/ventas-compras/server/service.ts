@@ -59,6 +59,31 @@ export async function previewImport(kind: Kind, file: Uint8Array): Promise<Servi
 
 // ── Ediciones ───────────────────────────────────────────────────────────────
 
+export const EDICION_MOTIVOS = {
+  mes: "el mes devengado no es válido.",
+  proyecto: "elegí un proyecto activo.",
+  unidad: "elegí una unidad de negocio válida.",
+  categoria: (kind: Kind) => `elegí una categoría de ${kind === "ventas" ? "ingreso" : "gasto"}.`,
+  socio: "elegí un socio válido.",
+  observaciones: `las observaciones superan los ${OBSERVACIONES_MAX} caracteres.`,
+} as const;
+
+/**
+ * Valida una edición contra el contexto (la misma regla en la importación y en la
+ * edición de un comprobante). `proyectoActual`: el proyecto ya linkeado se puede
+ * mantener aunque no esté Activo. Devuelve el motivo o null.
+ */
+export function validarEdicion(kind: Kind, ed: Ediciones, ctx: Contexto, proyectoActual: string | null = null): string | null {
+  if (ed.mesDevengado && !/^\d{4}-(0[1-9]|1[0-2])$/.test(ed.mesDevengado)) return EDICION_MOTIVOS.mes;
+  if (ed.proyecto && ed.proyecto !== proyectoActual && !ctx.proyectos.some((p) => p.id === ed.proyecto && p.activo)) return EDICION_MOTIVOS.proyecto;
+  if (ed.unidadNegocio && !ctx.unidades.some((u) => u.id === ed.unidadNegocio)) return EDICION_MOTIVOS.unidad;
+  const tipoCategoria = kind === "ventas" ? "Ingreso" : "Gasto";
+  if (ed.categoria && !ctx.categorias.some((c) => c.id === ed.categoria && c.tipo === tipoCategoria)) return EDICION_MOTIVOS.categoria(kind);
+  if (ed.socio && (kind !== "compras" || !ctx.socios.some((s) => s.id === ed.socio))) return EDICION_MOTIVOS.socio;
+  if (ed.observaciones && [...ed.observaciones].length > OBSERVACIONES_MAX) return EDICION_MOTIVOS.observaciones;
+  return null;
+}
+
 /** Valida las ediciones (por Clave ARCA) contra el contexto. Solo cuentan las filas nuevas. */
 export function validarEdiciones(kind: Kind, raw: unknown, filas: readonly FilaBase[], ctx: Contexto): { ediciones: Map<string, Ediciones> } | { error: string } {
   const out = new Map<string, Ediciones>();
@@ -74,16 +99,8 @@ export function validarEdiciones(kind: Kind, raw: unknown, filas: readonly FilaB
       if (!(EDICION_KEYS as readonly string[]).includes(key) || typeof v !== "string") return { error: IMPORT_MESSAGES.edicionesFormato };
       ed[key as keyof Ediciones] = v.trim();
     }
-    const bad = (motivo: string) => ({ error: IMPORT_MESSAGES.edicionInvalida(fila.fila, motivo) });
-    if (ed.mesDevengado && !/^\d{4}-(0[1-9]|1[0-2])$/.test(ed.mesDevengado)) return bad("el mes devengado no es válido.");
-    if (ed.proyecto && !ctx.proyectos.some((p) => p.id === ed.proyecto && p.activo)) return bad("elegí un proyecto activo.");
-    if (ed.unidadNegocio && !ctx.unidades.some((u) => u.id === ed.unidadNegocio)) return bad("elegí una unidad de negocio válida.");
-    const tipoCategoria = kind === "ventas" ? "Ingreso" : "Gasto";
-    if (ed.categoria && !ctx.categorias.some((c) => c.id === ed.categoria && c.tipo === tipoCategoria)) {
-      return bad(`elegí una categoría de ${kind === "ventas" ? "ingreso" : "gasto"}.`);
-    }
-    if (ed.socio && (kind !== "compras" || !ctx.socios.some((s) => s.id === ed.socio))) return bad("elegí un socio válido.");
-    if (ed.observaciones && [...ed.observaciones].length > OBSERVACIONES_MAX) return bad(`las observaciones superan los ${OBSERVACIONES_MAX} caracteres.`);
+    const motivo = validarEdicion(kind, ed, ctx);
+    if (motivo) return { error: IMPORT_MESSAGES.edicionInvalida(fila.fila, motivo) };
     out.set(clave, ed);
   }
   return { ediciones: out };

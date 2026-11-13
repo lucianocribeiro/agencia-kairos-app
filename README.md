@@ -2,7 +2,7 @@
 
 App interna de Agencia Kairos. Next.js (App Router) + TypeScript + Tailwind CSS, con Airtable como base de datos. Se deploya en Vercel.
 
-> Estado: **Fase 2 · CC-F2-02 (importación ARCA de Ventas y Compras)**. Fase 1 completa: login, guards por rol, ABM de Usuarios y Maestros, carga de horas del Empleado, Horas y Dashboard de Admin. Fase 2: Clientes Activo / Inactivo (CC-F2-01).
+> Estado: **Fase 2 · CC-F2-03 (listas de Ventas y Compras)**. Fase 1 completa: login, guards por rol, ABM de Usuarios y Maestros, carga de horas del Empleado, Horas y Dashboard de Admin. Fase 2: Clientes Activo / Inactivo (CC-F2-01).
 
 ## Requisitos
 
@@ -147,6 +147,18 @@ Reglas (de `Gestion_Kairos_ERP_v4.xlsx`, implementadas en `lib/ventas-compras/`,
 **Límites (Vercel)**: el body de una función no puede pasar 4,5 MB y la duración máxima en Hobby es 300 s (https://vercel.com/docs/functions/limitations). Por eso el archivo se limita a 4 MB (se avisa en el navegador antes de subir y el servidor responde 413) y a 1.000 comprobantes por importación; con el throttle de Airtable (5 pedidos/s, lotes de 10) 1.000 filas tardan unos 30 s.
 
 **Escritura**: lotes de 10, los create nunca se reintentan, con compensación: si algo falla a mitad de camino se borra todo lo que escribió esta importación (también los proveedores creados) → 503 (500 si el rollback falla). Después se verifica (fail-closed) que ningún proveedor creado choque con otro creado en paralelo (si choca, se deshace todo → 409) y que cada Clave ARCA esté una sola vez: si otra importación en paralelo guardó la misma clave primero, se borran las filas propias repetidas y se informan como «importadas en paralelo».
+
+## Ventas y Compras: listas, edición y borrado
+
+**Ventas › Comprobantes** (`/ventas`) y **Compras › Comprobantes** (`/compras`), solo Admin.
+
+- **Columnas**: Fecha, Tipo, PV-Número, Cliente / Proveedor, Denominación, Moneda, Total $, IVA $, Neto $ (Compras también Impacto en resultados $ y A cuenta del socio $), Mes devengado, Proyecto, UN, Categoría y Control. Los importes se calculan en código con las mismas reglas que la importación (`lib/ventas-compras/listado.ts` usa `evaluar` y `calcularImportes`); nunca se leen las fórmulas de Airtable.
+- **Valores efectivos** (igual que en la importación): Mes devengado vacío → mes de la Fecha; UN vacía → la del proyecto; Categoría vacía → Ventas: Parámetro «Categoría por defecto en Ventas»; Compras: la Categoría por defecto del proveedor.
+- **Cliente efectivo (Ventas)**: el del proyecto si hay proyecto; si no, el cliente (Activo o Inactivo) cuyo CUIT coincide con el Nro. Doc. Receptor; si no, ninguno («Cliente sin identificar»). Se calcula al leer, como en el Excel: si después se carga el CUIT en Clientes, las filas viejas se arreglan solas. El link Cliente guardado en Airtable se actualiza cada vez que se guarda la fila. **Los reportes tienen que usar el Cliente efectivo, no el link guardado.**
+- **Control**: los mismos mensajes y el mismo orden que la importación. Las filas con observaciones se ven atenuadas.
+- **Filtros**: Fecha (por defecto el año actual), Mes devengado efectivo, Cliente / Proveedor, Proyecto (incluye «Sin proyecto»), Categoría efectiva y Control (OK, con observaciones o un mensaje puntual). La Fecha se filtra en Airtable; el resto, en código. Los **totales** (Total $, IVA $, Neto $; Compras también Impacto y A cuenta del socio) son de todo el conjunto filtrado, no solo de la página (50 filas por página).
+- **Edición**: Mes devengado, Proyecto, Unidad de negocio, Categoría, Observaciones y, en Compras, Imputar a socio. Las columnas ARCA son de solo lectura. Mismas validaciones que la importación (se puede mantener el proyecto linkeado aunque ya no esté Activo). Vaciar un campo vuelve al valor por defecto.
+- **Borrado**: un comprobante por vez, con confirmación (Clave ARCA, Fecha, Denominación, Total $). El proveedor creado por una importación queda. Si se vuelve a importar el mismo archivo, la fila borrada vuelve como **Nueva** y se importa de nuevo.
 
 ## Estructura
 

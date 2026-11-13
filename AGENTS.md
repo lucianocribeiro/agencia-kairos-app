@@ -99,3 +99,11 @@ Es un chequeo no atómico con compensación. Queda una ventana chica en la que u
 - Verificación posterior (fail-closed): `losesUniqueRace` por cada proveedor creado (pierde → se deshace todo, 409) y `findUniqueRaceLosers` (integrity.ts) para las Claves ARCA en una sola lectura: gana el registro más viejo, las filas propias que pierden se borran con `Compensation.discardCreated` y se informan como «importadas en paralelo». Si la relectura falla → se deshace todo → 503.
 - Riesgo residual: un create que Airtable aplica pero responde con error (5xx) deja filas que esta importación no conoce y el rollback no borra; una nueva importación las ve como «Ya importada». Mismo riesgo que los create de Fase 1.
 - Tests con archivos sintéticos (`test/xlsx-fixture.ts`, `test/arca-fixture.ts`; CUITs inventados con dígito verificador válido). Nunca commitear archivos, CUITs ni importes reales.
+
+## Listas de Ventas y Compras (CC-F2-03)
+
+- `lib/ventas-compras/listado.ts` (puro): `ComprobanteGuardado` (registro por clave de schema) → `aFila` → `evaluar` (el mismo de la importación) → `FilaListado`; `filtrar`, `totalizar` (centavos), `ordenar`, `CONTROL_FILTROS`. Lo guardado vacío = sin edición (vale el valor por defecto); en Compras, la categoría vacía cae en la del proveedor.
+- Servidor: `lib/ventas-compras/server/comprobantes.ts` (`listComprobantes`, `updateComprobante`, `deleteComprobante`); contexto compartido con la importación (`loadImportContext(kind, { claves: false })`).
+- Rutas: `GET /api/admin/comprobantes/[tabla]`, `PATCH` y `DELETE /api/admin/comprobantes/[tabla]/[id]`, con `adminRoute`. La edición usa `toRawValues(body, COMPROBANTE_INPUT_KEYS[kind])` y la misma `validarEdicion` que la importación (`proyectoActual` permite mantener un proyecto no Activo). Ventas: al guardar se escribe el link Cliente con la regla efectiva.
+- El Cliente efectivo de Ventas se calcula al leer (proyecto → CUIT → ninguno); los reportes futuros tienen que usar ese, no el link guardado.
+- Nav: los hijos con la misma ruta que el grupo usan `exact: true` (`isActivePath(pathname, href, exact)`).

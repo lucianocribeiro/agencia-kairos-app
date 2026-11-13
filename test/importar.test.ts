@@ -355,6 +355,28 @@ describe("confirmar · escritura", () => {
   });
 });
 
+describe("borrar y volver a importar (CC-F2-03 fix 4)", () => {
+  beforeEach(() => loginAs(ids.admin));
+
+  it("un comprobante borrado vuelve como Nueva y se importa otra vez", async () => {
+    const itemRoute = await import("@/app/api/admin/comprobantes/[tabla]/[id]/route");
+    const file = arcaXlsx("ventas", [factura({ numeroDesde: 1, nroDocReceptor: CUIT_CLIENTE }), factura({ numeroDesde: 2, nroDocReceptor: CUIT_CLIENTE })]);
+    expect((await conf("ventas", file)).json.importadas).toBe(2);
+    const target = fake.rows(T.ventas.id).find((r) => r.fields[V.numeroDesde] === 1)!.id;
+    const cookie = cookieJar.get(SESSION_COOKIE);
+    const del = await itemRoute.DELETE(new NextRequest(`http://localhost/x/${target}`, { method: "DELETE", headers: { cookie: `${SESSION_COOKIE}=${cookie}` } }), {
+      params: Promise.resolve({ tabla: "ventas", id: target }),
+    });
+    expect(del.status).toBe(200);
+    expect(fake.rows(T.ventas.id)).toHaveLength(1);
+    const p = await prev("ventas", file);
+    expect(p.json.filas.map((f: Fila) => f.estado)).toEqual(["nueva", "ya_importada"]);
+    const again = await conf("ventas", file);
+    expect(again.json).toMatchObject({ importadas: 1, omitidas: { yaImportadas: 1 } });
+    expect(fake.rows(T.ventas.id).map((r) => r.fields[V.numeroDesde]).sort()).toEqual([1, 2]);
+  });
+});
+
 describe("confirmar · rollback y carreras", () => {
   beforeEach(() => loginAs(ids.admin));
   const muchas = (n: number) => arcaXlsx("ventas", Array.from({ length: n }, (_, i) => factura({ numeroDesde: i + 1, nroDocReceptor: CUIT_CLIENTE })));

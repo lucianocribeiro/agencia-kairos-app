@@ -240,7 +240,8 @@ export const MAESTRO_CONFIGS: Record<MaestroSlug, MaestroConfig> = {
       mail: C.mail,
       observaciones: C.observaciones,
     },
-    unique: ["nombre", "sigla"],
+    // CUIT opcional; si viene, lib/cuit lo valida y normaliza (11 dígitos) y es único (como en Proveedores).
+    unique: ["nombre", "sigla", "cuit"],
     references: REFERENCE_FIELDS.clientes,
     referencedMessage: CLIENTE_MESSAGES.referenciado,
     beforeWrite: clientesBeforeWrite,

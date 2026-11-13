@@ -17,6 +17,13 @@ const collator = new Intl.Collator("es", { sensitivity: "base", numeric: true })
 const byNombre = <X extends { nombre: string }>(a: X, b: X) => collator.compare(a.nombre, b.nombre);
 
 export interface ImportContext {
+  /** Por ID (listas de comprobantes): tipo → código y signo; proveedor → datos. */
+  byId: {
+    tipos: ReadonlyMap<string, { codigo: number; signo: number }>;
+    proveedores: ReadonlyMap<string, { nombre: string; cuit: string; categoriaPorDefecto: string | null }>;
+  };
+  /** Opciones de los filtros de las listas: todos los clientes / proveedores, por nombre. */
+  contrapartes: Ref[];
   /** Para armar las filas (tipos, clientes y proveedores por CUIT, Claves ARCA existentes). */
   refs: Referencias;
   /** Para las ediciones y el Control (también se manda a la vista previa). */
@@ -24,7 +31,7 @@ export interface ImportContext {
 }
 
 /** Todo lo que la importación lee de la base, una vez por request. */
-export async function loadImportContext(kind: Kind): Promise<ImportContext> {
+export async function loadImportContext(kind: Kind, options: { claves?: boolean } = {}): Promise<ImportContext> {
   const client = getAirtableClient();
   const table = T[kind];
   const [tipos, proyectos, clientes, unidades, categorias, socios, parametros, proveedores, existentes] = await Promise.all([
@@ -38,33 +45,42 @@ export async function loadImportContext(kind: Kind): Promise<ImportContext> {
     kind === "compras"
       ? client.list(T.proveedores.id, { fields: [T.proveedores.fields.nombre, T.proveedores.fields.cuit, T.proveedores.fields.categoriaPorDefecto] })
       : Promise.resolve([]),
-    client.list(table.id, { fields: [table.fields.claveArca] }),
+    options.claves === false ? Promise.resolve([]) : client.list(table.id, { fields: [table.fields.claveArca] }),
   ]);
 
   const tiposMap = new Map<number, { id: string; signo: number }>();
+  const tiposById = new Map<string, { codigo: number; signo: number }>();
   for (const r of tipos) {
     const codigo = r.fields[T.tiposComprobante.fields.codigo];
-    const signo = r.fields[T.tiposComprobante.fields.signo];
-    if (typeof codigo === "number") tiposMap.set(codigo, { id: r.id, signo: signo === 1 || signo === -1 ? signo : 0 });
+    const raw = r.fields[T.tiposComprobante.fields.signo];
+    const signo = raw === 1 || raw === -1 ? raw : 0;
+    if (typeof codigo === "number") {
+      tiposMap.set(codigo, { id: r.id, signo });
+      tiposById.set(r.id, { codigo, signo });
+    }
   }
 
   const clienteRef = new Map<string, Ref>(clientes.map((r) => [r.id, { id: r.id, nombre: text(r.fields[T.clientes.fields.nombre]) || "(sin nombre)" }]));
-  const clientesPorCuit = new Map<string, Ref>();
+  // CUIT → cliente solo si hay exactamente uno con ese CUIT: si hay más (datos viejos, antes de
+  // la unicidad), es ambiguo y cuenta como sin match («Cliente sin identificar»; no se linkea).
+  const porCuit = new Map<string, Ref[]>();
   for (const r of clientes) {
     const cuit = normalizeCuit(text(r.fields[T.clientes.fields.cuit]));
-    if (cuit.length === 11 && !clientesPorCuit.has(cuit)) clientesPorCuit.set(cuit, clienteRef.get(r.id)!);
+    if (cuit.length === 11) porCuit.set(cuit, [...(porCuit.get(cuit) ?? []), clienteRef.get(r.id)!]);
   }
+  const clientesPorCuit = new Map<string, Ref>([...porCuit].filter(([, list]) => list.length === 1).map(([cuit, [ref]]) => [cuit, ref]));
 
   const proveedoresPorCuit = new Map<string, { id: string; nombre: string; categoriaPorDefecto: string | null }>();
+  const proveedoresById = new Map<string, { nombre: string; cuit: string; categoriaPorDefecto: string | null }>();
   for (const r of proveedores as { id: string; fields: Fields }[]) {
     const cuit = normalizeCuit(text(r.fields[T.proveedores.fields.cuit]));
-    if (cuit.length === 11 && !proveedoresPorCuit.has(cuit)) {
-      proveedoresPorCuit.set(cuit, {
-        id: r.id,
-        nombre: text(r.fields[T.proveedores.fields.nombre]) || "(sin nombre)",
-        categoriaPorDefecto: first(r.fields[T.proveedores.fields.categoriaPorDefecto]),
-      });
-    }
+    const prov = {
+      nombre: text(r.fields[T.proveedores.fields.nombre]) || "(sin nombre)",
+      cuit,
+      categoriaPorDefecto: first(r.fields[T.proveedores.fields.categoriaPorDefecto]),
+    };
+    proveedoresById.set(r.id, prov);
+    if (cuit.length === 11 && !proveedoresPorCuit.has(cuit)) proveedoresPorCuit.set(cuit, { id: r.id, nombre: prov.nombre, categoriaPorDefecto: prov.categoriaPorDefecto });
   }
 
   const proyectosCtx: ProyectoCtx[] = proyectos
@@ -104,5 +120,14 @@ export async function loadImportContext(kind: Kind): Promise<ImportContext> {
   };
 
   const clavesExistentes = new Set(existentes.map((r) => text(r.fields[table.fields.claveArca])).filter(Boolean));
-  return { refs: { tipos: tiposMap, clientesPorCuit, proveedoresPorCuit, clavesExistentes }, ctx };
+  const contrapartes: Ref[] =
+    kind === "ventas"
+      ? [...clienteRef.values()].sort(byNombre)
+      : [...proveedoresById.entries()].map(([id, p]) => ({ id, nombre: p.nombre })).sort(byNombre);
+  return {
+    refs: { tipos: tiposMap, clientesPorCuit, proveedoresPorCuit, clavesExistentes },
+    ctx,
+    byId: { tipos: tiposById, proveedores: proveedoresById },
+    contrapartes,
+  };
 }

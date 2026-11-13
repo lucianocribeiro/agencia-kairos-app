@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { LoginForm } from "@/components/auth/login-form";
+import { Logo } from "@/components/shell/logo";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
 import { getOptionalUser } from "@/lib/auth/guards";
 import { homeFor } from "@/lib/auth/login";
@@ -12,7 +13,8 @@ export const metadata: Metadata = { title: "Ingresar" };
 export default function LoginPage() {
   return (
     <Card className="w-full">
-      <CardHeader>
+      <CardHeader className="items-center text-center">
+        <Logo eager className="mb-3 justify-center" />
         <CardTitle>Ingresá a Kairos</CardTitle>
       </CardHeader>
       <CardContent>

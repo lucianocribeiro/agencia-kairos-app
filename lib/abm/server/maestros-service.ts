@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getAirtableClient, type Fields } from "@/lib/airtable/client";
-import { findDuplicates, findReferences, losesUniqueRace, REFERENCED_MESSAGE } from "@/lib/airtable/integrity";
+import { findDuplicates, findReferences, losesUniqueRace, normalizeForUnique, REFERENCED_MESSAGE } from "@/lib/airtable/integrity";
 import { invalidFieldIds, isRecordId } from "@/lib/airtable/payload";
 import { TABLES } from "@/lib/airtable/schema";
 import type { FieldErrors, FieldSpec, RawValues, Values } from "@/lib/abm/fields";
@@ -192,6 +192,17 @@ async function write(
   const { values, errors } = validateMaestro(config.spec, raw, target.mode);
   if (Object.keys(errors).length > 0) return fail(400, ABM_MESSAGES.validacion, errors);
 
+  // Registro protegido: sus claves no cambian; ningún otro puede tomar su nombre reservado.
+  const protegido = config.spec.protegido;
+  if (protegido) {
+    if (existingValues && protegido.when(existingValues)) {
+      const cambia = protegido.keys.some((k) => k in values && JSON.stringify(values[k] ?? null) !== JSON.stringify(existingValues![k] ?? null));
+      if (cambia) return fail(409, protegido.mensaje);
+    } else if (normalizeForUnique(values[protegido.reservado.key]) === normalizeForUnique(protegido.reservado.value)) {
+      return fail(409, protegido.reservado.mensaje, { [protegido.reservado.key]: protegido.reservado.mensaje });
+    }
+  }
+
   const linkErrors = await checkLinks(config, values, existingValues);
   if (Object.keys(linkErrors).length > 0) return fail(400, ABM_MESSAGES.validacion, linkErrors);
 
@@ -232,7 +243,7 @@ async function write(
 
   // 3. Verificación posterior (fail-closed): conflicto → 409; si no se puede leer → 503. Siempre deshaciendo.
   const checks = uniqueChecks(config, fields, savedId, target.mode);
-  if (plan.verify) checks.push({ name: "cascade", run: plan.verify });
+  if (plan.verify) checks.push({ name: config.table === "proyectos" || config.table === "clientes" ? "cascade" : `verify:${config.table}`, run: plan.verify });
   const failed = await runPostWriteChecks(tx, savedId, checks);
   if (failed) return failed;
   return { ok: true, data: { id: savedId } };
@@ -271,6 +282,14 @@ function referenceCategory(config: MaestroConfig, fieldId: string): string {
 async function checkDeletable(config: MaestroConfig | null, id: string): Promise<ServiceResult<DeleteCheck>> {
   if (!config || !/^rec[A-Za-z0-9]{14}$/.test(id)) return fail(404, ABM_MESSAGES.noEncontrado);
   if (!config.spec.deletable) return fail(405, ABM_MESSAGES.noBorrable);
+  const protegido = config.spec.protegido;
+  if (protegido) {
+    const record = await getAirtableClient().get(tableId(config), id, { fields: protegido.keys.map((k) => config.fieldIds[k]) });
+    if (!record) return fail(404, ABM_MESSAGES.noEncontrado);
+    if (protegido.when(toValues(config, record.fields))) {
+      return { ok: true, data: { blocked: true, message: protegido.borrar, counts: Object.fromEntries(config.references.map((f) => [referenceCategory(config, f), 0])) } };
+    }
+  }
   const refs = await findReferences(tableId(config), id, config.references);
   if (refs === null) return fail(404, ABM_MESSAGES.noEncontrado);
   const counts: Record<string, number> = {};

@@ -2,7 +2,7 @@
 
 App interna de Agencia Kairos. Next.js (App Router) + TypeScript + Tailwind CSS, con Airtable como base de datos. Se deploya en Vercel.
 
-> Estado: **Fase 2 · CC-F2-03 (listas de Ventas y Compras)**. Fase 1 completa: login, guards por rol, ABM de Usuarios y Maestros, carga de horas del Empleado, Horas y Dashboard de Admin. Fase 2: Clientes Activo / Inactivo (CC-F2-01).
+> Estado: **Fase 2 · CC-F2-04 (Tesorería)**. Fase 1 completa: login, guards por rol, ABM de Usuarios y Maestros, carga de horas del Empleado, Horas y Dashboard de Admin. Fase 2: Clientes Activo / Inactivo (CC-F2-01).
 
 ## Requisitos
 
@@ -159,6 +159,24 @@ Reglas (de `Gestion_Kairos_ERP_v4.xlsx`, implementadas en `lib/ventas-compras/`,
 - **Filtros**: Fecha (por defecto el año actual), Mes devengado efectivo, Cliente / Proveedor, Proyecto (incluye «Sin proyecto»), Categoría efectiva y Control (OK, con observaciones o un mensaje puntual). La Fecha se filtra en Airtable; el resto, en código. Los **totales** (Total $, IVA $, Neto $; Compras también Impacto y A cuenta del socio) son de todo el conjunto filtrado, no solo de la página (50 filas por página). **Límite**: si el rango de Fechas tiene más de 5.000 comprobantes, la lista responde «El período tiene más de 5.000 comprobantes. Elegí un rango de fechas más corto.» (sin calcular totales).
 - **Edición**: Mes devengado, Proyecto, Unidad de negocio, Categoría, Observaciones y, en Compras, Imputar a socio. Las columnas ARCA son de solo lectura. Mismas validaciones que la importación (se puede mantener el proyecto linkeado aunque ya no esté Activo). Vaciar un campo vuelve al valor por defecto. Se escribe solo lo que se cambió (más, en Ventas, el link Cliente).
 - **Borrado**: un comprobante por vez, con confirmación (Clave ARCA, Fecha, Denominación, Total $). El proveedor creado por una importación queda. Si se vuelve a importar el mismo archivo, la fila borrada vuelve como **Nueva** y se importa de nuevo.
+
+## Tesorería
+
+**Tesorería** (`/tesoreria`), solo Admin. Un registro por movimiento: Importe siempre positivo en la moneda de la cuenta y Movimiento (Cobranza entra, Pago sale). Reglas en `lib/tesoreria/rules.ts` (las mismas para el formulario, el Control y la lista; no se leen las fórmulas de Airtable).
+
+- **Importes**: con signo = +Importe en una cobranza, −Importe en un pago. TC aplicado: cuenta ARS → 1; cuenta USD → el Tipo de cambio (obligatorio, > 0, hasta 4 decimales). Importe $ = ROUND(con signo × TC; 2) (ROUND de Excel).
+- **Efectivos**: Es de socio = el del tipo. Suma a resultados: de socio → N; si no, la del registro; si no, la del tipo. Categoría (solo si suma S): la del registro; si no, la por defecto del tipo. Impacto en resultados $ = Importe $ si suma S; a cuenta del socio $ = −Importe $ si es de socio.
+- **Control** (primer mensaje que falla, orden del Excel): [solo patas de transferencia] Transferencia incompleta → Transferencia inconsistente → Falta cuenta → Cuenta inexistente → Indicá Cobranza o Pago → Falta importe (positivo) → Falta tipo de operación → Tipo de operación inexistente → Este tipo debería ser Cobranza/Pago → Falta cliente / proveedor → Falta socio → Socio sólo en retiros, aportes o gastos particulares → Socio inexistente → Falta categoría → Categoría inexistente → Falta tipo de cambio → OK. **No se puede guardar un movimiento cuyo Control no sea OK.**
+- **Formulario de movimientos**: tercero = Cliente en una cobranza (cualquier Estado) y Proveedor en un pago; obligatorio si el tipo lo pide; nunca los dos. Socio solo si el tipo es de socio. El tipo «Transferencia entre cuentas propias» no se puede usar acá.
+- **Transferencia entre cuentas propias** (su propio formulario): cuenta origen y destino distintas y de la misma moneda («Las cuentas tienen que ser de la misma moneda.»), importe, fecha, TC si es USD (el mismo en los 2 registros). Crea 2 registros (Pago en origen, Cobranza en destino; Suma N) con el mismo ID nuevo en el campo «Transferencia», en un solo pedido. Se crean, editan y borran juntos, y todo se reconcilia por ese ID: después de cualquier error la app relee los registros con el ID y deja la base sin ninguno o con el par completo y correcto (si no lo puede confirmar responde «El cambio quedó incompleto…»). No impacta en resultados y en pesos suma 0 entre las dos cuentas.
+- **Transferencia incompleta**: si un ID de transferencia no lo comparten exactamente un Pago y una Cobranza (p. ej. después de una falla de Airtable), esos registros muestran el Control «Transferencia incompleta». Se arregla borrando la transferencia (borra todos los registros con ese ID) y cargándola de nuevo.
+- **Transferencia inconsistente**: un par completo (un Pago y una Cobranza) cuyas patas tienen distinta fecha, importe, tipo de cambio o descripción, o cuentas de distinta moneda (p. ej. si dos personas la editaron a la vez). Se arregla editándola desde el formulario de transferencia (reescribe las 2 patas) o borrándola.
+- **Tipo protegido**: el tipo de operación «Transferencia entre cuentas propias» no se puede renombrar, borrar ni cambiar su Movimiento, Suma a resultados o Es de socio (Maestros responde 409), y ningún otro tipo puede tomar ese nombre.
+- **Moneda de una cuenta**: nunca se convierte. Si la cuenta ya tiene movimientos en Tesorería, Maestros › Cuentas no deja cambiar la Moneda («Esta cuenta ya tiene movimientos en Tesorería: no se puede cambiar la moneda. Creá una cuenta nueva.»); hay que crear una cuenta nueva.
+- **Fechas**: solo fechas reales (31/02, 29/02 de un año no bisiesto o mes 13 → «Ingresá una fecha válida.»).
+- **Saldo** por cuenta = Saldo inicial (vacío = 0) + suma de los importes con signo de **todos** sus movimientos, en la moneda de la cuenta, ordenados por Fecha y después N° (regla del Excel). **La Fecha saldo inicial no se usa en el cálculo.** Con un filtro de Fecha, la primera fila ya incluye todo lo anterior; se muestran el saldo actual, el del inicio y el del final del período. Los filtros de tipo, movimiento y Control no cambian el saldo corrido de cada fila.
+- **Totales** del conjunto filtrado: entradas, salidas y neto (moneda de la cuenta), Importe $, Impacto en resultados $ y A cuenta del socio $.
+- **Límite**: si el rango de Fechas tiene más de 5.000 movimientos de la cuenta, la lista pide un rango más corto. La lista lee toda la tabla (el saldo necesita todos los movimientos anteriores).
 
 ## Estructura
 

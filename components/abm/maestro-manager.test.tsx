@@ -110,3 +110,61 @@ describe("Clientes · borrado (F2-01)", () => {
     expect(refresh).toHaveBeenCalled();
   });
 });
+
+describe("Tipos de operación · tipo de transferencia protegido (CC-F2-04 v2)", () => {
+  it("el formulario muestra bloqueados nombre, movimiento, suma y es de socio, y no ofrece borrar", async () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+    const tipo = (id: string, nombre: string) => ({
+      id,
+      values: { nombre, movimiento: "Ambos", sumaAResultados: false, categoriaPorDefecto: [], pideClienteProveedor: false, esDeSocio: false },
+    });
+    const data: AbmData = { records: [tipo("recTIPO0000000001", "Transferencia entre cuentas propias"), tipo("recTIPO0000000002", "Otro")], labels: {}, options: {} };
+    act(() =>
+      root.render(
+        <ToastProvider>
+          <MaestroManager slug="tipos-de-operacion" data={data} />
+        </ToastProvider>,
+      ),
+    );
+    const openRow = (name: string) => act(() => (container.querySelector(`button[aria-label="Editar ${name}"]`) as HTMLButtonElement).click());
+    await openRow("Transferencia entre cuentas propias");
+    expect(container.textContent).toContain("lo usa Tesorería para las transferencias");
+    const disabled = [...container.querySelectorAll("form input, form select")].filter((el) => (el as HTMLInputElement).disabled).length;
+    expect(disabled).toBe(4);
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Borrar")).toBe(false);
+    await act(async () => ([...container.querySelectorAll("button")].find((b) => b.textContent === "Cancelar") as HTMLButtonElement).click());
+    await openRow("Otro");
+    expect([...container.querySelectorAll("form input, form select")].filter((el) => (el as HTMLInputElement).disabled)).toHaveLength(0);
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Borrar")).toBe(true);
+  });
+});
+
+describe("Cuentas · Moneda bloqueada con movimientos (CC-F2-04 v4)", () => {
+  it("con movimientos la Moneda se ve bloqueada; sin movimientos, editable", async () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+    const cuenta = (id: string, nombre: string, referenceCount: number) => ({
+      id,
+      referenceCount,
+      values: { nombre, moneda: "ARS", banco: null, cbu: null, saldoInicial: null, fechaSaldoInicial: null },
+    });
+    const data: AbmData = { records: [cuenta("recCUENTA00000001", "Con movimientos", 3), cuenta("recCUENTA00000002", "Sin movimientos", 0)], labels: {}, options: {} };
+    act(() =>
+      root.render(
+        <ToastProvider>
+          <MaestroManager slug="cuentas" data={data} />
+        </ToastProvider>,
+      ),
+    );
+    const open = (name: string) => act(() => (container.querySelector(`button[aria-label="Editar ${name}"]`) as HTMLButtonElement).click());
+    const monedaDisabled = () => [...container.querySelectorAll("form select")].some((el) => (el as HTMLSelectElement).disabled);
+    await open("Con movimientos");
+    expect(container.textContent).toContain("no se puede cambiar la moneda");
+    expect(monedaDisabled()).toBe(true);
+    expect((container.querySelector("form input") as HTMLInputElement).disabled).toBe(false); // nombre sí
+    await act(async () => ([...container.querySelectorAll("button")].find((b) => b.textContent === "Cancelar") as HTMLButtonElement).click());
+    await open("Sin movimientos");
+    expect(monedaDisabled()).toBe(false);
+  });
+});

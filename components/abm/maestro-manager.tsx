@@ -115,7 +115,7 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
     const res = await callApi("GET", `/api/admin/maestros/${slug}/${editing.record.id}/referencias`);
     setSaving(false);
     if (!res.ok) return setFormError(res.error ?? "No se pudo borrar.");
-    if (typeof res.data.blocked === "string") return setFormError(res.data.blocked);
+    if (res.data.blocked === true) return setFormError(typeof res.data.message === "string" ? res.data.message : "No se puede borrar.");
     setFormError(null);
     setConfirmDelete(true);
   }

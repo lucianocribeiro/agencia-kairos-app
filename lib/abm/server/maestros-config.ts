@@ -4,7 +4,8 @@ import { getAirtableClient, type Fields } from "@/lib/airtable/client";
 import { normalizeForUnique, WrittenRecordMissingError } from "@/lib/airtable/integrity";
 import { REFERENCE_FIELDS, TABLES, type FieldId, type TableKey } from "@/lib/airtable/schema";
 import type { FieldErrors, Mode, Values } from "@/lib/abm/fields";
-import { CLIENTE_ACTIVO, MAESTRO_SPECS, type MaestroSlug, type MaestroSpec } from "@/lib/abm/maestros";
+import { isClienteActivo, normalizeClienteEstado } from "@/lib/abm/cliente-estado";
+import { MAESTRO_SPECS, type MaestroSlug, type MaestroSpec } from "@/lib/abm/maestros";
 import type { CheckConflict } from "./compensation";
 
 /**
@@ -75,6 +76,8 @@ export interface MaestroConfig {
    * Sin esto se usa REFERENCED_MESSAGE.
    */
   referencedMessage?: (refs: readonly { fieldId: string; count: number }[]) => string;
+  /** Valores guardados → valores que ve la app (lista, filtro, formulario). P. ej. Estado legacy de Clientes. */
+  normalize?: (values: Values) => Values;
   beforeWrite?: (ctx: WriteContext) => Promise<WritePlan>;
 }
 
@@ -121,7 +124,7 @@ const links = {
     table: "clientes",
     fields: [T.clientes.fields.nombre, T.clientes.fields.sigla, T.clientes.fields.estado],
     label: (f) => (f[T.clientes.fields.sigla] ? `${text(f[T.clientes.fields.sigla])} · ${text(f[T.clientes.fields.nombre])}` : text(f[T.clientes.fields.nombre])),
-    allow: (f) => f[T.clientes.fields.estado] === CLIENTE_ACTIVO,
+    allow: (f) => isClienteActivo(f[T.clientes.fields.estado]),
   },
   unidadNegocio: {
     table: "unidadesNegocio",
@@ -242,6 +245,8 @@ export const MAESTRO_CONFIGS: Record<MaestroSlug, MaestroConfig> = {
     unique: ["nombre", "sigla"],
     references: REFERENCE_FIELDS.clientes,
     referencedMessage: CLIENTE_MESSAGES.referenciado,
+    // Compatibilidad: «Cliente» se ve y se edita como Activo (ver lib/abm/cliente-estado.ts).
+    normalize: (values) => ({ ...values, estado: normalizeClienteEstado(values.estado) }),
     beforeWrite: clientesBeforeWrite,
   },
 

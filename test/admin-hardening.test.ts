@@ -556,7 +556,7 @@ describe("Links inválidos → 400 (N-06)", () => {
 
   function setup() {
     const cliente = fake.seed(C.id, { [C.fields.nombre]: "QA", [C.fields.sigla]: "QZ", [C.fields.estado]: "Activo" });
-    const lead = fake.seed(C.id, { [C.fields.nombre]: "Lead", [C.fields.sigla]: "LD", [C.fields.estado]: "Inactivo" });
+    const lead = fake.seed(C.id, { [C.fields.nombre]: "QA Inactivo", [C.fields.sigla]: "LD", [C.fields.estado]: "Inactivo" });
     const un = fake.seed(UN.id, { [UN.fields.nombre]: "UN" });
     const gasto = fake.seed(CAT.id, { [CAT.fields.nombre]: "Gasto", [CAT.fields.tipo]: "Gasto" });
     const ingreso = fake.seed(CAT.id, { [CAT.fields.nombre]: "Ingreso", [CAT.fields.tipo]: "Ingreso" });

@@ -6,7 +6,8 @@ type Context = { params: Promise<{ tabla: string; id: string }> };
 
 /**
  * GET /api/admin/maestros/:tabla/:id/referencias · ¿se puede borrar?
- * { blocked: null | "No se puede borrar: tiene …", references: [{ fieldId, count }] }.
+ * { blocked: boolean, message: null | "No se puede borrar: tiene …", counts: { proyectos, ventas, tesoreria } }.
+ * Solo categorías y cantidades: nunca IDs de campo.
  * Es un aviso previo: el DELETE vuelve a leer las referencias antes de borrar.
  */
 export const GET = adminRoute<Context>(async (_request, _user, { params }) => {

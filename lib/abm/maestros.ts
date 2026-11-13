@@ -5,6 +5,7 @@
  * lib/abm/server/maestros-config.ts.
  */
 import { formatNumber } from "@/lib/format";
+import { CLIENTE_ACTIVO, CLIENTE_ESTADOS } from "./cliente-estado";
 import { parseValues, type FieldErrors, type FieldSpec, type Mode, type RawValues, type Values } from "./fields";
 
 export const MAESTRO_SLUGS = [
@@ -50,9 +51,7 @@ export const SIN_ESTADO = "Sin estado";
 const CONDICION_IVA_CLIENTE = ["Responsable Inscripto", "Monotributista", "Exento", "Consumidor Final", "Cliente del Exterior"] as const;
 const CONDICION_IVA_PROVEEDOR = ["Responsable Inscripto", "Monotributista", "Exento", "Consumidor Final", "Proveedor del Exterior"] as const;
 
-/** Estados de un Cliente (Fase 2). Solo los Activos se pueden elegir en Proyectos y en los filtros de Horas. */
-export const CLIENTE_ESTADOS = ["Activo", "Inactivo"] as const;
-export const CLIENTE_ACTIVO = "Activo";
+export { CLIENTE_ACTIVO, CLIENTE_ESTADOS } from "./cliente-estado";
 
 const CLIENTE_SIGLA_RE = /^[A-Z]{2}$/;
 export const MAESTRO_MESSAGES = {

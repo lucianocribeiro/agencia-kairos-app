@@ -111,9 +111,23 @@ Antes de tocar nada, rechaza `BOOTSTRAP_ADMIN_PASSWORD` si tiene menos de 10 car
 
 ## Migración de Clientes (Fase 2)
 
-`npm run migrate:clientes-estado` (dry-run) y `npm run migrate:clientes-estado -- --apply`. Guarda un snapshot de todos los Clientes en `backups/` (gitignored: tiene datos reales), aborta sin escribir si alguno de los 7 leads cambió o tiene links, si hay un Estado sin mapeo o si faltan las opciones Activo e Inactivo; después pasa Cliente → Activo, borra los leads y verifica el estado final. Es idempotente.
+`npm run migrate:clientes-estado` (dry-run) y `npm run migrate:clientes-estado -- --apply`.
 
-Orden de despliegue: (1) agregar las opciones Activo e Inactivo en la interfaz de Airtable (la Meta API no edita opciones de un singleSelect); (2) merge y deploy de esta versión; (3) `--apply`; (4) quitar las opciones viejas en la interfaz. Entre (2) y (3) los clientes siguen en «Cliente»: no aparecen en el picker de Proyectos ni en el filtro por defecto, así que conviene correr el `--apply` enseguida.
+- Primera corrida: aborta sin escribir salvo que la tabla tenga exactamente 16 registros (9 «Cliente» + 7 «Lead»), los 7 leads previstos estén presentes, en Lead y sin links en Proyectos, Ventas ni Tesorería, y existan las opciones Activo e Inactivo.
+- `--apply` guarda antes de la primera escritura `backups/migrate-clientes-estado.resume.json` (snapshot original + plan, modo 0600). Si una corrida se corta a mitad de camino, la siguiente lo usa: solo acepta leads faltantes si están en ese plan. No borres ese archivo hasta que la migración termine bien.
+- Verificación final: exactamente 9 registros, los 9 del plan, todos Activo, ninguno con una opción vieja.
+- Todo lo de `backups/` está gitignored (tiene datos reales).
+
+Compatibilidad: hasta que corra la migración, la app trata el Estado viejo «Cliente» como Activo en todos lados (pickers de Proyectos, Horas y asignaciones; filtro, lista y formulario de Clientes), y al guardar un cliente editado escribe «Activo». Lead / Ex cliente / Perdido no cuentan como Activo. Todo el mapeo está en `lib/abm/cliente-estado.ts`.
+
+### Orden de despliegue
+
+1. En la interfaz de Airtable, Clientes › Estado: agregar las opciones **Activo** e **Inactivo**, sin borrar las viejas. (Hecho el 2026-11-12.)
+2. Merge y deploy de PR #6. No hay ventana de corte: los clientes en «Cliente» se ven y se usan como Activos.
+3. `npm run migrate:clientes-estado` (dry-run) y revisar la salida.
+4. `npm run migrate:clientes-estado -- --apply`. Si se corta, volver a correrlo (reanuda con el archivo de `backups/`).
+5. En la interfaz: quitar las opciones viejas (Cliente, Lead, Ex cliente, Perdido) de Clientes › Estado.
+6. PR de limpieza: borrar `LEGACY_CLIENTE_ACTIVO`, `LEGACY_CLIENTE_ESTADOS` y la rama legacy de `normalizeClienteEstado` en `lib/abm/cliente-estado.ts`, y los tests que los usan.
 
 ## Estructura
 

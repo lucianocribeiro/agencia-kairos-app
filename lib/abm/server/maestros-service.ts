@@ -44,7 +44,7 @@ function toValues(config: MaestroConfig, fields: Fields): Values {
     else if (raw === undefined) values[spec.key] = spec.kind === "checkbox" ? false : spec.kind === "link" || config.links?.[spec.key] ? [] : null;
     else values[spec.key] = raw as Values[string];
   }
-  return values;
+  return config.normalize ? config.normalize(values) : values;
 }
 
 /** Carga la lista y las opciones de links. Todas las páginas (paginación completa del cliente). */
@@ -250,10 +250,21 @@ export async function updateMaestro(slug: string, id: string, raw: RawValues): P
   return write(config, raw, { mode: "edit", id });
 }
 
+/**
+ * Respuesta del chequeo previo. Solo categorías y cantidades (claves de schema.ts,
+ * p. ej. { proyectos: 2, ventas: 0, tesoreria: 3 }), nunca IDs de campo.
+ */
 export interface DeleteCheck {
-  /** null = se puede borrar. Si no, el mismo mensaje que daría el 409. */
-  blocked: string | null;
-  references: { fieldId: string; count: number }[];
+  blocked: boolean;
+  /** Si está bloqueado, el mismo mensaje que daría el 409; si no, null. */
+  message: string | null;
+  counts: Record<string, number>;
+}
+
+/** Link inverso → nombre de la categoría (la clave del campo en schema.ts). */
+function referenceCategory(config: MaestroConfig, fieldId: string): string {
+  const entry = Object.entries(TABLES[config.table].fields).find(([, id]) => id === fieldId);
+  return entry?.[0] ?? "otros";
 }
 
 /** Lee las referencias del registro ahora. 404/405 como el borrado. */
@@ -262,8 +273,10 @@ async function checkDeletable(config: MaestroConfig | null, id: string): Promise
   if (!config.spec.deletable) return fail(405, ABM_MESSAGES.noBorrable);
   const refs = await findReferences(tableId(config), id, config.references);
   if (refs === null) return fail(404, ABM_MESSAGES.noEncontrado);
-  const blocked = refs.length === 0 ? null : (config.referencedMessage?.(refs) ?? REFERENCED_MESSAGE);
-  return { ok: true, data: { blocked, references: refs } };
+  const counts: Record<string, number> = {};
+  for (const fieldId of config.references) counts[referenceCategory(config, fieldId)] = refs.find((r) => r.fieldId === fieldId)?.count ?? 0;
+  const message = refs.length === 0 ? null : (config.referencedMessage?.(refs) ?? REFERENCED_MESSAGE);
+  return { ok: true, data: { blocked: message !== null, message, counts } };
 }
 
 /**
@@ -284,7 +297,7 @@ export async function deleteMaestro(slug: string, id: string): Promise<ServiceRe
   const config = configFor(slug);
   const check = await checkDeletable(config, id);
   if (!check.ok) return check;
-  if (check.data.blocked) return fail(409, check.data.blocked);
+  if (check.data.message) return fail(409, check.data.message);
   await getAirtableClient().delete(tableId(config!), [id]);
   return { ok: true, data: { id } };
 }

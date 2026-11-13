@@ -79,7 +79,7 @@ describe("Clientes · borrado (F2-01)", () => {
   it("con referencias: muestra el mensaje del servidor y no abre el diálogo ni borra", async () => {
     await openFirst();
     const msg = "No se puede borrar: tiene 2 proyectos y 3 movimientos de Tesorería. Pasalo a Inactivo.";
-    fetchMock.mockReturnValueOnce(json(200, { ok: true, blocked: msg, references: [] }));
+    fetchMock.mockReturnValueOnce(json(200, { ok: true, blocked: true, message: msg, counts: { proyectos: 2, ventas: 0, tesoreria: 3 } }));
     await act(async () => button("Borrar").click());
     await flush();
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -90,7 +90,7 @@ describe("Clientes · borrado (F2-01)", () => {
 
   it("sin referencias: diálogo de confirmación; Cancelar no borra; Sí, borrar → DELETE", async () => {
     await openFirst();
-    fetchMock.mockImplementation(() => json(200, { ok: true, blocked: null, references: [] }));
+    fetchMock.mockImplementation(() => json(200, { ok: true, blocked: false, message: null, counts: { proyectos: 0, ventas: 0, tesoreria: 0 } }));
     await act(async () => button("Borrar").click());
     await flush();
     const dialog = document.querySelector('[role="alertdialog"]')!;

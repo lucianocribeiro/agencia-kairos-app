@@ -3,6 +3,7 @@ import "server-only";
 import { getAirtableClient, type Fields } from "@/lib/airtable/client";
 import { isUnique, losesUniqueRace } from "@/lib/airtable/integrity";
 import { TABLES } from "@/lib/airtable/schema";
+import { isClienteActivo } from "@/lib/abm/cliente-estado";
 import { FIELD_MESSAGES, type FieldErrors, type RawValues, type Values } from "@/lib/abm/fields";
 import type { AbmData, LinkOption, RecordDTO, ServiceResult } from "@/lib/abm/types";
 import { USUARIO_MESSAGES, validateTemporaryPassword, validateUsuario } from "@/lib/abm/usuarios";
@@ -74,10 +75,17 @@ function toDTO(id: string, f: Fields): RecordDTO {
 
 async function loadOptions(): Promise<Pick<AbmData, "labels" | "options">> {
   const client = getAirtableClient();
-  const [socios, proyectos] = await Promise.all([
+  const [socios, proyectos, clientes] = await Promise.all([
     client.list(TABLES.socios.id, { fields: [S.sigla, S.nombre] }),
-    client.list(TABLES.proyectos.id, { fields: [P.codigo, P.estado] }),
+    client.list(TABLES.proyectos.id, { fields: [P.codigo, P.estado, P.cliente] }),
+    client.list(TABLES.clientes.id, { fields: [TABLES.clientes.fields.estado] }),
   ]);
+  const clientesActivos = new Set(clientes.filter((r) => isClienteActivo(r.fields[TABLES.clientes.fields.estado])).map((r) => r.id));
+  /** Asignable: proyecto Activo y su Cliente Activo (el legacy «Cliente» cuenta como Activo). */
+  const asignable = (f: Fields) => {
+    const cliente = (f[P.cliente] as string[] | undefined)?.[0];
+    return f[P.estado] === "Activo" && !!cliente && clientesActivos.has(cliente);
+  };
   const socioLabel = (f: Fields) => [f[S.sigla], f[S.nombre]].filter(Boolean).join(" · ") || "(sin nombre)";
   const proyectoLabel = (f: Fields) => (f[P.codigo] as string) || "(sin código)";
   const sort = (a: LinkOption, b: LinkOption) => a.label.localeCompare(b.label, "es");
@@ -88,9 +96,10 @@ async function loadOptions(): Promise<Pick<AbmData, "labels" | "options">> {
     },
     options: {
       socio: socios.map((r) => ({ id: r.id, label: socioLabel(r.fields) })).sort(sort),
-      // Solo proyectos activos se pueden asignar.
+      // Solo proyectos Activos de clientes Activos. checkLinksAndUnique valida el guardado con
+      // estas mismas opciones (más lo que el usuario ya tenía asignado, que se conserva).
       proyectosAsignados: proyectos
-        .filter((r) => r.fields[P.estado] === "Activo")
+        .filter((r) => asignable(r.fields))
         .map((r) => ({ id: r.id, label: proyectoLabel(r.fields) }))
         .sort(sort),
     },

@@ -2,7 +2,7 @@ import "server-only";
 
 import { getAirtableClient } from "@/lib/airtable/client";
 import { TABLES } from "@/lib/airtable/schema";
-import { CLIENTE_ACTIVO } from "@/lib/abm/maestros";
+import { isClienteActivo } from "@/lib/abm/cliente-estado";
 import type { RawValues } from "@/lib/abm/fields";
 import type { ServiceResult } from "@/lib/abm/types";
 import { todayInBuenosAires } from "../dates";
@@ -55,7 +55,7 @@ export async function loadHorasOptions(): Promise<HorasOptions> {
       }))
       .sort((a, b) => collator.compare(a.codigo, b.codigo)),
     clientes: clientes
-      .map((r) => ({ id: r.id, nombre: String(r.fields[C.nombre] ?? "") || "(sin nombre)", activo: r.fields[C.estado] === CLIENTE_ACTIVO })).sort((a, b) => collator.compare(a.nombre, b.nombre)),
+      .map((r) => ({ id: r.id, nombre: String(r.fields[C.nombre] ?? "") || "(sin nombre)", activo: isClienteActivo(r.fields[C.estado]) })).sort((a, b) => collator.compare(a.nombre, b.nombre)),
   };
 }
 

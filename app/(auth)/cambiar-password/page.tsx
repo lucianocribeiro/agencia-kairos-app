@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { PasswordForm } from "@/components/auth/password-form";
 import { PageSkeleton } from "@/components/auth/guarded";
+import { Logo } from "@/components/shell/logo";
 import { buttonClasses, Card, CardContent, CardDescription, CardHeader, CardTitle, InlineMessage } from "@/components/ui";
 import { HOME_BY_ROLE } from "@/lib/auth/constants";
 import { requireUser } from "@/lib/auth/guards";
@@ -23,7 +24,8 @@ async function CambiarPassword() {
   const user = await requireUser({ allowPendingPasswordChange: true });
 
   return (
-    <div className="flex w-full flex-col gap-4">
+    <div className="flex w-full flex-col items-center gap-4">
+      <Logo eager className="mb-4" />
       <Card className="w-full">
         <CardHeader>
           <CardTitle>Cambiar contraseña</CardTitle>
@@ -36,7 +38,7 @@ async function CambiarPassword() {
           <PasswordForm />
         </CardContent>
       </Card>
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex w-full items-center justify-between gap-2">
         {user.debeCambiarPassword ? (
           <span />
         ) : (

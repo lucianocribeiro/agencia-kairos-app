@@ -228,63 +228,211 @@ describe("transferencias", () => {
     expect(rows().map((r) => r.fields[M.tipoCambio])).toEqual([1050.5, 1050.5]);
   });
 
-  it("falla inyectada en el 2.º alta → se deshace el 1.º → 503, nada queda", async () => {
+  /** Registros con ese ID de transferencia. */
+  const conId = (id: string) => rows().filter((r) => r.fields[M.transferencia] === id);
+  /** ¿El par está completo y con los valores esperados? (para afirmar que nunca hay 2xx con el par roto) */
+  const parOk = (id: string, importe: number) => {
+    const par = conId(id);
+    return par.length === 2 && par.every((r) => r.fields[M.importe] === importe) && par.some((r) => r.fields[M.movimiento] === "Pago") && par.some((r) => r.fields[M.movimiento] === "Cobranza");
+  };
+  const fault = (point: string) => {
     vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("KAIROS_FAULT_INJECTION", "transferencia:crear:2");
+    vi.stubEnv("KAIROS_FAULT_INJECTION", point);
+  };
+  /** Ejecuta `fn` la `n`-ésima vez que se lista Tesorería (0 = la primera). */
+  const onList = (n: number, fn: () => void) => {
+    let i = 0;
+    fake.failWhen((call) => {
+      if (call.method === "list" && call.tableId === T.tesoreria.id && i++ === n) fn();
+      return false;
+    });
+  };
+
+  it("alta: los 2 registros en UN solo pedido de create", async () => {
+    await crearTrf(trf());
+    const creates = fake.calls.filter((c) => c.method === "create" && c.tableId === T.tesoreria.id);
+    expect(creates).toHaveLength(1);
+    expect(creates[0].payload as unknown[]).toHaveLength(2);
+  });
+
+  it("alta aplicada pero respondida con error → se borra todo lo que tiene el ID → 503, 0 registros", async () => {
+    fault("transferencia:crear:respuesta");
     const res = await crearTrf(trf());
     expect(res).toEqual({ status: 503, json: { error: "No pudimos completar el cambio. No se modificó nada; probá de nuevo." } });
-    expect(fake.calls.filter((c) => c.method === "create")).toHaveLength(1);
     expect(rows()).toHaveLength(0);
   });
 
-  it("verificación posterior: si la relectura no trae el par → se deshace → 503", async () => {
-    fake.hide(T.tesoreria.id, () => true);
+  it("alta: la verificación encuentra valores distintos (otro importe) → limpieza → 503, 0 registros", async () => {
+    onList(0, () => {
+      // la relectura de la verificación ve un registro alterado
+      rows()[0].fields[M.importe] = 999;
+    });
     const res = await crearTrf(trf());
     expect(res.status).toBe(503);
     expect(rows()).toHaveLength(0);
   });
 
-  it("editar actualiza los 2 registros; falla en el 2.º → se restauran los 2", async () => {
+  it("alta: la verificación encuentra solo 1 de los 2 → limpieza → 503, 0 registros", async () => {
+    onList(0, () => rows().splice(1, 1));
+    expect((await crearTrf(trf())).status).toBe(503);
+    expect(rows()).toHaveLength(0);
+  });
+
+  it("alta: si la limpieza no puede borrar → 500 «quedó incompleto» (y nunca 2xx)", async () => {
+    fault("transferencia:crear:respuesta");
+    fake.failWhen((call) => call.method === "delete", new Error("caída"));
+    const res = await crearTrf(trf());
+    expect(res).toEqual({ status: 500, json: { error: "El cambio quedó incompleto. Avisá a un administrador." } });
+    expect(rows()).toHaveLength(2); // quedan; el log lleva los IDs
+  });
+
+  it("alta: si la relectura de la limpieza falla → 500", async () => {
+    fault("transferencia:crear:respuesta");
+    fake.failWhen((call) => call.method === "list" && call.tableId === T.tesoreria.id, new Error("caída"));
+    expect((await crearTrf(trf())).status).toBe(500);
+  });
+
+  it("edición: actualiza los 2 en UN pedido y verifica todos los campos", async () => {
     const id = (await crearTrf(trf())).json.transferencia;
+    fake.calls.length = 0;
     expect((await editarTrf(id, { importe: "300", descripcion: "editada" })).status).toBe(200);
-    expect(rows().map((r) => [r.fields[M.importe], r.fields[M.descripcion]])).toEqual([
+    const updates = fake.calls.filter((c) => c.method === "update");
+    expect(updates).toHaveLength(1);
+    expect(updates[0].payload as unknown[]).toHaveLength(2);
+    expect(conId(id).map((r) => [r.fields[M.importe], r.fields[M.descripcion]])).toEqual([
       [300, "editada"],
       [300, "editada"],
     ]);
-    vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("KAIROS_FAULT_INJECTION", "transferencia:editar:2");
-    const res = await editarTrf(id, { importe: "999", cuentaDestino: ids.ars1, cuentaOrigen: ids.ars2 });
-    expect(res.status).toBe(503);
-    const pago = rows().find((r) => r.fields[M.movimiento] === "Pago")!.fields;
-    expect(pago).toMatchObject({ [M.importe]: 300, [M.cuenta]: [ids.ars1] });
-    expect(rows().map((r) => r.fields[M.importe])).toEqual([300, 300]);
-    expect((await editarTrf(id, { cuentaDestino: ids.usd })).json.error).toBe("Las cuentas tienen que ser de la misma moneda.");
   });
 
-  it("borrar el par; si falla el 2.º borrado, el 1.º se vuelve a crear con los mismos valores e ID → 503", async () => {
+  it("edición: cambio concurrente antes de escribir → 409, nada escrito", async () => {
     const id = (await crearTrf(trf())).json.transferencia;
-    const before = rows().map((r) => ({ ...r.fields }));
-    vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("KAIROS_FAULT_INJECTION", "transferencia:borrar:2");
-    const res = await borrarTrf(id);
+    fake.calls.length = 0;
+    onList(1, () => {
+      rows()[1].fields[M.descripcion] = "otro request";
+    });
+    const res = await editarTrf(id, { importe: "300" });
+    expect(res).toEqual({ status: 409, json: { error: "La transferencia cambió mientras la editabas. Recargá y probá de nuevo." } });
+    expect(fake.calls.some((c) => c.method === "update")).toBe(false);
+    expect(conId(id).map((r) => r.fields[M.importe])).toEqual([250, 250]);
+  });
+
+  it("edición: la verificación encuentra un registro distinto → se restauran los 2 → 503", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    onList(2, () => {
+      rows()[1].fields[M.importe] = 1; // otro request pisó una pata entre el update y la relectura
+    });
+    const res = await editarTrf(id, { importe: "300" });
     expect(res.status).toBe(503);
-    expect(rows()).toHaveLength(2);
-    const restored = rows().find((r) => r.fields[M.movimiento] === "Pago")!.fields;
-    const sinNumero = Object.fromEntries(Object.entries(before.find((f) => f[M.movimiento] === "Pago")!).filter(([k]) => k !== M.numero));
-    expect(restored).toMatchObject(sinNumero);
-    vi.unstubAllEnvs();
-    expect((await borrarTrf(id)).status).toBe(200);
+    expect(parOk(id, 250)).toBe(true);
+    expect(conId(id).every((r) => r.fields[M.descripcion] === "QA")).toBe(true);
+  });
+
+  it("alta: falla la verificación (inyectada) → limpieza → 503, 0 registros", async () => {
+    fault("transferencia:crear:verificar");
+    expect((await crearTrf(trf())).status).toBe(503);
     expect(rows()).toHaveLength(0);
-    expect((await borrarTrf(id)).status).toBe(404);
-    expect((await borrarTrf("nope")).status).toBe(404);
   });
 
-  it("si también falla la restauración → 500 «quedó incompleto»", async () => {
+  it("edición: falla la verificación (inyectada) → restaurados → 503", async () => {
     const id = (await crearTrf(trf())).json.transferencia;
-    vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("KAIROS_FAULT_INJECTION", "transferencia:borrar:2");
-    fake.failWhen((call) => call.method === "create" && call.tableId === T.tesoreria.id, new Error("caída"));
+    fault("transferencia:editar:verificar");
+    expect((await editarTrf(id, { importe: "300" })).status).toBe(503);
+    expect(parOk(id, 250)).toBe(true);
+  });
+
+  it("edición: la restauración no se puede verificar → 500 (nunca 2xx)", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    fault("transferencia:editar:verificar");
+    let updates = 0;
+    fake.failWhen((call) => call.method === "update" && ++updates === 2, new Error("caída")); // falla la restauración
+    expect((await editarTrf(id, { importe: "300" })).status).toBe(500);
+  });
+
+  it("edición de un par incompleto → 409", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    rows().splice(0, 1);
+    expect((await editarTrf(id, { importe: "300" })).status).toBe(409);
+  });
+
+  it("borrado: los 2 en UN pedido; aplicado pero respondido con error → relectura 0 → 200", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    fake.calls.length = 0;
+    fault("transferencia:borrar:respuesta");
+    expect((await borrarTrf(id)).status).toBe(200);
+    expect(conId(id)).toHaveLength(0);
+    const deletes = fake.calls.filter((c) => c.method === "delete");
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].payload as unknown[]).toHaveLength(2);
+  });
+
+  it("borrado: queda una pata → se reintenta borrar exactamente esa → 200", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    const [first] = conId(id);
+    fake.calls.length = 0;
+    let deletes = 0;
+    fake.failWhen((call) => {
+      if (call.method !== "delete" || ++deletes !== 1) return false;
+      // se aplica a medias: borra solo uno y responde con error
+      rows().splice(rows().findIndex((r) => r.id === first.id), 1);
+      return true;
+    }, new Error("caída"));
+    expect((await borrarTrf(id)).status).toBe(200);
+    expect(conId(id)).toHaveLength(0);
+    const calls = fake.calls.filter((c) => c.method === "delete");
+    expect(calls).toHaveLength(2);
+    expect((calls[1].payload as string[]).length).toBe(1);
+  });
+
+  it("borrado: siguen quedando después del reintento → 500 (nunca 2xx); nunca se recrean registros", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    fake.calls.length = 0;
+    fake.failWhen((call) => call.method === "delete", new Error("caída"));
     expect((await borrarTrf(id)).status).toBe(500);
+    expect(fake.calls.filter((c) => c.method === "delete")).toHaveLength(2);
+    expect(fake.calls.some((c) => c.method === "create")).toBe(false);
+  });
+
+  it("par incompleto: la lista lo marca «Transferencia incompleta» (primero) y el borrado de par lo elimina", async () => {
+    const id = "TR-11111111-2222-3333-4444-555555555555";
+    const huerfano = seedMov({ [M.transferencia]: id, [M.tipoOperacion]: [ids.transf], [M.sumaResultados]: "N" });
+    const fila = (await list(`?cuenta=${ids.ars1}`)).json.filas.find((f: { id: string }) => f.id === huerfano);
+    expect(fila.control).toBe(CONTROL.transferenciaIncompleta);
+    expect((await list(`?cuenta=${ids.ars1}&control=transferenciaIncompleta`)).json.filas).toHaveLength(1);
+    // dos Pagos con el mismo ID también es incompleto
+    seedMov({ [M.transferencia]: id, [M.tipoOperacion]: [ids.transf], [M.cuenta]: [ids.ars2] });
+    expect((await list(`?cuenta=${ids.ars2}`)).json.filas[0].control).toBe(CONTROL.transferenciaIncompleta);
+    expect((await borrarTrf(id)).status).toBe(200);
+    expect(conId(id)).toHaveLength(0);
+  });
+
+  it("un par completo y correcto no se marca", async () => {
+    const id = (await crearTrf(trf())).json.transferencia;
+    const filas = (await list(`?cuenta=${ids.ars1}`)).json.filas;
+    expect(filas.find((f: { transferencia: string }) => f.transferencia === id).control).toBe(CONTROL.ok);
+  });
+
+  it("borrado: ID inválido o inexistente → 404", async () => {
+    expect((await borrarTrf("nope")).status).toBe(404);
+    expect((await borrarTrf("TR-00000000-0000-0000-0000-000000000000")).status).toBe(404);
+  });
+});
+
+describe("fechas imposibles (fix F)", () => {
+  beforeEach(() => loginAs(ids.admin));
+
+  it.each(["2026-02-31", "2026-13-01", "2025-02-29", "2026-00-10", "26-01-01"])("%s → 400 en alta, edición y transferencias", async (fecha) => {
+    expect((await crear(base({ fecha }))).json).toEqual({ error: "Ingresá una fecha válida." });
+    const id = seedMov({});
+    expect((await editar(id, { fecha })).status).toBe(400);
+    expect((await crearTrf({ cuentaOrigen: ids.ars1, cuentaDestino: ids.ars2, importe: "1", fecha })).status).toBe(400);
+    const trfId = (await crearTrf({ cuentaOrigen: ids.ars1, cuentaDestino: ids.ars2, importe: "1", fecha: "2026-10-01" })).json.transferencia;
+    expect((await editarTrf(trfId, { fecha })).status).toBe(400);
+    expect(fake.calls.some((c) => c.method === "update")).toBe(false);
+  });
+
+  it("2024-02-29 (bisiesto) sí vale", async () => {
+    expect((await crear(base({ fecha: "2024-02-29" }))).status).toBe(201);
   });
 });
 

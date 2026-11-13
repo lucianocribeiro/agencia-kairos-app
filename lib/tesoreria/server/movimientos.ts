@@ -394,7 +394,15 @@ export async function listTesoreria(q: TesoreriaQuery, now = new Date()): Promis
   const enRango = deLaCuenta.filter((m) => m.fecha !== null && m.fecha >= range.desde && m.fecha <= range.hasta);
   if (enRango.length > MAX_FILAS_TESORERIA) return fail(400, TESORERIA_API_MESSAGES.demasiados);
 
-  const evaluated = new Map<string, Evaluacion>(deLaCuenta.map((m) => [m.id, evaluarMovimiento(m, ctx)]));
+  // Pares de transferencias: ID → registros (de todas las cuentas). Completo = un Pago y una Cobranza.
+  const pares = new Map<string, MovimientoGuardado[]>();
+  for (const m of todos) if (m.transferencia) pares.set(m.transferencia, [...(pares.get(m.transferencia) ?? []), m]);
+  const incompleto = (m: MovimientoGuardado) => {
+    if (!m.transferencia) return false;
+    const par = pares.get(m.transferencia) ?? [];
+    return !(par.length === 2 && par.some((x) => x.movimiento === "Pago") && par.some((x) => x.movimiento === "Cobranza"));
+  };
+  const evaluated = new Map<string, Evaluacion>(deLaCuenta.map((m) => [m.id, evaluarMovimiento(m, ctx, { parIncompleto: incompleto(m) })]));
   const ordenados = [...deLaCuenta].sort(ordenSaldo);
   let saldo = toCents(cuenta.saldoInicial);
   let saldoInicioPeriodo = saldo;
@@ -407,10 +415,6 @@ export async function listTesoreria(q: TesoreriaQuery, now = new Date()): Promis
     if (m.fecha === null || m.fecha <= range.hasta) saldoFinPeriodo = saldo;
   }
   const saldoActual = saldo;
-
-  // Pares de transferencias: ID → registros (de todas las cuentas).
-  const pares = new Map<string, MovimientoGuardado[]>();
-  for (const m of todos) if (m.transferencia) pares.set(m.transferencia, [...(pares.get(m.transferencia) ?? []), m]);
 
   const filas = enRango
     .filter((m) => (!q.tipo || m.tipoOperacion === q.tipo) && (!q.movimiento || m.movimiento === q.movimiento))

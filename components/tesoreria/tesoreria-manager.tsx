@@ -489,7 +489,7 @@ export function TesoreriaManager({ today, initial }: { today: string; initial: T
       <ConfirmDialog
         open={!!deleting}
         title={deleting?.transferencia ? "¿Borrar la transferencia?" : "¿Borrar este movimiento?"}
-        confirmLabel={deleting?.transferencia ? "Sí, borrar los 2 registros" : "Sí, borrar"}
+        confirmLabel={deleting?.transferencia ? "Sí, borrar la transferencia" : "Sí, borrar"}
         busy={saving}
         busyLabel="Borrando…"
         onConfirm={remove}
@@ -501,7 +501,9 @@ export function TesoreriaManager({ today, initial }: { today: string; initial: T
             {deleting.transferencia && (
               <>
                 <br />
-                Es parte de una transferencia con «{deleting.otraCuenta?.nombre ?? "otra cuenta"}»: se borran los 2 registros juntos.
+                {deleting.otraCuenta
+                  ? `Es parte de una transferencia con «${deleting.otraCuenta.nombre}»: se borran los 2 registros juntos.`
+                  : "Es parte de una transferencia incompleta: se borran todos los registros con ese ID."}
               </>
             )}
           </p>

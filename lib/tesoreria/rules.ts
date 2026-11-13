@@ -3,6 +3,7 @@
  * mismas funciones validan el formulario, calculan el Control y arman las listas. No
  * se leen las fórmulas de Airtable (Entra/Sale, Importe $).
  */
+import { isIsoDate } from "@/lib/horas/dates";
 import { toCents } from "@/lib/ventas-compras/money";
 
 export type Movimiento = "Cobranza" | "Pago";
@@ -64,6 +65,8 @@ export interface MovimientoDatos {
 }
 
 export const CONTROL = {
+  /** Red de seguridad: el ID de transferencia no lo comparten exactamente un Pago y una Cobranza. */
+  transferenciaIncompleta: "Transferencia incompleta",
   faltaCuenta: "Falta cuenta",
   cuentaInexistente: "Cuenta inexistente",
   movimiento: "Indicá Cobranza o Pago",
@@ -125,8 +128,12 @@ export interface Evaluacion {
 
 const find = <T extends { id: string }>(list: readonly T[], id: string | null) => (id ? (list.find((x) => x.id === id) ?? null) : null);
 
-/** Valores efectivos, importes y Control (primer mensaje que falla, mismo orden que el Excel). */
-export function evaluarMovimiento(m: MovimientoDatos, ctx: TesoreriaCtx): Evaluacion {
+/**
+ * Valores efectivos, importes y Control (primer mensaje que falla, mismo orden que el
+ * Excel). `parIncompleto`: el registro tiene ID de transferencia pero ese ID no lo
+ * comparten exactamente un Pago y una Cobranza → «Transferencia incompleta» (primero).
+ */
+export function evaluarMovimiento(m: MovimientoDatos, ctx: TesoreriaCtx, opts: { parIncompleto?: boolean } = {}): Evaluacion {
   const cuenta = find(ctx.cuentas, m.cuenta);
   const tipo = find(ctx.tipos, m.tipoOperacion);
   const esDeSocio = !!tipo?.esDeSocio;
@@ -137,6 +144,7 @@ export function evaluarMovimiento(m: MovimientoDatos, ctx: TesoreriaCtx): Evalua
   const tercero = m.movimiento === "Cobranza" ? m.cliente : m.movimiento === "Pago" ? m.proveedor : (m.cliente ?? m.proveedor);
 
   const checks: [boolean, string][] = [
+    [!!m.transferencia && !!opts.parIncompleto, CONTROL.transferenciaIncompleta],
     [!m.cuenta, CONTROL.faltaCuenta],
     [!cuenta, CONTROL.cuentaInexistente],
     [m.movimiento !== "Cobranza" && m.movimiento !== "Pago", CONTROL.movimiento],
@@ -219,7 +227,7 @@ const decimals = (n: number) => (String(n).split(".")[1] ?? "").length;
  * Devuelve el primer mensaje o null.
  */
 export function validarMovimiento(m: MovimientoDatos, ctx: TesoreriaCtx, opts: { esTransferencia?: boolean } = {}): string | null {
-  if (!m.fecha || !/^\d{4}-\d{2}-\d{2}$/.test(m.fecha)) return TESORERIA_MESSAGES.fecha;
+  if (!isIsoDate(m.fecha)) return TESORERIA_MESSAGES.fecha;
   if (m.importe !== null && decimals(m.importe) > 2) return TESORERIA_MESSAGES.importeDecimales;
   if (m.tipoCambio !== null && decimals(m.tipoCambio) > 4) return TESORERIA_MESSAGES.tcDecimales;
   if (m.sumaResultados !== null && m.sumaResultados !== "S" && m.sumaResultados !== "N") return TESORERIA_MESSAGES.suma;

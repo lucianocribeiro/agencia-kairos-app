@@ -572,3 +572,51 @@ describe("Payload inválido = bug del servidor (NEW-03)", () => {
     expect(fake.calls.some((c) => c.method !== "list")).toBe(false);
   });
 });
+
+describe("Tipos de operación · «Transferencia entre cuentas propias» protegido (CC-F2-04 v2)", () => {
+  const TO = TABLES.tiposOperacion;
+  const NOMBRE = "Transferencia entre cuentas propias";
+  const seedTipo = (nombre: string, extra: Record<string, unknown> = {}) =>
+    fake.seed(TO.id, { [TO.fields.nombre]: nombre, [TO.fields.movimiento]: "Ambos", [TO.fields.sumaAResultados]: false, [TO.fields.esDeSocio]: false, ...extra });
+  const base = { nombre: NOMBRE, movimiento: "Ambos", sumaAResultados: false, pideClienteProveedor: false, esDeSocio: false };
+
+  it.each([
+    ["renombrar", { nombre: "Transferencias" }],
+    ["cambiar Movimiento", { movimiento: "Pago" }],
+    ["cambiar Suma a resultados", { sumaAResultados: true }],
+    ["cambiar Es de socio", { esDeSocio: true }],
+  ])("%s → 409 sin escribir", async (_n, change) => {
+    const id = seedTipo(NOMBRE);
+    const res = await updateMaestro("tipos-de-operacion", id, { ...base, ...change });
+    expect(res).toMatchObject({ ok: false, status: 409, error: expect.stringContaining("lo usa Tesorería") });
+    expect(fake.calls.some((c) => c.method === "update")).toBe(false);
+    expect(fieldsOf(TO.id, id)[TO.fields.nombre]).toBe(NOMBRE);
+  });
+
+  it("los demás campos (pide cliente/proveedor) sí se pueden cambiar", async () => {
+    const id = seedTipo(NOMBRE);
+    expect(await updateMaestro("tipos-de-operacion", id, { ...base, pideClienteProveedor: true })).toMatchObject({ ok: true });
+  });
+
+  it("no se puede borrar (409) y el chequeo previo lo avisa", async () => {
+    const id = seedTipo(NOMBRE);
+    expect(await deleteMaestro("tipos-de-operacion", id)).toMatchObject({ ok: false, status: 409, error: expect.stringContaining("no se puede borrar") });
+    expect(await deleteCheckMaestro("tipos-de-operacion", id)).toMatchObject({ ok: true, data: { blocked: true, message: expect.stringContaining("no se puede borrar") } });
+    expect(fake.rows(TO.id).some((r) => r.id === id)).toBe(true);
+  });
+
+  it("nadie más puede tomar ese nombre (alta o renombre; sin distinguir mayúsculas ni espacios)", async () => {
+    const otro = seedTipo("Otro");
+    for (const nombre of [NOMBRE, ` ${NOMBRE.toUpperCase()} `]) {
+      expect(await createMaestro("tipos-de-operacion", { ...base, nombre })).toMatchObject({ status: 409, error: expect.stringContaining("reservado") });
+      expect(await updateMaestro("tipos-de-operacion", otro, { ...base, nombre })).toMatchObject({ status: 409 });
+    }
+    expect(fake.calls.some((c) => c.method === "create" || c.method === "update")).toBe(false);
+  });
+
+  it("los demás tipos se renombran y borran como siempre", async () => {
+    const otro = seedTipo("Otro");
+    expect(await updateMaestro("tipos-de-operacion", otro, { ...base, nombre: "Otro nombre" })).toMatchObject({ ok: true });
+    expect(await deleteMaestro("tipos-de-operacion", otro)).toMatchObject({ ok: true });
+  });
+});

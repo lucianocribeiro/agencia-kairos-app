@@ -25,6 +25,7 @@ const { clearUserCache } = await import("@/lib/auth/user-cache");
 const listRoute = await import("@/app/api/admin/comprobantes/[tabla]/route");
 const itemRoute = await import("@/app/api/admin/comprobantes/[tabla]/[id]/route");
 const maestroItem = await import("@/app/api/admin/maestros/[tabla]/[id]/route");
+const coll = await import("@/app/api/admin/maestros/[tabla]/route");
 const { MENSAJES } = await import("@/lib/ventas-compras/rules");
 const { COMPUTED_FIELDS } = await import("@/lib/airtable/schema");
 
@@ -251,9 +252,7 @@ describe("edición", () => {
     const res = await patch("compras", id, { impTotal: 1, claveArca: "x", proveedor: ["recXXXXXXXXXXXXXX"], [C.totalPesos]: 5, cliente: "x", socio: ids.socio });
     expect(res.status).toBe(200);
     const fields = (fake.calls.find((c) => c.method === "update")!.payload as { fields: Record<string, unknown> }[])[0].fields;
-    expect(Object.keys(fields).sort()).toEqual([C.mesDevengado, C.proyecto, C.unidadNegocio, C.categoria, C.observaciones, C.socio].sort());
-    expect(fields[C.socio]).toEqual([ids.socio]);
-    expect(fields[C.categoria]).toEqual([ids.gastos]); // lo que estaba
+    expect(fields).toEqual({ [C.socio]: [ids.socio] }); // solo lo enviado y editable
     for (const k of Object.keys(fields)) expect(COMPUTED_FIELDS.has(k)).toBe(false);
     // Ventas no acepta socio (se descarta)
     const v = venta();
@@ -290,6 +289,112 @@ describe("edición", () => {
     expect((await patch("ventas", "recNOEXISTE000000", {})).status).toBe(404);
     expect((await patch("ventas", "nope", {})).status).toBe(404);
     expect((await patch("horas", "recNOEXISTE000000", {})).status).toBe(404);
+  });
+});
+
+describe("edición: solo lo que cambió (fix 3)", () => {
+  beforeEach(() => loginAs(ids.admin));
+  const lastUpdate = () => (fake.calls.filter((c) => c.method === "update").at(-1)!.payload as { fields: Record<string, unknown> }[])[0].fields;
+
+  it("Ventas: un PATCH con solo Observaciones escribe Observaciones + Cliente (recalculado sobre lo guardado)", async () => {
+    const id = venta({ [V.proyecto]: [ids.proyecto], [V.categoria]: [ids.ingreso], [V.mesDevengado]: "2026-09-01" });
+    expect((await patch("ventas", id, { observaciones: "solo esto" })).status).toBe(200);
+    expect(lastUpdate()).toEqual({ [V.observaciones]: "solo esto", [V.cliente]: [ids.clienteP] }); // del proyecto guardado
+    const f = fake.rows(T.ventas.id).find((r) => r.id === id)!.fields;
+    expect(f).toMatchObject({ [V.proyecto]: [ids.proyecto], [V.categoria]: [ids.ingreso], [V.mesDevengado]: "2026-09-01" });
+  });
+
+  it("Compras: un PATCH con solo Observaciones escribe solo Observaciones", async () => {
+    const id = compra({ [C.socio]: [ids.socio] });
+    expect((await patch("compras", id, { observaciones: "nota" })).status).toBe(200);
+    expect(lastUpdate()).toEqual({ [C.observaciones]: "nota" });
+    expect(fake.rows(T.compras.id).find((r) => r.id === id)!.fields).toMatchObject({ [C.socio]: [ids.socio], [C.categoria]: [ids.gastos] });
+  });
+
+  it("un PATCH vacío no escribe nada en Compras", async () => {
+    const id = compra();
+    expect((await patch("compras", id, {})).status).toBe(200);
+    expect(fake.calls.some((c) => c.method === "update")).toBe(false);
+  });
+});
+
+describe("Cliente por CUIT: ambiguo = sin match (fix 1)", () => {
+  beforeEach(() => loginAs(ids.admin));
+  const dup = () => fake.seed(T.clientes.id, { [T.clientes.fields.nombre]: "QA Duplicado", [T.clientes.fields.sigla]: "QD", [T.clientes.fields.estado]: "Activo", [T.clientes.fields.cuit]: CUIT_A });
+
+  it.each([
+    ["el duplicado después", "after"],
+    ["el duplicado antes", "before"],
+  ])("dos clientes con el mismo CUIT (%s) → «Cliente sin identificar» y no se escribe link", async (_n, order) => {
+    if (order === "before") {
+      // mismo CUIT en otro cliente cargado antes que el original
+      const rows = fake.rows(T.clientes.id);
+      const original = rows.findIndex((r) => r.id === ids.clienteA);
+      dup();
+      rows.unshift(rows.splice(rows.length - 1, 1)[0]);
+      expect(rows.findIndex((r) => r.id === ids.clienteA)).toBe(original + 1);
+    } else dup();
+    const id = venta({ [V.categoria]: [ids.ingreso], [V.cliente]: [ids.clienteA] });
+    expect((await list("ventas")).json.filas[0]).toMatchObject({ contraparte: null, control: MENSAJES.sinCliente });
+    await patch("ventas", id, { observaciones: "x" });
+    expect(fake.rows(T.ventas.id).find((r) => r.id === id)!.fields[V.cliente]).toEqual([]);
+  });
+
+  it("match único → ese cliente; sin match → ninguno", async () => {
+    venta({ [V.categoria]: [ids.ingreso] });
+    venta({ [V.categoria]: [ids.ingreso], [V.nroDocReceptor]: CUIT_B });
+    const filas = (await list("ventas")).json.filas as Row[];
+    expect(filas.map((r) => r.contraparte?.id ?? null).sort()).toEqual([ids.clienteA, null].sort());
+  });
+});
+
+describe("Clientes › CUIT: válido y único (fix 1)", () => {
+  beforeEach(() => loginAs(ids.admin));
+  const create = (body: Record<string, unknown>) => coll.POST(req("POST", "/x", body), { params: Promise.resolve({ tabla: "clientes" }) }).then(json);
+
+  it("un segundo cliente con el mismo CUIT (con o sin guiones) → 409; CUIT inválido → 400; sin CUIT → OK", async () => {
+    const dashed = `${CUIT_A.slice(0, 2)}-${CUIT_A.slice(2, 10)}-${CUIT_A[10]}`;
+    const res = await create({ nombre: "QA Otro", sigla: "QO", estado: "Activo", cuit: dashed });
+    expect(res.status).toBe(409);
+    expect(res.json.fieldErrors.cuit).toMatch(/Ya existe/);
+    expect((await create({ nombre: "QA Malo", sigla: "QM", estado: "Activo", cuit: "20-12345678-5" })).status).toBe(400);
+    const ok = await create({ nombre: "QA Sin CUIT", sigla: "QS", estado: "Activo" });
+    expect(ok.status).toBe(201);
+    const ok2 = await create({ nombre: "QA Sin CUIT 2", sigla: "QT", estado: "Activo" });
+    expect(ok2.status).toBe(201); // vacío no cuenta para la unicidad
+    const nuevo = await create({ nombre: "QA Nuevo CUIT", sigla: "QN", estado: "Activo", cuit: CUIT_B });
+    expect(nuevo.status).toBe(201);
+    expect(fake.rows(T.clientes.id).find((r) => r.id === nuevo.json.id)!.fields[T.clientes.fields.cuit]).toBe(CUIT_B);
+  });
+});
+
+describe("límite de la lista (fix 2)", () => {
+  beforeEach(() => loginAs(ids.admin));
+  const seedMany = (count: number) => {
+    const rows = fake.rows(T.ventas.id);
+    for (let i = 0; i < count; i++) {
+      rows.push({
+        id: `recLIM${String(i).padStart(11, "0")}`,
+        createdTime: "2026-10-15T00:00:00.000Z",
+        fields: { [V.claveArca]: `11|2|${i}|${CUIT_A}`, [V.fecha]: "2026-10-15", [V.tipoComprobante]: [ids.factC], [V.puntoVenta]: 2, [V.numeroDesde]: i, [V.nroDocReceptor]: CUIT_A, [V.impTotal]: 100 },
+      });
+    }
+  };
+
+  it("5.000 comprobantes en el rango → 200 con totales", async () => {
+    seedMany(5000);
+    const res = await list("ventas");
+    expect(res.status).toBe(200);
+    expect(res.json.cantidad).toBe(5000);
+    expect(res.json.totales.total).toBe(5000 * 10000);
+  });
+
+  it("5.001 → 400 sin totales; un rango más corto vuelve a andar", async () => {
+    seedMany(5001);
+    venta({ [V.fecha]: "2026-03-01" });
+    const res = await list("ventas");
+    expect(res).toEqual({ status: 400, json: { error: "El período tiene más de 5.000 comprobantes. Elegí un rango de fechas más corto." } });
+    expect((await list("ventas", "?desde=2026-03-01&hasta=2026-03-31")).json.cantidad).toBe(1);
   });
 });
 

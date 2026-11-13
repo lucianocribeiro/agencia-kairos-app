@@ -7,6 +7,9 @@ import { listComprobantes } from "@/lib/ventas-compras/server/comprobantes";
 
 type Context = { params: Promise<{ tabla: string }> };
 
+/** Vercel Hobby: 300 s es el máximo. La lista lee todo el rango de Fechas (≤ 5.000 comprobantes). */
+export const maxDuration = 300;
+
 /**
  * GET /api/admin/comprobantes/:tabla (ventas | compras) · lista filtrada con totales.
  * Query: desde, hasta (AAAA-MM-DD; sin fechas = año actual), mesDesde, mesHasta (AAAA-MM),

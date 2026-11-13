@@ -61,11 +61,14 @@ export async function loadImportContext(kind: Kind, options: { claves?: boolean 
   }
 
   const clienteRef = new Map<string, Ref>(clientes.map((r) => [r.id, { id: r.id, nombre: text(r.fields[T.clientes.fields.nombre]) || "(sin nombre)" }]));
-  const clientesPorCuit = new Map<string, Ref>();
+  // CUIT → cliente solo si hay exactamente uno con ese CUIT: si hay más (datos viejos, antes de
+  // la unicidad), es ambiguo y cuenta como sin match («Cliente sin identificar»; no se linkea).
+  const porCuit = new Map<string, Ref[]>();
   for (const r of clientes) {
     const cuit = normalizeCuit(text(r.fields[T.clientes.fields.cuit]));
-    if (cuit.length === 11 && !clientesPorCuit.has(cuit)) clientesPorCuit.set(cuit, clienteRef.get(r.id)!);
+    if (cuit.length === 11) porCuit.set(cuit, [...(porCuit.get(cuit) ?? []), clienteRef.get(r.id)!]);
   }
+  const clientesPorCuit = new Map<string, Ref>([...porCuit].filter(([, list]) => list.length === 1).map(([cuit, [ref]]) => [cuit, ref]));
 
   const proveedoresPorCuit = new Map<string, { id: string; nombre: string; categoriaPorDefecto: string | null }>();
   const proveedoresById = new Map<string, { nombre: string; cuit: string; categoriaPorDefecto: string | null }>();

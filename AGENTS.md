@@ -76,3 +76,13 @@ Es un chequeo no atómico con compensación. Queda una ventana chica en la que u
 - Toda verificación posterior que relee el registro escrito (superposición de Horas, unicidad de Usuarios y Maestros, cascada de siglas) lanza `WrittenRecordMissingError` si la relectura no lo trae: cuenta como lectura fallida → deshacer → 503 (500 si el deshacer falla). La de «último Admin activo» no depende del registro escrito (cuenta los demás Admins activos).
 - Período máximo de los filtros: 10 años calendario exactos (`hasta ≤ desde + 10 años`, 29/02 → 28/02). La vista diaria del dashboard sigue limitada a 400 días.
 - Mis horas: asignaciones y proyectos se leen una vez por request (`loadMisSnapshot`) y se pasan a `listMisHoras`; el alta siempre pide una foto nueva.
+
+## Clientes Activo / Inactivo (CC-F2-01)
+
+- Estado de Clientes: solo `Activo` / `Inactivo` (`CLIENTE_ESTADOS`, `CLIENTE_ACTIVO` en `lib/abm/maestros.ts`). Todo filtro de clientes elegibles compara con `CLIENTE_ACTIVO`: picker de Cliente en Proyectos (`links.clienteActivo.allow`) y filtro de clientes de Horas (`ClienteOption.activo`). Las asignaciones de proyectos filtran por Estado del proyecto, no del cliente.
+- Sigla obligatoria (`required`) y de 2 letras para todo cliente; única (`unique`) con verificación posterior y cascada al Código de los proyectos, como antes.
+- La lista de Clientes arranca filtrada en Activos (`MaestroSpec.estadoDefault` → `Filter.defaultValue`).
+- Borrado de Clientes: `DELETE /api/admin/maestros/clientes/:id` (el mismo `deleteMaestro`). Con referencias (Proyectos, Ventas, Tesorería) → 409 con conteos (`CLIENTE_MESSAGES.referenciado`, «No se puede borrar: tiene 2 proyectos y 3 movimientos de Tesorería. Pasalo a Inactivo.»). El formulario primero llama a `GET /api/admin/maestros/:tabla/:id/referencias` (aviso previo): con referencias muestra el mensaje; sin referencias abre `ConfirmDialog`. El DELETE vuelve a leer las referencias justo antes de borrar.
+- **Carrera residual del borrado** (sin compensación, a propósito): entre la relectura de referencias y el delete hay unos milisegundos en los que otro request puede linkear el cliente (p. ej. crear un proyecto). Airtable borra igual y ese link queda vacío en el proyecto/venta/movimiento. Con la escala actual (borrados manuales y raros) es aceptable.
+- `scripts/migrate-clientes-estado.mjs` (lógica en `scripts/lib/`, test en `test/migrate-clientes-estado.test.ts`): dry-run por defecto, snapshot en `backups/` (gitignored), nunca usa typecast.
+- Meta API (verificado en CC-F2-01): se puede cambiar la fórmula de un campo fórmula; NO se pueden editar opciones de un singleSelect, ni la precisión, ni borrar campos (eso se hace en la interfaz).

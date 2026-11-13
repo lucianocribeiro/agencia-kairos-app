@@ -386,8 +386,8 @@ describe("apiRoute · errores de Airtable (N-05)", () => {
     expect((await call(coll, "POST", { nombre: "" }, { tabla: "unidades-de-negocio" })).status).toBe(400);
     expect((await call(coll, "POST", "{no json", { tabla: "unidades-de-negocio" })).status).toBe(400);
     expect((await call(coll, "POST", { nombre: "existe" }, { tabla: "unidades-de-negocio" })).status).toBe(409);
-    const c = fake.seed(C.id, { [C.fields.nombre]: "A", [C.fields.estado]: "Lead" });
-    expect((await call("maestros/[tabla]/[id]/route.ts", "DELETE", undefined, { tabla: "clientes", id: c })).status).toBe(405);
+    const p = fake.seed(TABLES.parametros.id, { [TABLES.parametros.fields.concepto]: "X" });
+    expect((await call("maestros/[tabla]/[id]/route.ts", "DELETE", undefined, { tabla: "parametros", id: p })).status).toBe(405);
 
     const req = new NextRequest("http://localhost/api/admin/x", {
       method: "POST",
@@ -456,11 +456,11 @@ describe("Maestros · slugs no permitidos → 404 (N-06)", () => {
 function validPayload(slug: (typeof MAESTRO_SLUGS)[number], n: number): Record<string, unknown> {
   switch (slug) {
     case "clientes":
-      return { nombre: `MA Cliente ${n}`, estado: "Lead" };
+      return { nombre: `MA Cliente ${n}`, estado: "Inactivo", sigla: n === 1 ? "MC" : "MD" };
     case "proveedores":
       return { nombre: `MA Prov ${n}`, cuit: n === 1 ? VALID_CUIT : "33-69345023-9" };
     case "proyectos": {
-      const cliente = fake.rows(C.id).find((r) => r.fields[C.fields.sigla] === "MA")?.id ?? fake.seed(C.id, { [C.fields.nombre]: "MA", [C.fields.sigla]: "MA", [C.fields.estado]: "Cliente" });
+      const cliente = fake.rows(C.id).find((r) => r.fields[C.fields.sigla] === "MA")?.id ?? fake.seed(C.id, { [C.fields.nombre]: "MA", [C.fields.sigla]: "MA", [C.fields.estado]: "Activo" });
       return { nombreCorto: `Proy ${n}`, cliente: [cliente], estado: "Activo" };
     }
     case "socios":
@@ -555,8 +555,8 @@ describe("Links inválidos → 400 (N-06)", () => {
   beforeEach(() => loginAs(adminId));
 
   function setup() {
-    const cliente = fake.seed(C.id, { [C.fields.nombre]: "QA", [C.fields.sigla]: "QZ", [C.fields.estado]: "Cliente" });
-    const lead = fake.seed(C.id, { [C.fields.nombre]: "Lead", [C.fields.sigla]: "LD", [C.fields.estado]: "Lead" });
+    const cliente = fake.seed(C.id, { [C.fields.nombre]: "QA", [C.fields.sigla]: "QZ", [C.fields.estado]: "Activo" });
+    const lead = fake.seed(C.id, { [C.fields.nombre]: "Lead", [C.fields.sigla]: "LD", [C.fields.estado]: "Inactivo" });
     const un = fake.seed(UN.id, { [UN.fields.nombre]: "UN" });
     const gasto = fake.seed(CAT.id, { [CAT.fields.nombre]: "Gasto", [CAT.fields.tipo]: "Gasto" });
     const ingreso = fake.seed(CAT.id, { [CAT.fields.nombre]: "Ingreso", [CAT.fields.tipo]: "Ingreso" });

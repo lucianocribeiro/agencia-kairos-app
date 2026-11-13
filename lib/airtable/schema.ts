@@ -166,7 +166,7 @@ export const TABLES = {
       tesoreria: "fldfq5DMOJLuKAXop",
     },
     choices: {
-      estado: ["Cliente", "Lead", "Ex cliente", "Perdido"],
+      estado: ["Activo", "Inactivo"],
       condicionIva: [
         "Responsable Inscripto",
         "Monotributista",

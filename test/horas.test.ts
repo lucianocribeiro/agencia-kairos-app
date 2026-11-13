@@ -69,8 +69,8 @@ beforeEach(() => {
   clearUserCache();
   vi.restoreAllMocks();
   vi.spyOn(console, "error").mockImplementation(() => {});
-  const cliente = fake.seed(C.id, { [C.fields.nombre]: "QA Cliente Secreto", [C.fields.sigla]: "QZ", [C.fields.estado]: "Cliente" });
-  const otroCliente = fake.seed(C.id, { [C.fields.nombre]: "Otro Cliente", [C.fields.sigla]: "OT", [C.fields.estado]: "Cliente" });
+  const cliente = fake.seed(C.id, { [C.fields.nombre]: "QA Cliente Secreto", [C.fields.sigla]: "QZ", [C.fields.estado]: "Activo" });
+  const otroCliente = fake.seed(C.id, { [C.fields.nombre]: "Otro Cliente", [C.fields.sigla]: "OT", [C.fields.estado]: "Activo" });
   const proyecto = (codigo: string, estado: string, c = cliente) =>
     fake.seed(P.id, { [P.fields.codigo]: codigo, [P.fields.estado]: estado, [P.fields.cliente]: [c], [P.fields.valorHora]: VALOR_HORA, [P.fields.monedaValorHora]: "USD" });
   const uno = proyecto("QZ - Uno", "Activo");

@@ -2,7 +2,7 @@
 
 App interna de Agencia Kairos. Next.js (App Router) + TypeScript + Tailwind CSS, con Airtable como base de datos. Se deploya en Vercel.
 
-> Estado: **Fase 1 · CC-F1-04 (Horas, Mis horas y Dashboard)**. Login, guards por rol, ABM de Usuarios y Maestros, carga de horas del Empleado, Horas y Dashboard de Admin.
+> Estado: **Fase 2 · CC-F2-01 (Clientes Activo / Inactivo)**. Fase 1 completa: login, guards por rol, ABM de Usuarios y Maestros, carga de horas del Empleado, Horas y Dashboard de Admin.
 
 ## Requisitos
 
@@ -56,6 +56,7 @@ El token de Airtable necesita `data.records:read` y `data.records:write`; para c
 | `npm test`              | Tests unitarios (Vitest).                                                |
 | `npm run check:bundle`  | Después del build, busca en `.next/static` los nombres y valores de los secretos. Falla si aparece alguno. |
 | `npm run setup:intentos-login` | Verifica la tabla "Intentos de login" contra `lib/airtable/schema.ts` (tipos e IDs); si no existe, la crea, muestra los IDs nuevos y sale con error hasta que actualices `schema.ts`. Con `-- --verify` solo lee. |
+| `npm run migrate:clientes-estado` | Migra Clientes Estado a Activo / Inactivo (ver «Migración de Clientes»). Dry-run por defecto; `-- --apply` escribe. |
 | `npm run bootstrap:admin` | **Solo local.** Crea el primer Admin si no existe (ver abajo). |
 
 Antes de abrir un PR tienen que pasar: `lint`, `build`, `test` y `check:bundle`. GitHub Actions los corre en cada PR (`.github/workflows/ci.yml`).
@@ -93,7 +94,8 @@ Antes de tocar nada, rechaza `BOOTSTRAP_ADMIN_PASSWORD` si tiene menos de 10 car
 ## Usuarios y Maestros (Admin)
 
 - **Usuarios** (`/usuarios`): lista con filtros por Rol y Estado y búsqueda; alta con contraseña temporal (se tipea o se genera, 14 caracteres) y «Debe cambiar password» = sí; edición; activar/desactivar; reset de contraseña. No se borran. Un Admin no puede desactivarse ni cambiarse el rol a sí mismo, y siempre tiene que quedar al menos un Admin activo.
-- **Maestros** (`/maestros/*`): un ABM único configurado por tabla (`lib/abm/maestros.ts` + `lib/abm/server/maestros-config.ts`). Lista con búsqueda, orden por el campo principal y filtro por Estado donde existe; alta, edición y borrado solo si la tabla lo permite y el registro no tiene registros asociados (si los tiene: 409). Clientes y Proyectos no se borran: se usa Estado.
+- **Maestros** (`/maestros/*`): un ABM único configurado por tabla (`lib/abm/maestros.ts` + `lib/abm/server/maestros-config.ts`). Lista con búsqueda, orden por el campo principal y filtro por Estado donde existe; alta, edición y borrado solo si la tabla lo permite y el registro no tiene registros asociados (si los tiene: 409). Proyectos no se borran: se usa Estado. Clientes se borran solo sin proyectos, ventas ni movimientos de Tesorería; si no, el 409 dice qué y cuántos y sugiere pasarlo a Inactivo.
+- **Clientes** (Fase 2): Estado Activo / Inactivo (la lista arranca en Activos; el filtro permite Inactivos y Todos). Sigla obligatoria y única para todo cliente (2 letras, en mayúsculas). Solo los Activos se pueden elegir en Proyectos y en el filtro de clientes de Horas.
 - **Reglas destacadas**: el Código de un proyecto es `Sigla del cliente - Nombre corto` y lo arma el servidor; cambiar la sigla de un cliente recalcula los Códigos de sus proyectos (si alguno choca, se rechaza el cambio entero; si una escritura falla a mitad de camino, se revierte todo). CUIT validado con dígito verificador y guardado solo con dígitos. Números en formato es-AR (`1.234,56`; también `1234,56` y `1234.56`).
 - **API**: `app/api/admin/usuarios/**` y `app/api/admin/maestros/[tabla]/**`, todo con `adminRoute`. Errores: 400 validación, 409 duplicado/choque, 404 no encontrado, 503 Airtable no disponible (o cascada revertida).
 - **Concurrencia**: sin transacciones; las reglas de unicidad y «al menos un Admin activo» se verifican también después de escribir y se compensan; si esa verificación no se puede leer, el cambio se deshace (503). Detalle y riesgo residual en `AGENTS.md`.
@@ -104,8 +106,14 @@ Antes de tocar nada, rechaza `BOOTSTRAP_ADMIN_PASSWORD` si tiene menos de 10 car
 - **Horas** (`/horas`, Admin): lista con filtros por colaborador, proyecto, cliente y período, total, alta (cualquier fecha y proyecto, también Cerrados), edición (Cargado por no cambia) y borrado.
 - **Dashboard** (`/dashboard`, Admin): horas por proyecto × período (diaria, semanal ISO o mensual) con totales y un gráfico de barras en SVG. Solo horas, nunca importes.
 - **Reglas**: horas = `ROUND((hasta − desde) / 3600, 2)` en una sola función (`recordHours`, `lib/horas/time.ts`) que usan listas, totales y dashboard; dos registros del mismo colaborador y día no se pueden pisar (los que se tocan sí), con verificación posterior.
-- **Diferencia con la fórmula de Airtable**: el campo Horas usa `IF(AND({desde}, {hasta}), …)`. Como 00:00 se guarda como 0, un registro que empieza a las 00:00 queda en blanco en Airtable; la app lo calcula igual. Para que coincidan siempre habría que cambiar la fórmula a `IF(AND({desde} != BLANK(), {hasta} != BLANK()), …)` (no se tocó la base).
+- **Fórmula de Airtable**: desde CC-F2-01 el campo Horas usa `IF(AND(LEN({desde} & "") > 0, LEN({hasta} & "") > 0), ROUND(({hasta} − {desde}) / 3600, 2))`, así que un registro que empieza a las 00:00 (0 segundos) ya no queda en blanco y coincide con `recordHours`. La app sigue sin leer ese campo.
 - **Un Empleado nunca ve** valor hora, moneda, importe ni cliente: no se leen de Airtable y las respuestas son DTOs armados a mano (`test/horas.test.ts`, criterio 7).
+
+## Migración de Clientes (Fase 2)
+
+`npm run migrate:clientes-estado` (dry-run) y `npm run migrate:clientes-estado -- --apply`. Guarda un snapshot de todos los Clientes en `backups/` (gitignored: tiene datos reales), aborta sin escribir si alguno de los 7 leads cambió o tiene links, si hay un Estado sin mapeo o si faltan las opciones Activo e Inactivo; después pasa Cliente → Activo, borra los leads y verifica el estado final. Es idempotente.
+
+Orden de despliegue: (1) agregar las opciones Activo e Inactivo en la interfaz de Airtable (la Meta API no edita opciones de un singleSelect); (2) merge y deploy de esta versión; (3) `--apply`; (4) quitar las opciones viejas en la interfaz. Entre (2) y (3) los clientes siguen en «Cliente»: no aparecen en el picker de Proyectos ni en el filtro por defecto, así que conviene correr el `--apply` enseguida.
 
 ## Estructura
 

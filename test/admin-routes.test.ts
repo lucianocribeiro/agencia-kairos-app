@@ -290,3 +290,71 @@ describe("Maestros por la ruta (smoke de cableado)", () => {
     expect((await call(COLL, "POST", { nombre: "x" }, { tabla: "horas" })).status).toBe(404);
   });
 });
+
+describe("Clientes · Estado Activo / Inactivo y borrado (F2-01)", () => {
+  const COLL = "app/api/admin/maestros/[tabla]/route.ts";
+  const ITEM = "app/api/admin/maestros/[tabla]/[id]/route.ts";
+  const REFS = "app/api/admin/maestros/[tabla]/[id]/referencias/route.ts";
+  const C = TABLES.clientes;
+  beforeEach(() => loginAs(adminId));
+
+  it("la ruta nueva de referencias existe y exporta solo GET", () => {
+    expect(Object.keys(ROUTE_MODULES[`/${REFS}`]).filter((k) => HTTP.includes(k as (typeof HTTP)[number]))).toEqual(["GET"]);
+  });
+
+  it("Empleado → 403 en el chequeo previo y en el borrado de un cliente; no se borra nada", async () => {
+    const c = fake.seed(C.id, { [C.fields.nombre]: "QA", [C.fields.sigla]: "QA", [C.fields.estado]: "Activo" });
+    await loginAs(empleadoId);
+    expect((await call(REFS, "GET", undefined, { tabla: "clientes", id: c })).status).toBe(403);
+    expect((await call(ITEM, "DELETE", undefined, { tabla: "clientes", id: c })).status).toBe(403);
+    expect((await call(COLL, "POST", { nombre: "QB", sigla: "QB", estado: "Activo" }, { tabla: "clientes" })).status).toBe(403);
+    expect(fake.rows(C.id).map((r) => r.id)).toEqual([c]);
+    expect(fake.calls.some((x) => x.method !== "list")).toBe(false);
+  });
+
+  it("alta: sin sigla → 400; sigla duplicada → 409; válida → 201", async () => {
+    fake.seed(C.id, { [C.fields.nombre]: "Existente", [C.fields.sigla]: "EX", [C.fields.estado]: "Inactivo" });
+    expect((await call(COLL, "POST", { nombre: "QA", estado: "Activo" }, { tabla: "clientes" })).json).toMatchObject({
+      fieldErrors: { sigla: "Este campo es obligatorio." },
+    });
+    const dup = await call(COLL, "POST", { nombre: "QA", estado: "Activo", sigla: "ex" }, { tabla: "clientes" });
+    expect(dup.status).toBe(409);
+    const ok = await call(COLL, "POST", { nombre: "QA", estado: "Activo", sigla: "qa" }, { tabla: "clientes" });
+    expect(ok.status).toBe(201);
+  });
+
+  it("referenciado: el chequeo y el DELETE dan el mensaje con conteos; sin referencias se borra", async () => {
+    const c = fake.seed(C.id, { [C.fields.nombre]: "QA", [C.fields.sigla]: "QA", [C.fields.estado]: "Activo", [C.fields.proyectos]: ["recPPPPPPPPPPPPPP"] });
+    const msg = "No se puede borrar: tiene 1 proyecto. Pasalo a Inactivo.";
+    expect((await call(REFS, "GET", undefined, { tabla: "clientes", id: c })).json).toMatchObject({ ok: true, blocked: msg });
+    const blocked = await call(ITEM, "DELETE", undefined, { tabla: "clientes", id: c });
+    expect(blocked).toMatchObject({ status: 409, json: { error: msg } });
+    delete fake.rows(C.id).find((r) => r.id === c)!.fields[C.fields.proyectos];
+    expect((await call(REFS, "GET", undefined, { tabla: "clientes", id: c })).json).toMatchObject({ ok: true, blocked: null });
+    expect((await call(ITEM, "DELETE", undefined, { tabla: "clientes", id: c })).status).toBe(200);
+    expect(fake.rows(C.id)).toHaveLength(0);
+  });
+
+  it("el picker de Cliente en Proyectos ofrece solo Activos; elegir un Inactivo → 400", async () => {
+    const { loadMaestro } = await import("@/lib/abm/server/maestros-service");
+    const activo = fake.seed(C.id, { [C.fields.nombre]: "QA Activo", [C.fields.sigla]: "QA", [C.fields.estado]: "Activo" });
+    const inactivo = fake.seed(C.id, { [C.fields.nombre]: "QA Inactivo", [C.fields.sigla]: "QI", [C.fields.estado]: "Inactivo" });
+    const viejo = fake.seed(C.id, { [C.fields.nombre]: "QA Viejo", [C.fields.sigla]: "QV", [C.fields.estado]: "Cliente" });
+    const ids = (await loadMaestro("proyectos")).options.cliente.map((o) => o.id);
+    expect(ids).toEqual([activo]);
+    expect(ids).not.toContain(inactivo);
+    expect(ids).not.toContain(viejo);
+    const res = await call(COLL, "POST", { nombreCorto: "X", cliente: [inactivo], estado: "Activo" }, { tabla: "proyectos" });
+    expect(res.status).toBe(400);
+    expect(res.json.fieldErrors.cliente).toBeTruthy();
+  });
+
+  it("Horas: el filtro de clientes marca solo los Activos (los Inactivos quedan para el nombre)", async () => {
+    const { loadHorasOptions } = await import("@/lib/horas/server/admin-service");
+    const activo = fake.seed(C.id, { [C.fields.nombre]: "QA Activo", [C.fields.sigla]: "QA", [C.fields.estado]: "Activo" });
+    const inactivo = fake.seed(C.id, { [C.fields.nombre]: "QA Inactivo", [C.fields.sigla]: "QI", [C.fields.estado]: "Inactivo" });
+    const { clientes } = await loadHorasOptions();
+    expect(clientes.filter((c) => c.activo).map((c) => c.id)).toEqual([activo]);
+    expect(clientes.find((c) => c.id === inactivo)).toMatchObject({ activo: false, nombre: "QA Inactivo" });
+  });
+});

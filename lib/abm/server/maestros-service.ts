@@ -250,14 +250,41 @@ export async function updateMaestro(slug: string, id: string, raw: RawValues): P
   return write(config, raw, { mode: "edit", id });
 }
 
-/** Borra solo si el maestro admite borrado y el registro no tiene referencias. */
-export async function deleteMaestro(slug: string, id: string): Promise<ServiceResult<{ id: string }>> {
-  const config = configFor(slug);
+export interface DeleteCheck {
+  /** null = se puede borrar. Si no, el mismo mensaje que daría el 409. */
+  blocked: string | null;
+  references: { fieldId: string; count: number }[];
+}
+
+/** Lee las referencias del registro ahora. 404/405 como el borrado. */
+async function checkDeletable(config: MaestroConfig | null, id: string): Promise<ServiceResult<DeleteCheck>> {
   if (!config || !/^rec[A-Za-z0-9]{14}$/.test(id)) return fail(404, ABM_MESSAGES.noEncontrado);
   if (!config.spec.deletable) return fail(405, ABM_MESSAGES.noBorrable);
   const refs = await findReferences(tableId(config), id, config.references);
   if (refs === null) return fail(404, ABM_MESSAGES.noEncontrado);
-  if (refs.length > 0) return fail(409, REFERENCED_MESSAGE);
-  await getAirtableClient().delete(tableId(config), [id]);
+  const blocked = refs.length === 0 ? null : (config.referencedMessage?.(refs) ?? REFERENCED_MESSAGE);
+  return { ok: true, data: { blocked, references: refs } };
+}
+
+/**
+ * ¿Se puede borrar? Lo usa el formulario antes de pedir confirmación: con
+ * referencias muestra el mensaje; sin referencias abre el diálogo. El borrado
+ * vuelve a leer las referencias igual (esto es solo un aviso previo).
+ */
+export async function deleteCheckMaestro(slug: string, id: string): Promise<ServiceResult<DeleteCheck>> {
+  return checkDeletable(configFor(slug), id);
+}
+
+/**
+ * Borra solo si el maestro admite borrado y el registro no tiene referencias.
+ * Las referencias se releen inmediatamente antes del delete (no hay
+ * transacciones: ver AGENTS.md, "Borrado de Clientes", para la carrera residual).
+ */
+export async function deleteMaestro(slug: string, id: string): Promise<ServiceResult<{ id: string }>> {
+  const config = configFor(slug);
+  const check = await checkDeletable(config, id);
+  if (!check.ok) return check;
+  if (check.data.blocked) return fail(409, check.data.blocked);
+  await getAirtableClient().delete(tableId(config!), [id]);
   return { ok: true, data: { id } };
 }

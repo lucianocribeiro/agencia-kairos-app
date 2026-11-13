@@ -48,6 +48,8 @@ export interface ProyectoOption {
 export interface ClienteOption {
   id: string;
   nombre: string;
+  /** Estado = Activo. Los filtros solo ofrecen activos; los inactivos quedan para mostrar el nombre en registros viejos. */
+  activo: boolean;
 }
 
 export interface HorasOptions {

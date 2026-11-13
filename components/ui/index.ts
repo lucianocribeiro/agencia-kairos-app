@@ -7,3 +7,4 @@ export { InlineMessage, type InlineMessageProps, type MessageTone } from "./mess
 export { Select, type SelectOption, type SelectProps } from "./select";
 export { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeaderCell, TableRow } from "./table";
 export { ToastProvider, useToast } from "./toast";
+export { ConfirmDialog, type ConfirmDialogProps } from "./confirm-dialog";

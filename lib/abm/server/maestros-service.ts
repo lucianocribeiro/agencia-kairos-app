@@ -44,7 +44,7 @@ function toValues(config: MaestroConfig, fields: Fields): Values {
     else if (raw === undefined) values[spec.key] = spec.kind === "checkbox" ? false : spec.kind === "link" || config.links?.[spec.key] ? [] : null;
     else values[spec.key] = raw as Values[string];
   }
-  return config.normalize ? config.normalize(values) : values;
+  return values;
 }
 
 /** Carga la lista y las opciones de links. Todas las páginas (paginación completa del cliente). */

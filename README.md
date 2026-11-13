@@ -2,7 +2,7 @@
 
 App interna de Agencia Kairos. Next.js (App Router) + TypeScript + Tailwind CSS, con Airtable como base de datos. Se deploya en Vercel.
 
-> Estado: **Fase 2 · CC-F2-01 (Clientes Activo / Inactivo)**. Fase 1 completa: login, guards por rol, ABM de Usuarios y Maestros, carga de horas del Empleado, Horas y Dashboard de Admin.
+> Estado: **Fase 2 · CC-F2-02 (importación ARCA de Ventas y Compras)**. Fase 1 completa: login, guards por rol, ABM de Usuarios y Maestros, carga de horas del Empleado, Horas y Dashboard de Admin. Fase 2: Clientes Activo / Inactivo (CC-F2-01).
 
 ## Requisitos
 
@@ -118,16 +118,35 @@ Antes de tocar nada, rechaza `BOOTSTRAP_ADMIN_PASSWORD` si tiene menos de 10 car
 - Verificación final: exactamente 9 registros, los 9 del plan, todos Activo, ninguno con una opción vieja.
 - Todo lo de `backups/` está gitignored (tiene datos reales).
 
-Compatibilidad: hasta que corra la migración, la app trata el Estado viejo «Cliente» como Activo en todos lados (pickers de Proyectos, Horas y asignaciones; filtro, lista y formulario de Clientes), y al guardar un cliente editado escribe «Activo». Lead / Ex cliente / Perdido no cuentan como Activo. Todo el mapeo está en `lib/abm/cliente-estado.ts`.
+### Orden de despliegue (hecho)
 
-### Orden de despliegue
+1. ✔ Opciones Activo e Inactivo agregadas en la interfaz (2026-11-12).
+2. ✔ Merge y deploy de PR #6 (2026-11-13, a55bfaa).
+3. ✔ `npm run migrate:clientes-estado` (dry-run) y `-- --apply` (2026-11-13): 9 clientes Activo, 7 leads borrados.
+4. ✔ Opciones viejas quitadas en la interfaz (Luciano).
+5. ✔ Limpieza del código de compatibilidad (CC-F2-02): solo `Activo` cuenta como activo. El script de migración y sus tests se conservan.
 
-1. En la interfaz de Airtable, Clientes › Estado: agregar las opciones **Activo** e **Inactivo**, sin borrar las viejas. (Hecho el 2026-11-12.)
-2. Merge y deploy de PR #6. No hay ventana de corte: los clientes en «Cliente» se ven y se usan como Activos.
-3. `npm run migrate:clientes-estado` (dry-run) y revisar la salida.
-4. `npm run migrate:clientes-estado -- --apply`. Si se corta, volver a correrlo (reanuda con el archivo de `backups/`).
-5. En la interfaz: quitar las opciones viejas (Cliente, Lead, Ex cliente, Perdido) de Clientes › Estado.
-6. PR de limpieza: borrar `LEGACY_CLIENTE_ACTIVO`, `LEGACY_CLIENTE_ESTADOS` y la rama legacy de `normalizeClienteEstado` en `lib/abm/cliente-estado.ts`, y los tests que los usan.
+## Importación ARCA (Ventas y Compras)
+
+**Ventas › Importar** (`/ventas/importar`) y **Compras › Importar** (`/compras/importar`), solo Admin. Se sube el .xlsx que exporta ARCA («Mis Comprobantes Emitidos» para Ventas, «Recibidos» para Compras).
+
+1. **Vista previa**: el servidor lee el archivo (busca la fila de encabezados por nombre, aunque haya un título arriba; tolera mayúsculas, tildes, espacios y saltos de línea), calcula todo y no escribe nada. Cada fila queda **Nueva**, **Ya importada** (la Clave ARCA ya está en la tabla), **Duplicada en el archivo** o **Con error** (con el motivo). Antes de confirmar se pueden editar Mes devengado, Proyecto (solo Activos), Unidad de negocio, Categoría (de ingreso en Ventas, de gasto en Compras), Observaciones y, en Compras, Imputar a socio; al cambiar el proyecto se recalculan Cliente, UN y Control.
+2. **Confirmar**: sin estado. El navegador vuelve a mandar el archivo y las ediciones (por Clave ARCA); el servidor vuelve a leer y validar todo, y escribe solo las filas nuevas.
+3. **Informe**: importadas, omitidas por duplicado (ya importadas + duplicadas en el archivo + importadas en paralelo), con error (con motivo) y proveedores creados.
+
+Reglas (de `Gestion_Kairos_ERP_v4.xlsx`, implementadas en `lib/ventas-compras/`, no leídas de las fórmulas de Airtable):
+
+- **Clave ARCA**: `Código|Punto de venta|Número desde|Documento`. Código = texto del Tipo hasta el primer espacio («11 - Factura C» → `11`); punto de venta y número como enteros sin ceros a la izquierda; documento solo con dígitos (tal cual, sin sacar ceros). Ventas usa el Nro. Doc. Receptor; Compras, el Nro. Doc. Emisor. Ejemplo: `11|2|1234|20123456786`.
+- **Fecha**: número de serie de Excel (sistema 1900: 1 = 01/01/1900, 59 = 28/02/1900, 60 = el 29/02/1900 que no existió → «Fecha inválida», 61 = 01/03/1900) o texto DD/MM/AAAA.
+- **Signo** por Código en Tipos de comprobante; si no está → «Tipo de comprobante no reconocido» (no se importa). **TC** = Tipo Cambio si es > 0, si no 1. Moneda en pesos: «$», «PES» o vacío; otra moneda sin tipo de cambio > 0 → «Moneda extranjera sin tipo de cambio» (no se importa).
+- **Importes**: Total $ = ROUND(Imp. Total × TC; 2) × Signo; IVA $ = ROUND(Total IVA × TC; 2) × Signo; Neto $ = Total $ − IVA $ − ROUND(Otros Tributos × TC; 2) × Signo. Vacíos = 0. Redondeo como ROUND de Excel: mitad lejos del cero sobre 15 dígitos significativos (1,005 → 1,01; 2,675 → 2,68), en centavos enteros (`lib/ventas-compras/money.ts`).
+- **Ventas**: Cliente del proyecto; sin proyecto, por CUIT del receptor contra Clientes › CUIT (11 dígitos). Categoría por defecto = Parámetro «Categoría por defecto en Ventas» (no se escribe); UN por defecto = la del proyecto (no se escribe).
+- **Compras**: Proveedor por CUIT del emisor; si no existe se crea (Nombre = Denominación Emisor). CUIT inválido → «CUIT del emisor inválido» (no se importa). Categoría = la por defecto del proveedor (se escribe). Impacto en resultados = −Neto $ sin socio; a cuenta del socio = Neto $ con socio.
+- **Control** (primer mensaje que falla, mismo orden que la columna CONTROL del Excel). Ventas: tipo no reconocido → categoría inexistente → no es de ingreso → proyecto inexistente → falta proyecto → cliente sin identificar → OK. Compras: tipo no reconocido → socio inexistente → falta categoría (sin socio) → categoría inexistente → no es de gasto → proyecto inexistente → falta proyecto (sin socio) → OK. Un Control distinto de OK no impide importar.
+
+**Límites (Vercel)**: el body de una función no puede pasar 4,5 MB y la duración máxima en Hobby es 300 s (https://vercel.com/docs/functions/limitations). Por eso el archivo se limita a 4 MB (se avisa en el navegador antes de subir y el servidor responde 413) y a 1.000 comprobantes por importación; con el throttle de Airtable (5 pedidos/s, lotes de 10) 1.000 filas tardan unos 30 s.
+
+**Escritura**: lotes de 10, los create nunca se reintentan, con compensación: si algo falla a mitad de camino se borra todo lo que escribió esta importación (también los proveedores creados) → 503 (500 si el rollback falla). Después se verifica (fail-closed) que ningún proveedor creado choque con otro creado en paralelo (si choca, se deshace todo → 409) y que cada Clave ARCA esté una sola vez: si otra importación en paralelo guardó la misma clave primero, se borran las filas propias repetidas y se informan como «importadas en paralelo».
 
 ## Estructura
 

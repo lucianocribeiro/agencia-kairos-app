@@ -258,6 +258,144 @@ export const TABLES = {
     },
   },
 
+  /**
+   * Ventas: base ARCA «Mis Comprobantes Emitidos». Las columnas ARCA se guardan tal
+   * cual (importes en la moneda del comprobante); los importes en pesos los calcula
+   * la app (lib/ventas-compras) y también Airtable (fórmulas, solo de control).
+   */
+  ventas: {
+    id: "tbl1N4iLAHBLwycxx",
+    name: "Ventas",
+    fields: {
+      /** primario; Código|Punto de venta|Número desde|Doc. receptor (lo arma la app) */
+      claveArca: "fld3k1AovUYvNzhxD",
+      fecha: "fldvUp2yuuyGrHxBc",
+      /** texto tal cual ARCA (p. ej. "11 - Factura C") */
+      tipo: "fldVdoj1A1JhT1x28",
+      /** link → Tipos de comprobante */
+      tipoComprobante: "fldejKodGxi8XKTIO",
+      puntoVenta: "fldmJOhFtxpWnNaJy",
+      numeroDesde: "fldrZn9gyTaYdwIKl",
+      numeroHasta: "fldanzWK2Q9fts1JY",
+      codAutorizacion: "fld8Sd22J9cGYyOt1",
+      tipoDocReceptor: "fldDCG88cBMmETEOq",
+      nroDocReceptor: "fldvaHVYaFz1onwyc",
+      denominacionReceptor: "fldfe2yZx9y5oJ2uS",
+      tipoCambio: "fldDBpbQcgnwsGTpu",
+      moneda: "flddhFebZnTRjUK7s",
+      netoGravIva0: "fldQgk5YMv7LiIOji",
+      iva25: "fldu1DIhHKtPKw9uU",
+      netoGravIva25: "fldiOhylOH8al3jiq",
+      iva5: "fld8YjelGljKqHjHG",
+      netoGravIva5: "fldoUfaZ1P2Ea6ljL",
+      iva105: "fldODc03g84bQXlfy",
+      netoGravIva105: "fld6rOvVr5JliiHQR",
+      iva21: "fldeUaAGhHRWB77KE",
+      netoGravIva21: "fldGJMO7KnqTuHhJR",
+      iva27: "fld6De3upC5kq8MnI",
+      netoGravIva27: "flddDMatUea5JCYLh",
+      netoGravadoTotal: "fldgdm2Si4SZ1JStJ",
+      netoNoGravado: "fld8q1f9W1bqnRgPd",
+      opExentas: "fldJyC5OLxSs9cZzH",
+      otrosTributos: "fldiedaMi2n9WVs6e",
+      totalIva: "fldrJMyTYKr8bWnZS",
+      impTotal: "fldc2eEjO9pATwMPi",
+      /** date; vacío = mes de Fecha (valor efectivo calculado por la app) */
+      mesDevengado: "fldNNsRbkHvR5tq3q",
+      /** link → Proyectos */
+      proyecto: "fldW248MTOEe9h3Il",
+      /** link → Unidades de negocio; vacío = la del proyecto */
+      unidadNegocio: "fld1Y6FyovvBvRxKu",
+      /** link → Categorías; vacío = Parámetro «Categoría por defecto en Ventas» */
+      categoria: "fldnhEupCnutCMdpR",
+      /** link → Clientes; del proyecto o por CUIT (lo setea la app) */
+      cliente: "fldqeqrBsP8fG7erx",
+      observaciones: "fld0RYRhVnGh7Ss9l",
+      /** rollup (solo lectura) */
+      signo: "fldCSo5f6v2OEcf6D",
+      /** fórmula (solo lectura) */
+      tcAplicado: "flde7FkdOAevnNdzt",
+      /** fórmula (solo lectura) */
+      mesDevengadoAAAAMM: "flduBxlV8FfcKWsZv",
+      /** fórmula (solo lectura); control de los cálculos de la app */
+      totalPesos: "fldq0nsGBZTyPULd5",
+      /** fórmula (solo lectura) */
+      ivaPesos: "fldALZBc64EFME5of",
+      /** fórmula (solo lectura) */
+      netoPesos: "fldBQcuHPoES9YGGP",
+    },
+  },
+
+  /** Compras: base ARCA «Mis Comprobantes Recibidos». Si se imputa a socio, no resta en resultados. */
+  compras: {
+    id: "tblXQTrJEaptAPR0i",
+    name: "Compras",
+    fields: {
+      /** primario; Código|Punto de venta|Número desde|Doc. emisor (lo arma la app) */
+      claveArca: "fldC6kp7s2tcmfRkk",
+      fecha: "fldCLLr2HV7EP5rKN",
+      tipo: "flddluHHhuEqqB7JB",
+      /** link → Tipos de comprobante */
+      tipoComprobante: "fldDLiz1w3t5F3ftX",
+      puntoVenta: "fldCRal8mJr1zHuJI",
+      numeroDesde: "fldiqxKBru0PqNZiy",
+      numeroHasta: "fldEZTIfNh6eWfOJn",
+      codAutorizacion: "fld8euUldC2q0ljai",
+      tipoDocEmisor: "fld7vxIXRi9iL2lTB",
+      nroDocEmisor: "fldIjukZxAJipjuW2",
+      denominacionEmisor: "fldYzaGcRmMcWXgRD",
+      tipoDocReceptor: "fldQuSNMpwSt5KVQv",
+      nroDocReceptor: "fldR9hAHx75UkFR4d",
+      tipoCambio: "fldPAD8KL6D4zilcN",
+      moneda: "fldTWxVIE9nQc1gng",
+      netoGravIva0: "fldoGGDea1Zm7Nexw",
+      iva25: "fldJdAy1oKePtNTCn",
+      netoGravIva25: "fldb7YdGm7ALhcMtF",
+      iva5: "fldgRDiexSHVce2EE",
+      netoGravIva5: "fldB3S8opDHxHkf8B",
+      iva105: "fld5ojx45b3f7LE6J",
+      netoGravIva105: "fldyiGgtKnVE2S7qa",
+      iva21: "fldIGiscOwbO5flBR",
+      netoGravIva21: "fldpNLuQ0s5iYbqP8",
+      iva27: "fld9oDaOoJNq4NyYq",
+      netoGravIva27: "fldxo0SmXuDQLItsR",
+      netoGravadoTotal: "flddHkxt2m9xiEgmm",
+      netoNoGravado: "fldpgjE82ZCi4Quau",
+      opExentas: "fldPJIGBDOfOHqkt1",
+      otrosTributos: "fldWjJPFNi4nYZMyt",
+      totalIva: "fldKE5bTpS9TZIEXH",
+      impTotal: "fldrpPdqNFtRbmZFQ",
+      mesDevengado: "fld32byPKTSmGoEjN",
+      /** link → Proyectos */
+      proyecto: "fld5Qvvh6I8DIjC5f",
+      /** link → Unidades de negocio; vacío = la del proyecto */
+      unidadNegocio: "fldv3rWNSWyuj711h",
+      /** link → Categorías; al importar, la Categoría por defecto del proveedor */
+      categoria: "fldIa5yWN9KPgR6Oy",
+      /** link → Socios; gasto particular: no resta en resultados */
+      socio: "fldzaosyE1rhorV2Q",
+      observaciones: "fldgUTLTZwcWuLWpw",
+      /** link → Proveedores; por CUIT (Nro. Doc. Emisor), lo setea la app */
+      proveedor: "fldc2aAKhaT2ipH72",
+      /** rollup (solo lectura) */
+      signo: "fldpmRG15vt4VFvFo",
+      /** fórmula (solo lectura) */
+      tcAplicado: "fldlV8L6QB6Wd9HND",
+      /** fórmula (solo lectura) */
+      mesDevengadoAAAAMM: "fldnhcbt0HJ6Hxulv",
+      /** fórmula (solo lectura) */
+      totalPesos: "fld1Vd237VBCzxcBc",
+      /** fórmula (solo lectura) */
+      ivaPesos: "fldktzln1OsNYQbk8",
+      /** fórmula (solo lectura) */
+      netoPesos: "fldBlG5SfUczJmZyT",
+      /** fórmula (solo lectura) */
+      impactoResultados: "fldGTtokq07JO8mXl",
+      /** fórmula (solo lectura) */
+      cuentaSocio: "fld6Z42Bf5T0d9BNX",
+    },
+  },
+
   horas: {
     id: "tblpeUSIYD7BFlGQU",
     name: "Horas",
@@ -329,6 +467,8 @@ export type FieldId = {
 }[TableKey];
 
 const F = {
+  ventas: TABLES.ventas.fields,
+  compras: TABLES.compras.fields,
   usuarios: TABLES.usuarios.fields,
   proyectos: TABLES.proyectos.fields,
   horas: TABLES.horas.fields,
@@ -345,6 +485,20 @@ export const COMPUTED_FIELDS: ReadonlySet<string> = new Set<FieldId>([
   F.horas.mesTrabajado,
   F.horas.mesAFacturarAAAAMM,
   F.horas.creado,
+  F.ventas.signo,
+  F.ventas.tcAplicado,
+  F.ventas.mesDevengadoAAAAMM,
+  F.ventas.totalPesos,
+  F.ventas.ivaPesos,
+  F.ventas.netoPesos,
+  F.compras.signo,
+  F.compras.tcAplicado,
+  F.compras.mesDevengadoAAAAMM,
+  F.compras.totalPesos,
+  F.compras.ivaPesos,
+  F.compras.netoPesos,
+  F.compras.impactoResultados,
+  F.compras.cuentaSocio,
 ]);
 
 /**
@@ -374,6 +528,9 @@ export const REFERENCE_FIELDS = {
   proyectos: [F.proyectos.usuarios, TABLES.proyectos.fields.ventas, TABLES.proyectos.fields.compras, TABLES.proyectos.fields.horas],
   proveedores: [TABLES.proveedores.fields.compras, TABLES.proveedores.fields.tesoreria],
   parametros: [],
+  // Ventas y Compras no tienen links inversos (nadie apunta a ellas).
+  ventas: [],
+  compras: [],
   horas: [],
   intentosLogin: [],
 } as const satisfies Record<TableKey, readonly FieldId[]>;

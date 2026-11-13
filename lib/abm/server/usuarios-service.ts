@@ -81,7 +81,7 @@ async function loadOptions(): Promise<Pick<AbmData, "labels" | "options">> {
     client.list(TABLES.clientes.id, { fields: [TABLES.clientes.fields.estado] }),
   ]);
   const clientesActivos = new Set(clientes.filter((r) => isClienteActivo(r.fields[TABLES.clientes.fields.estado])).map((r) => r.id));
-  /** Asignable: proyecto Activo y su Cliente Activo (el legacy «Cliente» cuenta como Activo). */
+  /** Asignable: proyecto Activo y su Cliente Activo. */
   const asignable = (f: Fields) => {
     const cliente = (f[P.cliente] as string[] | undefined)?.[0];
     return f[P.estado] === "Activo" && !!cliente && clientesActivos.has(cliente);

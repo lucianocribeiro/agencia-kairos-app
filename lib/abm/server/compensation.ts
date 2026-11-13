@@ -26,6 +26,7 @@ export interface PlannedUpdate {
 }
 
 type Undo = { kind: "update"; tableId: string; records: { id: string; fields: Fields }[] } | { kind: "delete"; tableId: string; ids: string[] };
+// (los pasos de borrado se recortan en discardCreated)
 
 function chunk<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
@@ -79,6 +80,39 @@ export class Compensation {
     return created.id;
   }
 
+  /**
+   * Altas en lotes de 10 (nunca se reintentan). Cada lote anota su borrado apenas
+   * vuelve. `beforeBatch(i)` corre justo antes del lote i (inyección de fallas).
+   * Devuelve los IDs en el mismo orden que `records`.
+   */
+  async createMany(tableId: string, records: readonly Fields[], beforeBatch?: (index: number) => void): Promise<string[]> {
+    const ids: string[] = [];
+    for (const [index, batch] of chunk(records, BATCH_SIZE).entries()) {
+      beforeBatch?.(index);
+      const created = await getAirtableClient().create(tableId, batch, { returnFields: [] });
+      this.#undo.push({ kind: "delete", tableId, ids: created.map((r) => r.id) });
+      for (const r of created) {
+        this.#ids.add(r.id);
+        ids.push(r.id);
+      }
+    }
+    return ids;
+  }
+
+  /**
+   * Borra ahora registros creados por esta transacción (p. ej. los que perdieron una
+   * carrera de unicidad) y los saca del rollback, para no borrarlos dos veces.
+   */
+  async discardCreated(tableId: string, ids: readonly string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await getAirtableClient().delete(tableId, ids);
+    const gone = new Set(ids);
+    for (const step of this.#undo) {
+      if (step.kind === "delete" && step.tableId === tableId) step.ids = step.ids.filter((id) => !gone.has(id));
+    }
+    for (const id of ids) this.#ids.delete(id);
+  }
+
   /** Anota un registro creado por otro módulo (p. ej. credentials.ts). */
   created(tableId: string, id: string): void {
     this.#undo.push({ kind: "delete", tableId, ids: [id] });
@@ -92,7 +126,7 @@ export class Compensation {
     for (const step of [...this.#undo].reverse()) {
       try {
         if (step.kind === "update") await client.update(step.tableId, step.records, { returnFields: [] });
-        else await client.delete(step.tableId, step.ids);
+        else if (step.ids.length > 0) await client.delete(step.tableId, step.ids);
       } catch {
         ok = false; // se sigue con el resto: best effort
       }

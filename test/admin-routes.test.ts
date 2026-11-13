@@ -2,7 +2,6 @@ import bcrypt from "bcryptjs";
 import { NextRequest } from "next/server";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { LEGACY_CLIENTE_ACTIVO, LEGACY_CLIENTE_ESTADOS } from "@/lib/abm/cliente-estado";
 import { TABLES } from "@/lib/airtable/schema";
 import { createFakeAirtable } from "./fake-airtable";
 
@@ -344,22 +343,19 @@ describe("Clientes · Estado Activo / Inactivo y borrado (F2-01)", () => {
     expect(fake.rows(C.id)).toHaveLength(0);
   });
 
-  it("el picker de Cliente en Proyectos ofrece Activos (y el legacy «Cliente»); elegir un Inactivo o un Lead → 400", async () => {
+  it("el picker de Cliente en Proyectos ofrece solo Activos; elegir un Inactivo (u otro Estado) → 400", async () => {
     const { loadMaestro } = await import("@/lib/abm/server/maestros-service");
     const activo = fake.seed(C.id, { [C.fields.nombre]: "QA Activo", [C.fields.sigla]: "QA", [C.fields.estado]: "Activo" });
     const inactivo = fake.seed(C.id, { [C.fields.nombre]: "QA Inactivo", [C.fields.sigla]: "QI", [C.fields.estado]: "Inactivo" });
-    const legacy = fake.seed(C.id, { [C.fields.nombre]: "QA Legacy", [C.fields.sigla]: "QL", [C.fields.estado]: LEGACY_CLIENTE_ACTIVO });
-    const leads = LEGACY_CLIENTE_ESTADOS.slice(1).map((estado, i) =>
-      fake.seed(C.id, { [C.fields.nombre]: `QA ${estado}`, [C.fields.sigla]: `Q${"MNO"[i]}`, [C.fields.estado]: estado }),
-    );
+    const otro = fake.seed(C.id, { [C.fields.nombre]: "QA Otro", [C.fields.sigla]: "QO", [C.fields.estado]: "Pendiente" });
     const ids = (await loadMaestro("proyectos")).options.cliente.map((o) => o.id);
-    expect(ids.sort()).toEqual([activo, legacy].sort());
-    for (const bad of [inactivo, ...leads]) {
+    expect(ids).toEqual([activo]);
+    for (const bad of [inactivo, otro]) {
       const res = await call(COLL, "POST", { nombreCorto: "X", cliente: [bad], estado: "Activo" }, { tabla: "proyectos" });
       expect(res.status).toBe(400);
       expect(res.json.fieldErrors.cliente).toBeTruthy();
     }
-    const ok = await call(COLL, "POST", { nombreCorto: "X", cliente: [legacy], estado: "Activo" }, { tabla: "proyectos" });
+    const ok = await call(COLL, "POST", { nombreCorto: "X", cliente: [activo], estado: "Activo" }, { tabla: "proyectos" });
     expect(ok.status).toBe(201);
   });
 
@@ -367,11 +363,10 @@ describe("Clientes · Estado Activo / Inactivo y borrado (F2-01)", () => {
     const { loadHorasOptions } = await import("@/lib/horas/server/admin-service");
     const activo = fake.seed(C.id, { [C.fields.nombre]: "QA Activo", [C.fields.sigla]: "QA", [C.fields.estado]: "Activo" });
     const inactivo = fake.seed(C.id, { [C.fields.nombre]: "QA Inactivo", [C.fields.sigla]: "QI", [C.fields.estado]: "Inactivo" });
-    const legacy = fake.seed(C.id, { [C.fields.nombre]: "QA Legacy", [C.fields.sigla]: "QL", [C.fields.estado]: LEGACY_CLIENTE_ACTIVO });
-    const lead = fake.seed(C.id, { [C.fields.nombre]: "QA Lead", [C.fields.sigla]: "QD", [C.fields.estado]: LEGACY_CLIENTE_ESTADOS[1] });
+    const otro = fake.seed(C.id, { [C.fields.nombre]: "QA Otro", [C.fields.sigla]: "QO", [C.fields.estado]: "Pendiente" });
     const { clientes } = await loadHorasOptions();
-    expect(clientes.filter((c) => c.activo).map((c) => c.id).sort()).toEqual([activo, legacy].sort());
-    expect(clientes.find((c) => c.id === lead)?.activo).toBe(false);
+    expect(clientes.filter((c) => c.activo).map((c) => c.id)).toEqual([activo]);
+    expect(clientes.find((c) => c.id === otro)?.activo).toBe(false);
     expect(clientes.find((c) => c.id === inactivo)).toMatchObject({ activo: false, nombre: "QA Inactivo" });
   });
 });
@@ -385,37 +380,35 @@ describe("Usuarios · Proyectos asignados solo de clientes Activos (F2-01 v2, fi
   function seed() {
     const cli = (nombre: string, estado: string) => fake.seed(C.id, { [C.fields.nombre]: nombre, [C.fields.estado]: estado });
     const activo = cli("QA Activo", "Activo");
-    const legacy = cli("QA Legacy", LEGACY_CLIENTE_ACTIVO);
     const inactivo = cli("QA Inactivo", "Inactivo");
-    const lead = cli("QA Lead", LEGACY_CLIENTE_ESTADOS[1]);
+    const otro = cli("QA Otro", "Pendiente");
     const proj = (codigo: string, cliente: string | null, estado = "Activo") =>
       fake.seed(PR.id, { [PR.fields.codigo]: codigo, [PR.fields.estado]: estado, ...(cliente ? { [PR.fields.cliente]: [cliente] } : {}) });
     return {
       deActivo: proj("QA - Activo", activo),
-      deLegacy: proj("QL - Legacy", legacy),
       deInactivo: proj("QI - Inactivo", inactivo),
-      deLead: proj("QD - Lead", lead),
+      deOtro: proj("QO - Otro", otro),
       sinCliente: proj("QS - Sin cliente", null),
       cerradoDeActivo: proj("QA - Cerrado", activo, "Cerrado"),
     };
   }
 
-  it("las opciones son solo proyectos Activos de clientes Activos (el legacy «Cliente» cuenta como Activo)", async () => {
+  it("las opciones son solo proyectos Activos de clientes Activos", async () => {
     const p = seed();
     const { loadUsuarios } = await import("@/lib/abm/server/usuarios-service");
     const ids = (await loadUsuarios()).options.proyectosAsignados.map((o) => o.id);
-    expect(ids.sort()).toEqual([p.deActivo, p.deLegacy].sort());
+    expect(ids).toEqual([p.deActivo]);
   });
 
-  it("guardar con un proyecto de un cliente Inactivo (o Lead, o sin cliente) → 400 y no se escribe", async () => {
+  it("guardar con un proyecto de un cliente Inactivo (u otro Estado, o sin cliente) → 400 y no se escribe", async () => {
     const p = seed();
-    for (const bad of [p.deInactivo, p.deLead, p.sinCliente, p.cerradoDeActivo]) {
+    for (const bad of [p.deInactivo, p.deOtro, p.sinCliente, p.cerradoDeActivo]) {
       const res = await call(USUARIOS_FILE, "POST", nuevo({ proyectosAsignados: [p.deActivo, bad] }));
       expect(res.status).toBe(400);
       expect(res.json.fieldErrors).toEqual({ proyectosAsignados: "Elegí una opción válida." });
     }
     expect(fake.rows(TABLES.usuarios.id).some((r) => r.fields[U.email] === "nico@kairos.test")).toBe(false);
-    const ok = await call(USUARIOS_FILE, "POST", nuevo({ proyectosAsignados: [p.deActivo, p.deLegacy] }));
+    const ok = await call(USUARIOS_FILE, "POST", nuevo({ proyectosAsignados: [p.deActivo] }));
     expect(ok.status).toBe(201);
   }, 30_000);
 
@@ -428,7 +421,7 @@ describe("Usuarios · Proyectos asignados solo de clientes Activos (F2-01 v2, fi
     const base = { nombre: "Vieja", email: "vieja@kairos.test", rol: "Empleado", sigla: "VJ" };
     expect((await call(USUARIO_FILE, "PATCH", { ...base, proyectosAsignados: [p.deInactivo, p.deActivo] }, { id })).status).toBe(200);
     expect(fake.rows(TABLES.usuarios.id).find((r) => r.id === id)!.fields[U.proyectosAsignados]).toEqual([p.deInactivo, p.deActivo]);
-    const res = await call(USUARIO_FILE, "PATCH", { ...base, proyectosAsignados: [p.deInactivo, p.deActivo, p.deLead] }, { id });
+    const res = await call(USUARIO_FILE, "PATCH", { ...base, proyectosAsignados: [p.deInactivo, p.deActivo, p.deOtro] }, { id });
     expect(res.status).toBe(400);
   });
 });

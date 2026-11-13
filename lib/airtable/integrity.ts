@@ -84,6 +84,46 @@ export async function losesUniqueRace(
   return newest.id === recordId;
 }
 
+/**
+ * Versión por lote de la verificación posterior de unicidad, para altas masivas
+ * (importación ARCA): una sola lectura de la tabla. Por cada valor repetido gana el
+ * registro más viejo (createdTime; empate: ID más bajo) y pierden todos los demás. Con
+ * dos registros es la misma regla que `losesUniqueRace` en un alta (pierde el más
+ * nuevo); con tres o más no deja duplicados. Devuelve los IDs propios que perdieron.
+ * Si la relectura no trae alguno de los escritos → WrittenRecordMissingError.
+ */
+export async function findUniqueRaceLosers(
+  tableId: string,
+  fieldId: string,
+  written: readonly { id: string; value: unknown }[],
+): Promise<string[]> {
+  if (written.length === 0) return [];
+  const records = await getAirtableClient().list(tableId, { fields: [fieldId] });
+  const byValue = new Map<string, { id: string; createdTime: string }[]>();
+  for (const r of records) {
+    const key = normalizeForUnique(r.fields[fieldId]);
+    if (!key) continue;
+    const list = byValue.get(key) ?? [];
+    list.push({ id: r.id, createdTime: r.createdTime });
+    byValue.set(key, list);
+  }
+  const present = new Set(records.map((r) => r.id));
+  const losers: string[] = [];
+  for (const w of written) {
+    if (!present.has(w.id)) throw new WrittenRecordMissingError(w.id);
+    const matches = byValue.get(normalizeForUnique(w.value)) ?? [];
+    if (matches.length < 2) continue;
+    const winner = matches.reduce((a, b) => {
+      const ta = Date.parse(a.createdTime);
+      const tb = Date.parse(b.createdTime);
+      if (ta !== tb) return tb < ta ? b : a;
+      return b.id < a.id ? b : a;
+    });
+    if (winner.id !== w.id) losers.push(w.id);
+  }
+  return losers;
+}
+
 export async function isUnique(
   tableId: string,
   fieldId: string,

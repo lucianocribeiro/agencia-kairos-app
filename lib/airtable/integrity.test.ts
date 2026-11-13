@@ -5,7 +5,7 @@ import { createFakeAirtable } from "@/test/fake-airtable";
 const fake = createFakeAirtable();
 vi.mock("./client", () => ({ getAirtableClient: () => fake.client }));
 
-const { findDuplicates, findReferences, isUnique, losesUniqueRace, WrittenRecordMissingError } = await import("./integrity");
+const { findDuplicates, findReferences, findUniqueRaceLosers, isUnique, losesUniqueRace, WrittenRecordMissingError } = await import("./integrity");
 const T = "tblsf0Wa09QVk3vvR";
 const NOMBRE = "fldlLmQ2W5WaHRep7";
 const PROYECTOS = "fldEu1ghFqF8jtVMM";
@@ -80,5 +80,35 @@ describe("losesUniqueRace · registro escrito ausente (F1-04-01)", () => {
     await expect(losesUniqueRace(T, NOMBRE, "Acme", "recNOESTA00000001", "create")).rejects.toBeInstanceOf(WrittenRecordMissingError);
     fake.seed(T, { [NOMBRE]: "Acme" });
     await expect(losesUniqueRace(T, NOMBRE, "Acme", "recNOESTA00000001", "edit")).rejects.toThrow(/recNOESTA00000001/);
+  });
+});
+
+describe("findUniqueRaceLosers (altas masivas)", () => {
+  it("gana el más viejo (empate: ID más bajo); pierden todos los demás, con una sola lectura", async () => {
+    const viejo = fake.seed(T, { [NOMBRE]: "11|2|1|30" });
+    const a = fake.seed(T, { [NOMBRE]: "11|2|1|30" });
+    const b = fake.seed(T, { [NOMBRE]: " 11|2|1|30 " });
+    const solo = fake.seed(T, { [NOMBRE]: "11|2|2|30" });
+    fake.setCreatedTime(T, viejo, "2026-11-01T10:00:00.000Z");
+    fake.setCreatedTime(T, a, "2026-11-01T10:00:01.000Z");
+    fake.setCreatedTime(T, b, "2026-11-01T10:00:01.000Z");
+    fake.setCreatedTime(T, solo, "2026-11-01T10:00:01.000Z");
+    fake.calls.length = 0;
+    const losers = await findUniqueRaceLosers(T, NOMBRE, [
+      { id: a, value: "11|2|1|30" },
+      { id: b, value: "11|2|1|30" },
+      { id: solo, value: "11|2|2|30" },
+    ]);
+    expect(losers.sort()).toEqual([a, b].sort());
+    expect(fake.calls.filter((c) => c.method === "list")).toHaveLength(1);
+    // con dos: el mismo resultado que losesUniqueRace en un alta
+    expect(await findUniqueRaceLosers(T, NOMBRE, [{ id: viejo, value: "11|2|1|30" }])).toEqual([]);
+  });
+
+  it("si la relectura no trae un registro escrito → WrittenRecordMissingError; sin escritos no lee", async () => {
+    fake.calls.length = 0;
+    expect(await findUniqueRaceLosers(T, NOMBRE, [])).toEqual([]);
+    expect(fake.calls).toHaveLength(0);
+    await expect(findUniqueRaceLosers(T, NOMBRE, [{ id: "recNOEXISTE000000", value: "x" }])).rejects.toBeInstanceOf(WrittenRecordMissingError);
   });
 });

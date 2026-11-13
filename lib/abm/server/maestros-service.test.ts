@@ -11,7 +11,6 @@ const { AirtableError } = await import("@/lib/airtable/errors");
 const { CLIENTE_MESSAGES, MAESTRO_CONFIGS, PROYECTO_MESSAGES } = await import("./maestros-config");
 const { REFERENCED_MESSAGE } = await import("@/lib/airtable/integrity");
 const { MAESTRO_MESSAGES, MAESTRO_SPECS, sociosSumWarning } = await import("@/lib/abm/maestros");
-const { LEGACY_CLIENTE_ACTIVO, LEGACY_CLIENTE_ESTADOS } = await import("@/lib/abm/cliente-estado");
 const MAESTRO_LABEL = MAESTRO_SPECS.proyectos.fields.find((f) => f.key === "usuarios")!.label;
 
 const C = TABLES.clientes;
@@ -67,8 +66,8 @@ describe("Clientes · sigla (F2-01: obligatoria y única para todo cliente)", ()
     expect(fake.calls.some((c) => c.method === "update")).toBe(false);
   });
 
-  it("solo Estado Activo o Inactivo (las opciones viejas se rechazan)", async () => {
-    for (const estado of LEGACY_CLIENTE_ESTADOS) {
+  it("solo Estado Activo o Inactivo (cualquier otro valor se rechaza)", async () => {
+    for (const estado of ["Pendiente", "activo", "INACTIVO"]) {
       expect(await createMaestro("clientes", { nombre: "Acme", estado, sigla: "AC" })).toMatchObject({ status: 400, fieldErrors: { estado: expect.any(String) } });
     }
   });
@@ -384,36 +383,6 @@ describe("Proveedores · CUIT", () => {
     expect(await createMaestro("proveedores", { nombre: "A", cuit: VALID_CUIT, categoriaPorDefecto: [gasto] })).toMatchObject({ ok: true });
     const data = await loadMaestro("proveedores");
     expect(data.options.categoriaPorDefecto.map((o) => o.id)).toEqual([gasto]);
-  });
-});
-
-describe("Clientes · compatibilidad con el Estado legacy (F2-01 v2, fix 3)", () => {
-  it("la lista muestra el legacy «Cliente» como Activo; Lead / Ex cliente / Perdido quedan como están", async () => {
-    const legacy = seedCliente("Legacy", "LG", LEGACY_CLIENTE_ACTIVO);
-    const otros = LEGACY_CLIENTE_ESTADOS.slice(1).map((estado, i) => [seedCliente(`Otro ${i}`, `O${"ABC"[i]}`, estado), estado] as const);
-    const data = await loadMaestro("clientes");
-    expect(data.records.find((r) => r.id === legacy)!.values.estado).toBe("Activo");
-    for (const [id, estado] of otros) expect(data.records.find((r) => r.id === id)!.values.estado).toBe(estado);
-    expect(JSON.stringify(data)).not.toContain(`"${LEGACY_CLIENTE_ACTIVO}"`);
-  });
-
-  it("editar un legacy (el formulario manda Activo) guarda «Activo»; si la escritura se revierte, vuelve a «Cliente»", async () => {
-    const legacy = seedCliente("Legacy", "LG", LEGACY_CLIENTE_ACTIVO);
-    expect(await updateMaestro("clientes", legacy, { nombre: "Legacy", estado: "Activo", sigla: "LG", contacto: "Nuevo" })).toMatchObject({ ok: true });
-    expect(fieldsOf(C.id, legacy)[C.fields.estado]).toBe("Activo");
-
-    const otro = seedCliente("Otro", "OT", LEGACY_CLIENTE_ACTIVO);
-    seedCliente("Rival", "RV");
-    fake.hide(C.id, (r) => r.fields[C.fields.nombre] === "Rival" && fake.calls.filter((c) => c.method === "update").length === 0);
-    const res = await updateMaestro("clientes", otro, { nombre: "Rival", estado: "Activo", sigla: "OT" });
-    expect(res).toMatchObject({ status: 409 });
-    expect(fieldsOf(C.id, otro)[C.fields.estado]).toBe(LEGACY_CLIENTE_ACTIVO);
-  });
-
-  it("un alta nunca escribe el valor legacy", async () => {
-    expect(await createMaestro("clientes", { nombre: "X", estado: LEGACY_CLIENTE_ACTIVO, sigla: "XX" })).toMatchObject({ status: 400 });
-    const ok = (await createMaestro("clientes", { nombre: "X", estado: "Inactivo", sigla: "XX" })) as { ok: true; data: { id: string } };
-    expect(fieldsOf(C.id, ok.data.id)[C.fields.estado]).toBe("Inactivo");
   });
 });
 

@@ -23,13 +23,19 @@ describe("schema", () => {
     expect(FIELD_TABLE.size).toBe(fieldIds.length);
   });
 
-  it("incluye las 13 tablas", () => {
-    expect(Object.keys(TABLES)).toHaveLength(13);
+  it("incluye las 15 tablas", () => {
+    expect(Object.keys(TABLES)).toHaveLength(15);
   });
 
-  it("campos calculados de Horas", () => {
+  it("campos calculados de Horas, Ventas y Compras", () => {
+    const V = TABLES.ventas.fields;
+    const C = TABLES.compras.fields;
     expect([...COMPUTED_FIELDS].sort()).toEqual(
-      [H.numero, H.horas, H.valorHora, H.moneda, H.cliente, H.importeAFacturar, H.mesTrabajado, H.mesAFacturarAAAAMM, H.creado].sort(),
+      [
+        H.numero, H.horas, H.valorHora, H.moneda, H.cliente, H.importeAFacturar, H.mesTrabajado, H.mesAFacturarAAAAMM, H.creado,
+        V.signo, V.tcAplicado, V.mesDevengadoAAAAMM, V.totalPesos, V.ivaPesos, V.netoPesos,
+        C.signo, C.tcAplicado, C.mesDevengadoAAAAMM, C.totalPesos, C.ivaPesos, C.netoPesos, C.impactoResultados, C.cuentaSocio,
+      ].sort(),
     );
   });
 

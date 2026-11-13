@@ -17,7 +17,7 @@ export const MENSAJES = {
   noEsGasto: "La categoría no es de gasto",
   proyectoInexistente: "Proyecto inexistente",
   faltaProyecto: "Falta proyecto",
-  sinCliente: "Sin cliente identificado",
+  sinCliente: "Cliente sin identificar",
   socioInexistente: "Socio inexistente",
   faltaCategoria: "Falta categoría",
   ok: "OK",
@@ -25,15 +25,27 @@ export const MENSAJES = {
 
 // ── Celdas ───────────────────────────────────────────────────────────────────
 
-const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
+const DAY_MS = 86_400_000;
 const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * Número de serie de Excel (sistema 1900) → "AAAA-MM-DD". Excel cuenta el 29/02/1900,
+ * que no existió: 1 = 01/01/1900, 59 = 28/02/1900, 60 = el 29/02 falso (→ null,
+ * «Fecha inválida»), 61 = 01/03/1900; de ahí en adelante la cuenta es exacta.
+ * La parte decimal (hora) se descarta. Fuera de 1..2958465 (31/12/9999) → null.
+ */
+export function excelSerialToIso(serial: number): string | null {
+  if (!Number.isFinite(serial)) return null;
+  const day = Math.floor(serial);
+  if (day < 1 || day > 2958465 || day === 60) return null;
+  const epoch = day < 60 ? Date.UTC(1899, 11, 31) : Date.UTC(1899, 11, 30);
+  const d = new Date(epoch + day * DAY_MS);
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
 
 /** Fecha de Excel (número de serie, sistema 1900) o texto DD/MM/AAAA (también AAAA-MM-DD) → "AAAA-MM-DD". */
 export function parseFecha(value: unknown): string | null {
-  if (typeof value === "number" && Number.isFinite(value) && value >= 1 && value < 2958466) {
-    const d = new Date(EXCEL_EPOCH_MS + Math.floor(value) * 86_400_000);
-    return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
-  }
+  if (typeof value === "number") return excelSerialToIso(value);
   if (typeof value !== "string") return null;
   const text = value.trim();
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);

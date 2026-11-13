@@ -15,7 +15,7 @@ function colName(i: number): string {
   return s;
 }
 
-function zip(files: { name: string; data: Buffer }[], store: boolean): Buffer {
+export function zip(files: { name: string; data: Buffer }[], store: boolean): Buffer {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
@@ -61,6 +61,17 @@ function zip(files: { name: string; data: Buffer }[], store: boolean): Buffer {
  * Excel); si no, como inlineStr. Las filas vacías (null) se omiten como hace Excel.
  */
 export function buildXlsx(rows: readonly (readonly FixtureCell[] | null)[], opts: { sharedStrings?: boolean; store?: boolean } = {}): Buffer {
+  return zip(xlsxParts(rows, opts), !!opts.store);
+}
+
+/**
+ * Las partes del .xlsx (para tests que las alteran: hoja a mano, otro Target, etc.).
+ * `sheetXml` reemplaza el <sheetData> generado; `relsTarget`, el Target de la hoja.
+ */
+export function xlsxParts(
+  rows: readonly (readonly FixtureCell[] | null)[],
+  opts: { sharedStrings?: boolean; sheetXml?: string; relsTarget?: string } = {},
+): { name: string; data: Buffer }[] {
   const shared: string[] = [];
   const sharedIndex = new Map<string, number>();
   const sheetRows = rows
@@ -100,12 +111,12 @@ export function buildXlsx(rows: readonly (readonly FixtureCell[] | null)[], opts
     },
     {
       name: "xl/_rels/workbook.xml.rels",
-      data: `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+      data: `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${opts.relsTarget ?? "worksheets/sheet1.xml"}"/></Relationships>`,
     },
-    { name: "xl/worksheets/sheet1.xml", data: `<?xml version="1.0" encoding="UTF-8"?><worksheet ${ns}><sheetData>${sheetRows}</sheetData></worksheet>` },
+    { name: "xl/worksheets/sheet1.xml", data: `<?xml version="1.0" encoding="UTF-8"?><worksheet ${ns}><sheetData>${opts.sheetXml ?? sheetRows}</sheetData></worksheet>` },
     ...(opts.sharedStrings
       ? [{ name: "xl/sharedStrings.xml", data: `<?xml version="1.0" encoding="UTF-8"?><sst ${ns} count="${shared.length}" uniqueCount="${shared.length}">${shared.map((s) => `<si><t xml:space="preserve">${esc(s)}</t></si>`).join("")}</sst>` }]
       : []),
   ];
-  return zip(files.map((f) => ({ name: f.name, data: Buffer.from(f.data, "utf8") })), !!opts.store);
+  return files.map((f) => ({ name: f.name, data: Buffer.from(f.data, "utf8") }));
 }

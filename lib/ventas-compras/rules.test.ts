@@ -7,6 +7,7 @@ import {
   codigoDeTipo,
   esPesos,
   evaluar,
+  excelSerialToIso,
   MENSAJES,
   monedaSinTipoCambio,
   parseEntero,
@@ -43,6 +44,26 @@ describe("redondeo (ROUND de Excel: mitad lejos del cero, 15 dígitos significat
     expect(toCents(12.345)).toBe(1235);
     expect(Object.is(toCents(-0.001), 0)).toBe(true);
     expect(() => toCents(Number.NaN)).toThrow();
+  });
+});
+
+describe("Fecha · sistema 1900 de Excel (fix 3)", () => {
+  it.each([
+    [1, "1900-01-01"],
+    [2, "1900-01-02"],
+    [59, "1900-02-28"],
+    [60, null], // 29/02/1900 falso de Excel
+    [61, "1900-03-01"],
+    [45658, "2025-01-01"],
+    [46310, "2026-10-15"],
+    [2958465, "9999-12-31"],
+    [0, null],
+    [-1, null],
+    [2958466, null],
+    [Number.NaN, null],
+  ])("serie %s → %s", (serial, iso) => {
+    expect(excelSerialToIso(serial)).toBe(iso);
+    expect(parseFecha(serial)).toBe(iso);
   });
 });
 
@@ -192,7 +213,7 @@ describe("Control de Ventas (orden de la columna CONTROL)", () => {
     ["la categoría no es de ingreso", {}, { categoria: "recCATGAST000000D" }, ctx, MENSAJES.noEsIngreso],
     ["proyecto inexistente", {}, { proyecto: "recNOEXISTE00000X" }, ctx, MENSAJES.proyectoInexistente],
     ["falta proyecto (categoría por defecto requiere proyecto)", { clientePorCuit: cliente }, {}, ctx, MENSAJES.faltaProyecto],
-    ["sin cliente identificado", {}, { categoria: "recCATINGR000000B" }, ctx, MENSAJES.sinCliente],
+    ["cliente sin identificar", {}, { categoria: "recCATINGR000000B" }, ctx, MENSAJES.sinCliente],
     ["proyecto sin cliente → sin cliente", {}, { proyecto: "recPROY000000000S" }, ctx, MENSAJES.sinCliente],
     ["OK con cliente por CUIT", { clientePorCuit: cliente }, { categoria: "recCATINGR000000B" }, ctx, MENSAJES.ok],
     ["OK con proyecto", {}, { proyecto: "recPROY000000000A" }, ctx, MENSAJES.ok],

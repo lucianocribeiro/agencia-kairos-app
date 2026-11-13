@@ -29,6 +29,7 @@ const preview = await import("@/app/api/admin/importar/[tabla]/preview/route");
 const confirmar = await import("@/app/api/admin/importar/[tabla]/confirmar/route");
 const { MAX_FILE_BYTES } = await import("@/lib/ventas-compras/server/upload");
 const { MENSAJES } = await import("@/lib/ventas-compras/rules");
+expect(MENSAJES.sinCliente).toBe("Cliente sin identificar");
 
 const T = TABLES;
 const V = T.ventas.fields;
@@ -162,8 +163,39 @@ describe("parser (por la ruta de vista previa)", () => {
     expect(f6.datos.fecha).toBe("2026-10-15");
     expect(f2.datos.impTotal).toBe(605.5);
     expect(f3.datos.tipoCambio).toBe(1000.5);
-    const bad = await prev("ventas", arcaXlsx("ventas", [factura({ impTotal: "12abc" }), factura({ numeroDesde: 9, fecha: "31/02/2026" })]));
-    expect(bad.json.filas.map((f: Fila) => f.error)).toEqual(["Número inválido en «Imp. Total»", "Fecha inválida"]);
+    const bad = await prev(
+      "ventas",
+      arcaXlsx("ventas", [
+        factura({ impTotal: "12abc" }),
+        factura({ numeroDesde: 9, fecha: "31/02/2026" }),
+        factura({ numeroDesde: 10, fecha: 60 }), // 29/02/1900 falso de Excel
+        factura({ numeroDesde: 11, impTotal: 1e300, tipoCambio: 1e10 }),
+        factura({ numeroDesde: 12, fecha: 61 }),
+      ]),
+    );
+    expect(bad.status).toBe(200);
+    expect(bad.json.filas.map((f: Fila) => f.error)).toEqual(["Número inválido en «Imp. Total»", "Fecha inválida", "Fecha inválida", "Número fuera de rango en «Imp. Total»", null]);
+    expect(bad.json.filas[4].datos.fecha).toBe("1900-03-01");
+  });
+});
+
+describe("archivo malformado → 400 sin escribir nada (fixes 1, 2, 4)", () => {
+  beforeEach(() => loginAs(ids.admin));
+
+  it.each([
+    ["fila r=999999999", '<row r="999999999"><c r="A999999999"><v>1</v></c></row>', /referencia de celda inválida/],
+    ["fila r=0", '<row r="0"><c><v>1</v></c></row>', /referencia de celda inválida/],
+    ["columna ZZZZ1", '<row r="1"><c r="ZZZZ1"><v>1</v></c></row>', /referencia de celda inválida/],
+    ["entidad &#x110000;", '<row r="1"><c r="A1" t="inlineStr"><is><t>&#x110000;</t></is></c></row>', /caracteres inválidos/],
+  ])("%s", async (_n, sheetXml, message) => {
+    const { xlsxParts, zip } = await import("./xlsx-fixture");
+    for (const route of [prev, conf]) {
+      const res = await route("ventas", zip(xlsxParts([], { sheetXml }), false));
+      expect(res.status).toBe(400);
+      expect(res.json.error).toMatch(message);
+    }
+    expect(fake.calls.some((c) => c.method !== "list")).toBe(false);
+    expect(fake.calls.some((c) => c.tableId === T.ventas.id)).toBe(false); // ni siquiera llega a leer la base
   });
 });
 

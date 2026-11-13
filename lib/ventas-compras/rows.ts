@@ -22,6 +22,8 @@ import {
 import type { Dato, FilaBase, ProveedorFila, Ref, Resumen } from "./types";
 
 export const MAX_FILAS = 1000;
+/** Tope de cualquier importe o tipo de cambio leído (1e12). */
+export const MAX_IMPORTE = 1e12;
 const HEADER_SCAN_ROWS = 30;
 
 export const ARCHIVO_MENSAJES = {
@@ -98,11 +100,15 @@ function readCell(col: Column, raw: Cell): { value: Dato } | { error: string } {
     }
     case "entero": {
       const n = parseEntero(value);
-      return Number.isNaN(n) ? { error: `Número inválido en «${col.header}»` } : { value: n };
+      if (Number.isNaN(n) || (n !== null && n > Number.MAX_SAFE_INTEGER)) return { error: `Número inválido en «${col.header}»` };
+      return { value: n };
     }
     case "numero": {
       const n = parseNumero(value);
-      return Number.isNaN(n) ? { error: `Número inválido en «${col.header}»` } : { value: n };
+      if (Number.isNaN(n)) return { error: `Número inválido en «${col.header}»` };
+      // Importes y tipo de cambio razonables: evita Infinity al multiplicar (y un 500).
+      if (n !== null && Math.abs(n) > MAX_IMPORTE) return { error: `Número fuera de rango en «${col.header}»` };
+      return { value: n };
     }
     default:
       return { value: parseTexto(value) };

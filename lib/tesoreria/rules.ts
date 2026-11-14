@@ -1,7 +1,7 @@
 /**
  * Reglas de Tesorería (de Gestion_Kairos_ERP_v4.xlsx), en código. Client-safe: las
- * mismas funciones validan el formulario, calculan el Control y arman las listas. No
- * se leen las fórmulas de Airtable (Entra/Sale, Importe $).
+ * mismas funciones validan el formulario, calculan el Control y arman las listas.
+ * Airtable solo guarda los datos: todo importe derivado se calcula acá.
  */
 import { isIsoDate } from "@/lib/horas/dates";
 import { toCents } from "@/lib/ventas-compras/money";

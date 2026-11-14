@@ -10,8 +10,9 @@ import { overlapMessage, overlapping } from "../rules";
 import { recordHours } from "../time";
 
 /**
- * Acceso a la tabla Horas. Nunca pide valor hora, moneda, importe ni la
- * lookup de cliente (RESTRICTED_FIELDS): lo que no se lee no se puede filtrar.
+ * Acceso a la tabla Horas. Horas no tiene valor hora, moneda, importe ni cliente
+ * (no hay campos calculados en la base); esos datos están en Proyectos y el camino
+ * del Empleado nunca los lee (RESTRICTED_FIELDS): lo que no se lee no se puede filtrar.
  */
 
 export const H = TABLES.horas.fields;

@@ -127,7 +127,7 @@ describe("escrituras", () => {
 
   it("rechaza campos calculados sin llamar a la API", async () => {
     const { client, fetchMock } = setup([]);
-    await expect(client.create(H.id, [{ [H.fields.tarea]: "x", [H.fields.importeAFacturar]: 10 }])).rejects.toMatchObject({
+    await expect(client.create(H.id, [{ [H.fields.tarea]: "x", [H.fields.numero]: 10 }])).rejects.toMatchObject({
       code: "computed_field_write",
     });
     await expect(client.update(H.id, [{ id: id(1), fields: { [H.fields.creado]: "x" } }])).rejects.toMatchObject({

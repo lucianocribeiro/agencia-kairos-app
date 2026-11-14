@@ -1,7 +1,15 @@
+import { assertFieldIds, assertWritableFields } from "@/lib/airtable/payload";
+
 /**
  * Cliente de Airtable en memoria para tests. Implementa list/create/update
  * sobre registros guardados por tabla. No evalúa fórmulas (el código de auth
  * vuelve a filtrar en JS), pero guarda cada llamada para poder inspeccionarla.
+ *
+ * Aplica los mismos guards de IDs que el cliente real (lib/airtable/payload.ts):
+ * un campo que no está en schema.ts para esa tabla (p. ej. uno borrado de la base,
+ * que Airtable respondería con 422 UNKNOWN_FIELD_NAME), uno que llena Airtable
+ * (COMPUTED_FIELDS) o un link inverso hacen fallar la llamada. Así todos los tests
+ * prueban que la app no depende de campos fuera de schema.ts.
  */
 type Fields = Record<string, unknown>;
 interface Rec {
@@ -53,6 +61,7 @@ export function createFakeAirtable() {
   const client = {
     async list(tableId: string, options: { fields: readonly string[]; filterByFormula?: { toString(): string }; maxRecords?: number }) {
       calls.push({ method: "list", tableId, options });
+      assertFieldIds(tableId, options.fields);
       maybeFail("list", tableId);
       let out = rows(tableId);
       // Soporte mínimo de RECORD_ID() = "rec…" para get por ID.
@@ -63,6 +72,7 @@ export function createFakeAirtable() {
     },
     async get(tableId: string, recordId: string, options: { fields: readonly string[] }) {
       calls.push({ method: "list", tableId, options: { ...options, filterByFormula: `RECORD_ID() = "${recordId}"` } });
+      assertFieldIds(tableId, options.fields);
       maybeFail("list", tableId);
       const rec = rows(tableId).find((r) => r.id === recordId);
       return rec ? { ...rec, fields: pick(rec.fields, options.fields) } : null;
@@ -84,6 +94,7 @@ export function createFakeAirtable() {
     async create(tableId: string, records: Fields[]) {
       const call: FakeCall = { method: "create", tableId, payload: records };
       calls.push(call);
+      records.forEach((fields) => assertWritableFields(tableId, fields));
       await hold("create", tableId);
       maybeFail("create", tableId, call);
       return records.map((fields) => {
@@ -95,6 +106,7 @@ export function createFakeAirtable() {
     async update(tableId: string, records: { id: string; fields: Fields }[]) {
       const call: FakeCall = { method: "update", tableId, payload: records };
       calls.push(call);
+      records.forEach((r) => assertWritableFields(tableId, r.fields));
       await hold("update", tableId);
       maybeFail("update", tableId, call);
       return records.map(({ id, fields }) => {

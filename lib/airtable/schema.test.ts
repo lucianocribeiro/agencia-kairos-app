@@ -27,17 +27,8 @@ describe("schema", () => {
     expect(Object.keys(TABLES)).toHaveLength(16);
   });
 
-  it("campos calculados de Horas, Ventas, Compras y Tesorería", () => {
-    const V = TABLES.ventas.fields;
-    const C = TABLES.compras.fields;
-    expect([...COMPUTED_FIELDS].sort()).toEqual(
-      [
-        H.numero, H.horas, H.valorHora, H.moneda, H.cliente, H.importeAFacturar, H.mesTrabajado, H.mesAFacturarAAAAMM, H.creado,
-        V.signo, V.tcAplicado, V.mesDevengadoAAAAMM, V.totalPesos, V.ivaPesos, V.netoPesos,
-        C.signo, C.tcAplicado, C.mesDevengadoAAAAMM, C.totalPesos, C.ivaPesos, C.netoPesos, C.impactoResultados, C.cuentaSocio,
-        ...(["numero", "moneda", "mesAAAAMM", "entraSale", "importePesos"] as const).map((k) => TABLES.tesoreria.fields[k]),
-      ].sort(),
-    );
+  it("campos que llena Airtable (autoNumber y createdTime): solo N° de Horas y Tesorería y Creado de Horas", () => {
+    expect([...COMPUTED_FIELDS].sort()).toEqual([H.numero, H.creado, TABLES.tesoreria.fields.numero].sort());
   });
 
   it("links inversos de solo lectura = todas las referencias", () => {
@@ -58,9 +49,7 @@ describe("schema", () => {
   });
 
   it("campos restringidos", () => {
-    for (const id of [U.passwordHash, H.valorHora, H.moneda, H.importeAFacturar, H.cliente, P.valorHora, P.monedaValorHora]) {
-      expect(RESTRICTED_FIELDS.has(id)).toBe(true);
-    }
+    expect([...RESTRICTED_FIELDS].sort()).toEqual([U.passwordHash, P.valorHora, P.monedaValorHora].sort());
   });
 });
 
@@ -71,13 +60,13 @@ describe("access", () => {
   });
 
   it("Empleado no ve valores ni importes; Admin sí", () => {
-    expect(canReadField(H.importeAFacturar, "Empleado")).toBe(false);
-    expect(canReadField(H.importeAFacturar, "Admin")).toBe(true);
-    expect(readableFields([H.fecha, H.tarea, H.valorHora, P.monedaValorHora], "Empleado")).toEqual([H.fecha, H.tarea]);
+    expect(canReadField(P.valorHora, "Empleado")).toBe(false);
+    expect(canReadField(P.valorHora, "Admin")).toBe(true);
+    expect(readableFields([H.fecha, H.tarea, P.valorHora, P.monedaValorHora], "Empleado")).toEqual([H.fecha, H.tarea]);
   });
 
   it("redactFields saca campos no permitidos", () => {
-    expect(redactFields({ [H.tarea]: "x", [H.moneda]: "USD", [U.passwordHash]: "h" }, "Empleado")).toEqual({ [H.tarea]: "x" });
-    expect(redactFields({ [H.moneda]: "USD", [U.passwordHash]: "h" }, "Admin")).toEqual({ [H.moneda]: "USD" });
+    expect(redactFields({ [H.tarea]: "x", [P.monedaValorHora]: "USD", [U.passwordHash]: "h" }, "Empleado")).toEqual({ [H.tarea]: "x" });
+    expect(redactFields({ [P.monedaValorHora]: "USD", [U.passwordHash]: "h" }, "Admin")).toEqual({ [P.monedaValorHora]: "USD" });
   });
 });

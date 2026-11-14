@@ -12,7 +12,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - Airtable se accede solo desde `lib/airtable/`, y cada archivo ahí importa `server-only`. El token nunca llega al navegador. Nada de `NEXT_PUBLIC_` para secretos.
 - Siempre IDs de tabla y de campo (`lib/airtable/schema.ts`), nunca nombres. Lecturas con `returnFieldsByFieldId`, escrituras por ID de campo.
-- No escribir campos de `COMPUTED_FIELDS` ni `READ_ONLY_FIELDS`. No devolver `RESTRICTED_FIELDS` a un Empleado ni `SECRET_FIELDS` a nadie (`lib/airtable/access.ts`).
+- Airtable es solo una base de datos. No crear campos calculados (fórmula, rollup, lookup, count) en Airtable. Toda regla y todo cálculo viven en la app.
+- No escribir campos de `COMPUTED_FIELDS` (solo autoNumber y createdTime, que llena Airtable) ni `READ_ONLY_FIELDS`. No devolver `RESTRICTED_FIELDS` a un Empleado ni `SECRET_FIELDS` a nadie (`lib/airtable/access.ts`).
 - Textos de UI en es-AR con voseo. Fechas DD/MM/AAAA, números es-AR (`lib/format.ts`).
 - Nada de azul en la UI: solo los tokens de `app/globals.css`.
 - Antes de un PR: `npm run lint`, `npm run build`, `npm test`, `npm run check:bundle`.
@@ -68,11 +69,11 @@ Es un chequeo no atómico con compensación. Queda una ventana chica en la que u
 ## Horas (CC-F1-04)
 
 - Lógica compartida y client-safe en `lib/horas/`: `time.ts` (HH:mm ↔ segundos, `recordHours`, `sumHours`), `dates.ts` (fechas "YYYY-MM-DD", hoy en Buenos Aires, atajos, buckets), `rules.ts` (validación y superposición), `types.ts` (DTOs). Parte de servidor en `lib/horas/server/`.
-- `recordHours` es la única cuenta de horas; los totales se suman con `sumHours` (en centésimas). No usar el campo fórmula Horas de Airtable en la app.
+- `recordHours` es la única cuenta de horas; los totales se suman con `sumHours` (en centésimas).
 - Período: `fechaRangeFormula` (`AND({fecha}, IS_AFTER({fecha}, "desde − 1"), IS_BEFORE({fecha}, "hasta + 1"))`) y después se vuelve a filtrar en código por el string. Los filtros por link (colaborador, proyecto, cliente vía el Cliente del proyecto) se aplican en código con los IDs que devuelve la API, nunca por nombre.
 - Superposición: chequeo previo (409) y `overlapPostCheck` en `runPostWriteChecks` (alta: pierde el más nuevo; edición: vuelve quien edita; fail-closed).
 - Empleado: `/api/me/horas` (GET, POST) y `/api/me/proyectos` (GET). Nunca PATCH/PUT/DELETE en `/api/me/**` ni `/api/me/horas/[id]` (test). Colaborador = Cargado por = la sesión, Facturable = sí; las asignaciones se releen de Airtable en cada alta.
-- Nunca leer RESTRICTED_FIELDS (valor hora, moneda, importe, cliente) en el camino del Empleado; las respuestas y los props de `/mis-horas` son DTOs explícitos.
+- Nunca leer valor hora ni moneda (RESTRICTED_FIELDS, de Proyectos), importes ni cliente en el camino del Empleado; las respuestas y los props de `/mis-horas` son DTOs explícitos.
 - Toda verificación posterior que relee el registro escrito (superposición de Horas, unicidad de Usuarios y Maestros, cascada de siglas) lanza `WrittenRecordMissingError` si la relectura no lo trae: cuenta como lectura fallida → deshacer → 503 (500 si el deshacer falla). La de «último Admin activo» no depende del registro escrito (cuenta los demás Admins activos).
 - Período máximo de los filtros: 10 años calendario exactos (`hasta ≤ desde + 10 años`, 29/02 → 28/02). La vista diaria del dashboard sigue limitada a 400 días.
 - Mis horas: asignaciones y proyectos se leen una vez por request (`loadMisSnapshot`) y se pasan a `listMisHoras`; el alta siempre pide una foto nueva.

@@ -1,7 +1,7 @@
 /**
  * Reglas de Ventas y Compras (de Gestion_Kairos_ERP_v4.xlsx), en código. Client-safe:
  * la vista previa las usa para recalcular al editar, y el servidor las vuelve a correr
- * al confirmar (fuente de verdad). No leen las fórmulas de Airtable.
+ * al confirmar (fuente de verdad). Airtable solo guarda los datos.
  */
 import { displayDateToIso } from "@/lib/format";
 import type { Kind } from "./columns";

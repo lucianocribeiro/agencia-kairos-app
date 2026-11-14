@@ -27,7 +27,7 @@ const itemRoute = await import("@/app/api/admin/comprobantes/[tabla]/[id]/route"
 const maestroItem = await import("@/app/api/admin/maestros/[tabla]/[id]/route");
 const coll = await import("@/app/api/admin/maestros/[tabla]/route");
 const { MENSAJES } = await import("@/lib/ventas-compras/rules");
-const { COMPUTED_FIELDS } = await import("@/lib/airtable/schema");
+const { FIELD_TABLE } = await import("@/lib/airtable/schema");
 
 const T = TABLES;
 const V = T.ventas.fields;
@@ -156,9 +156,10 @@ describe("lista", () => {
       control: MENSAJES.faltaProyecto,
       importes: { total: 121000, iva: 21000, neto: 100000 },
     });
-    // nunca se piden los campos de fórmula de Airtable
+    // solo se piden campos de Ventas declarados en schema.ts
     const fields = fake.calls.filter((c) => c.tableId === T.ventas.id).flatMap((c) => (c.options as { fields: string[] }).fields);
-    for (const f of fields) expect(COMPUTED_FIELDS.has(f)).toBe(false);
+    expect(fields.length).toBeGreaterThan(0);
+    for (const f of fields) expect(FIELD_TABLE.get(f), f).toBe(T.ventas.id);
   });
 
   it("totales de todo el conjunto filtrado, no solo de la página (60 filas, páginas de 50); NC y USD", async () => {
@@ -249,11 +250,10 @@ describe("edición", () => {
 
   it("las claves no editables no llegan a Airtable", async () => {
     const id = compra();
-    const res = await patch("compras", id, { impTotal: 1, claveArca: "x", proveedor: ["recXXXXXXXXXXXXXX"], [C.totalPesos]: 5, cliente: "x", socio: ids.socio });
+    const res = await patch("compras", id, { impTotal: 1, claveArca: "x", proveedor: ["recXXXXXXXXXXXXXX"], fldNOEXISTE000000: 5, cliente: "x", socio: ids.socio });
     expect(res.status).toBe(200);
     const fields = (fake.calls.find((c) => c.method === "update")!.payload as { fields: Record<string, unknown> }[])[0].fields;
     expect(fields).toEqual({ [C.socio]: [ids.socio] }); // solo lo enviado y editable
-    for (const k of Object.keys(fields)) expect(COMPUTED_FIELDS.has(k)).toBe(false);
     // Ventas no acepta socio (se descarta)
     const v = venta();
     await patch("ventas", v, { socio: ids.socio });

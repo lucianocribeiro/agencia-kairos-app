@@ -27,16 +27,14 @@ export function formatTime(seconds: number | null | undefined): string {
 }
 
 /**
- * Horas de un registro = ROUND((hasta − desde) / 3600, 2), igual que la fórmula de
- * Airtable (fldTSWNksJnEbYTLW). ÚNICA función de horas: la usan las listas,
- * los totales y el dashboard.
+ * Horas de un registro = ROUND((hasta − desde) / 3600, 2). ÚNICA función de horas:
+ * la usan las listas, los totales y el dashboard (Airtable no calcula nada).
  *
  * `Math.round(segundos / 36) / 100` es lo mismo que redondear (s / 3600) a 2
  * decimales, pero sin el error de punto flotante de multiplicar por 100.
  * Con segundos enteros los empates (…,5) se redondean hacia arriba, como ROUND.
- * Si falta alguna de las dos horas o el rango no es positivo → 0.
- * Desde CC-F2-01 la fórmula usa LEN({campo} & "") > 0, así que desde = 0 (00:00)
- * ya no cuenta como vacío y los dos cálculos coinciden (ver README, "Horas").
+ * Si falta alguna de las dos horas o el rango no es positivo → 0. Desde = 0
+ * (00:00) es una hora cargada, no vacía.
  */
 export function recordHours(desde: number | null | undefined, hasta: number | null | undefined): number {
   if (typeof desde !== "number" || typeof hasta !== "number" || !Number.isFinite(desde) || !Number.isFinite(hasta)) return 0;

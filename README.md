@@ -106,7 +106,7 @@ Antes de tocar nada, rechaza `BOOTSTRAP_ADMIN_PASSWORD` si tiene menos de 10 car
 - **Horas** (`/horas`, Admin): lista con filtros por colaborador, proyecto, cliente y período, total, alta (cualquier fecha y proyecto, también Cerrados), edición (Cargado por no cambia) y borrado.
 - **Dashboard** (`/dashboard`, Admin): horas por proyecto × período (diaria, semanal ISO o mensual) con totales y un gráfico de barras en SVG. Solo horas, nunca importes.
 - **Reglas**: horas = `ROUND((hasta − desde) / 3600, 2)` en una sola función (`recordHours`, `lib/horas/time.ts`) que usan listas, totales y dashboard; dos registros del mismo colaborador y día no se pueden pisar (los que se tocan sí), con verificación posterior.
-- **Fórmula de Airtable**: desde CC-F2-01 el campo Horas usa `IF(AND(LEN({desde} & "") > 0, LEN({hasta} & "") > 0), ROUND(({hasta} − {desde}) / 3600, 2))`, así que un registro que empieza a las 00:00 (0 segundos) ya no queda en blanco y coincide con `recordHours`. La app sigue sin leer ese campo.
+- **Sin cálculos en Airtable**: la tabla Horas solo guarda los datos cargados; horas, importes y meses los calcula la app. Un registro que empieza a las 00:00 (0 segundos) cuenta normalmente.
 - **Un Empleado nunca ve** valor hora, moneda, importe ni cliente: no se leen de Airtable y las respuestas son DTOs armados a mano (`test/horas.test.ts`, criterio 7).
 
 ## Migración de Clientes (Fase 2)
@@ -134,7 +134,7 @@ Antes de tocar nada, rechaza `BOOTSTRAP_ADMIN_PASSWORD` si tiene menos de 10 car
 2. **Confirmar**: sin estado. El navegador vuelve a mandar el archivo y las ediciones (por Clave ARCA); el servidor vuelve a leer y validar todo, y escribe solo las filas nuevas.
 3. **Informe**: importadas, omitidas por duplicado (ya importadas + duplicadas en el archivo + importadas en paralelo), con error (con motivo) y proveedores creados.
 
-Reglas (de `Gestion_Kairos_ERP_v4.xlsx`, implementadas en `lib/ventas-compras/`, no leídas de las fórmulas de Airtable):
+Reglas (de `Gestion_Kairos_ERP_v4.xlsx`, implementadas solo en `lib/ventas-compras/`; Airtable no calcula nada):
 
 - **Clave ARCA**: `Código|Punto de venta|Número desde|Documento`. Código = texto del Tipo hasta el primer espacio («11 - Factura C» → `11`); punto de venta y número como enteros sin ceros a la izquierda; documento solo con dígitos (tal cual, sin sacar ceros). Ventas usa el Nro. Doc. Receptor; Compras, el Nro. Doc. Emisor. Ejemplo: `11|2|1234|20123456786`.
 - **Fecha**: número de serie de Excel (sistema 1900: 1 = 01/01/1900, 59 = 28/02/1900, 60 = el 29/02/1900 que no existió → «Fecha inválida», 61 = 01/03/1900) o texto DD/MM/AAAA.
@@ -152,7 +152,7 @@ Reglas (de `Gestion_Kairos_ERP_v4.xlsx`, implementadas en `lib/ventas-compras/`,
 
 **Ventas › Comprobantes** (`/ventas`) y **Compras › Comprobantes** (`/compras`), solo Admin.
 
-- **Columnas**: Fecha, Tipo, PV-Número, Cliente / Proveedor, Denominación, Moneda, Total $, IVA $, Neto $ (Compras también Impacto en resultados $ y A cuenta del socio $), Mes devengado, Proyecto, UN, Categoría y Control. Los importes se calculan en código con las mismas reglas que la importación (`lib/ventas-compras/listado.ts` usa `evaluar` y `calcularImportes`); nunca se leen las fórmulas de Airtable.
+- **Columnas**: Fecha, Tipo, PV-Número, Cliente / Proveedor, Denominación, Moneda, Total $, IVA $, Neto $ (Compras también Impacto en resultados $ y A cuenta del socio $), Mes devengado, Proyecto, UN, Categoría y Control. Los importes se calculan en código con las mismas reglas que la importación (`lib/ventas-compras/listado.ts` usa `evaluar` y `calcularImportes`).
 - **Valores efectivos** (igual que en la importación): Mes devengado vacío → mes de la Fecha; UN vacía → la del proyecto; Categoría vacía → Ventas: Parámetro «Categoría por defecto en Ventas»; Compras: la Categoría por defecto del proveedor.
 - **Cliente efectivo (Ventas)**: el del proyecto si hay proyecto; si no, el cliente (Activo o Inactivo) cuyo CUIT coincide con el Nro. Doc. Receptor (solo si hay exactamente uno: si dos clientes tienen el mismo CUIT es ambiguo y cuenta como sin match); si no, ninguno («Cliente sin identificar»). El CUIT de Clientes es opcional pero, si se carga, se valida (dígito verificador), se guarda con 11 dígitos y es único, como en Proveedores. Se calcula al leer, como en el Excel: si después se carga el CUIT en Clientes, las filas viejas se arreglan solas. El link Cliente guardado en Airtable se actualiza cada vez que se guarda la fila. **Los reportes tienen que usar el Cliente efectivo, no el link guardado.**
 - **Control**: los mismos mensajes y el mismo orden que la importación. Las filas con observaciones se ven atenuadas.
@@ -162,7 +162,7 @@ Reglas (de `Gestion_Kairos_ERP_v4.xlsx`, implementadas en `lib/ventas-compras/`,
 
 ## Tesorería
 
-**Tesorería** (`/tesoreria`), solo Admin. Un registro por movimiento: Importe siempre positivo en la moneda de la cuenta y Movimiento (Cobranza entra, Pago sale). Reglas en `lib/tesoreria/rules.ts` (las mismas para el formulario, el Control y la lista; no se leen las fórmulas de Airtable).
+**Tesorería** (`/tesoreria`), solo Admin. Un registro por movimiento: Importe siempre positivo en la moneda de la cuenta y Movimiento (Cobranza entra, Pago sale). Reglas en `lib/tesoreria/rules.ts` (las mismas para el formulario, el Control y la lista; Airtable no calcula nada).
 
 - **Importes**: con signo = +Importe en una cobranza, −Importe en un pago. TC aplicado: cuenta ARS → 1; cuenta USD → el Tipo de cambio (obligatorio, > 0, hasta 4 decimales). Importe $ = ROUND(con signo × TC; 2) (ROUND de Excel).
 - **Efectivos**: Es de socio = el del tipo. Suma a resultados: de socio → N; si no, la del registro; si no, la del tipo. Categoría (solo si suma S): la del registro; si no, la por defecto del tipo. Impacto en resultados $ = Importe $ si suma S; a cuenta del socio $ = −Importe $ si es de socio.
@@ -220,7 +220,7 @@ scripts/
 
 - **Airtable solo desde el servidor.** Todo vive en `lib/airtable/` y cada archivo importa `server-only`: si un componente cliente lo importa, el build falla.
 - **IDs, nunca nombres.** Tablas y campos se referencian por ID desde `lib/airtable/schema.ts`. Las lecturas usan `returnFieldsByFieldId` y piden solo los campos necesarios (`fields`). Las escrituras van por ID de campo.
-- **Campos calculados y links inversos** (`COMPUTED_FIELDS`, `READ_ONLY_FIELDS`) no se escriben: el cliente lanza un error antes de llamar a la API.
+- **Airtable es solo una base de datos.** No hay campos fórmula, rollup, lookup ni count: todo cálculo vive en la app. Los campos que llena Airtable solo (autoNumber y createdTime, `COMPUTED_FIELDS`) y los links inversos (`READ_ONLY_FIELDS`) no se escriben, y un campo que no está en `schema.ts` no se lee ni se escribe: el cliente lanza un error antes de llamar a la API.
 - **Campos restringidos:** `RESTRICTED_FIELDS` nunca se devuelven a un Empleado; `Usuarios.passwordHash` no se devuelve a nadie.
 - **UI en es-AR con voseo.** Fechas DD/MM/AAAA, números con `.` de miles y `,` decimal.
 - **Sin azul.** La paleta por defecto de Tailwind está desactivada; solo existen los tokens de `app/globals.css`.

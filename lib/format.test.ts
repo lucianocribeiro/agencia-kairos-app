@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DECIMAL_COMMA_HINT,
   displayDateToIso,
   displayToPercent,
   formatCurrency,
   formatDateTime,
   formatNumber,
   hhmmToSeconds,
+  isShortDotDecimal,
   isoToDisplayDate,
+  numberInputError,
   parseNumber,
   parseNumberInput,
   percentToDisplay,
@@ -173,5 +176,23 @@ describe("parseNumberInput (inputs es-AR)", () => {
     }
     expect(parseNumberInput(null)).toBeNull();
     expect(parseNumberInput(undefined)).toBeNull();
+  });
+});
+
+describe("pista de coma decimal (isShortDotDecimal / numberInputError)", () => {
+  it("decimales cortos con punto: se rechazan y llevan la pista", () => {
+    for (const t of [...["5.5", "12.5", "0.75", "950.5", "33.33", "1.23", "1.2345"], "-5.5", " 12.5 "]) {
+      expect(parseNumberInput(t), t).toBeNull();
+      expect(isShortDotDecimal(t), t).toBe(true);
+      expect(numberInputError("Mensaje.", t), t).toBe(`Mensaje. ${DECIMAL_COMMA_HINT}`);
+    }
+    expect(DECIMAL_COMMA_HINT).toBe("Para decimales usá coma (ej.: 12,5).");
+  });
+
+  it("otros rechazos y lo válido: sin pista, mensaje igual", () => {
+    for (const t of [...["12.34.567", "1,234.56", "abc", ""], "1.234.56", "1.234,", "5.000", "1234.56", null, undefined]) {
+      expect(isShortDotDecimal(t), String(t)).toBe(false);
+      expect(numberInputError("Mensaje.", t), String(t)).toBe("Mensaje.");
+    }
   });
 });

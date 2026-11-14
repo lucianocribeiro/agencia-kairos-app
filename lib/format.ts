@@ -189,3 +189,21 @@ export function parseNumberInput(text: string | null | undefined): number | null
   const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
 }
+
+/** Pista que se agrega al mensaje de error cuando el input parece un decimal con punto. */
+export const DECIMAL_COMMA_HINT = "Para decimales usá coma (ej.: 12,5).";
+
+/**
+ * ¿El input rechazado tiene forma de decimal corto con punto? Signo opcional, 1–3
+ * dígitos enteros, un punto y dígitos que no son un grupo de miles válido (no
+ * exactamente 3): "5.5", "12.5", "0.75", "33.33", "1.2345". No cambia lo que parsea.
+ */
+export function isShortDotDecimal(text: string | null | undefined): boolean {
+  if (text === null || text === undefined) return false;
+  return /^-?\d{1,3}\.(\d{1,2}|\d{4,})$/.test(text.trim().replace(/\s+/g, ""));
+}
+
+/** Mensaje de un número rechazado por parseNumberInput: el de siempre + la pista si corresponde. */
+export function numberInputError(message: string, text: string | null | undefined): string {
+  return isShortDotDecimal(text) ? `${message} ${DECIMAL_COMMA_HINT}` : message;
+}

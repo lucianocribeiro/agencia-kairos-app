@@ -512,6 +512,19 @@ describe("Otros maestros", () => {
     expect(sociosSumWarning([0.5, 0.255])).toBe("La suma de % retiros es 75,5 %. Debería ser 100 %.");
   });
 
+  it("número con punto decimal corto → 400 con la pista de coma (Cuentas y Socios)", async () => {
+    const HINT = "Ingresá un número (por ejemplo 1.234,56). Para decimales usá coma (ej.: 12,5).";
+    expect(await createMaestro("cuentas", { nombre: "Banco", moneda: "ARS", saldoInicial: "12.5", fechaSaldoInicial: "01/03/2026" })).toMatchObject({
+      status: 400,
+      fieldErrors: { saldoInicial: HINT },
+    });
+    expect(await createMaestro("cuentas", { nombre: "Banco", moneda: "ARS", saldoInicial: "1,234.56", fechaSaldoInicial: "01/03/2026" })).toMatchObject({
+      status: 400,
+      fieldErrors: { saldoInicial: "Ingresá un número (por ejemplo 1.234,56)." },
+    });
+    expect(await createMaestro("socios", { sigla: "QA", nombre: "QA", porcentajeRetiros: "33.33" })).toMatchObject({ status: 400, fieldErrors: { porcentajeRetiros: HINT } });
+  });
+
   it("Cuentas: saldo inicial (puede ser negativo) exige fecha", async () => {
     expect(await createMaestro("cuentas", { nombre: "Banco", moneda: "ARS", saldoInicial: "-1.234,56" })).toMatchObject({
       fieldErrors: { fechaSaldoInicial: "Indicá la fecha del saldo inicial." },

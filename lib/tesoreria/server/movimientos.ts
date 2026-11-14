@@ -5,7 +5,7 @@ import { invalidFieldIds } from "@/lib/airtable/payload";
 import { TABLES } from "@/lib/airtable/schema";
 import type { RawValues } from "@/lib/abm/fields";
 import type { ServiceResult } from "@/lib/abm/types";
-import { parseNumberInput } from "@/lib/format";
+import { numberInputError, parseNumberInput } from "@/lib/format";
 import { toCents } from "@/lib/ventas-compras/money";
 import { shortcutRange, todayInBuenosAires, type DateRange } from "@/lib/horas/dates";
 import { resolveRange } from "@/lib/horas/server/write";
@@ -195,7 +195,7 @@ export function parseInput(raw: RawValues, keys: readonly string[] = MOVIMIENTO_
     const s = v.trim();
     if (key === "importe" || key === "tipoCambio") {
       const n = s === "" ? null : parseNumberInput(s);
-      if (s !== "" && n === null) return { error: TESORERIA_API_MESSAGES.numero(key === "importe" ? "el importe" : "el tipo de cambio") };
+      if (s !== "" && n === null) return { error: numberInputError(TESORERIA_API_MESSAGES.numero(key === "importe" ? "el importe" : "el tipo de cambio"), s) };
       out[key] = n;
     } else if (LINK_KEYS.has(key)) {
       if (s !== "" && !RECORD_ID_RE.test(s)) return { error: TESORERIA_API_MESSAGES.formato };

@@ -6,7 +6,7 @@
  * mismos specs y las mismas funciones corren en los dos lados.
  */
 import { formatCuit, parseCuit } from "@/lib/cuit";
-import { displayDateToIso, formatNumber, isoToDisplayDate, parseNumberInput } from "@/lib/format";
+import { displayDateToIso, formatNumber, isoToDisplayDate, numberInputError, parseNumberInput } from "@/lib/format";
 
 export type FieldKind =
   | "text"
@@ -103,8 +103,9 @@ export function parseField(spec: FieldSpec, raw: RawValue | undefined): Parsed {
     case "percent": {
       const text = asText(raw).trim();
       if (!text) return empty();
-      const n = parseNumberInput(text.replace(/%\s*$/, ""));
-      if (n === null) return { error: FIELD_MESSAGES.number };
+      const numberText = text.replace(/%\s*$/, "");
+      const n = parseNumberInput(numberText);
+      if (n === null) return { error: numberInputError(FIELD_MESSAGES.number, numberText) };
       if (spec.kind === "integer" && !Number.isInteger(n)) return { error: FIELD_MESSAGES.integer };
       if (spec.numberOptions && !spec.numberOptions.includes(n)) return { error: FIELD_MESSAGES.option };
       if (spec.min !== undefined && n < spec.min) return { error: FIELD_MESSAGES.min(spec.min) };

@@ -166,11 +166,12 @@ export function displayToPercent(text: string | null | undefined): number | null
 
 /**
  * Parser de inputs numéricos que tipea un usuario argentino.
- * Acepta:  "1.234,56" (miles con punto, decimal con coma) · "1234,56" · "1234" ·
- *          "1234.56" o "12.5" (un solo punto como decimal) · "1.234.567" (varios puntos = miles) ·
- *          signo "-" adelante y espacios alrededor.
- * Rechaza lo ambiguo o mal formado (devuelve null): "1.234" (¿mil o uno coma dos?),
- *          "1,234.56", "1.23,4", "1,2,3", ",5", "5,", "", "abc".
+ * Acepta:  "5.000", "1.234.567" (punto de miles: 1–3 dígitos y grupos de exactamente 3) ·
+ *          "1.234,56", "12.345,5" (miles con punto y decimales con coma) · "1234,56" · "1234" ·
+ *          "1234.56" (un solo punto como decimal, solo con 4 o más dígitos enteros: no puede
+ *          ser un punto de miles) · signo "-" adelante y espacios.
+ * Rechaza lo ambiguo o mal formado (devuelve null): "5.5", "1.23", "12.5" (¿decimal o miles
+ *          mal agrupados?), "1.2345", "12.34.567", "1.234.56", "1,234.56", "1.234,", ",5", "", "abc".
  */
 export function parseNumberInput(text: string | null | undefined): number | null {
   if (text === null || text === undefined) return null;
@@ -178,15 +179,31 @@ export function parseNumberInput(text: string | null | undefined): number | null
   if (!s) return null;
   let normalized: string | null = null;
   if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) {
-    // miles con punto (2+ grupos o con decimales con coma)
-    if (/^-?\d{1,3}\.\d{3}$/.test(s)) return null; // "1.234": ambiguo
-    normalized = s.replace(/\./g, "").replace(",", ".");
+    normalized = s.replace(/\./g, "").replace(",", "."); // miles con punto
   } else if (/^-?\d+(,\d+)?$/.test(s)) {
     normalized = s.replace(",", ".");
-  } else if (/^-?\d+\.\d+$/.test(s)) {
-    normalized = s; // un solo punto como decimal (el caso "1.234" ya se descartó arriba)
+  } else if (/^-?\d{4,}\.\d+$/.test(s)) {
+    normalized = s; // un solo punto como decimal con 4+ dígitos enteros ("1234.56")
   }
   if (normalized === null) return null;
   const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Pista que se agrega al mensaje de error cuando el input parece un decimal con punto. */
+export const DECIMAL_COMMA_HINT = "Para decimales usá coma (ej.: 12,5).";
+
+/**
+ * ¿El input rechazado tiene forma de decimal corto con punto? Signo opcional, 1–3
+ * dígitos enteros, un punto y dígitos que no son un grupo de miles válido (no
+ * exactamente 3): "5.5", "12.5", "0.75", "33.33", "1.2345". No cambia lo que parsea.
+ */
+export function isShortDotDecimal(text: string | null | undefined): boolean {
+  if (text === null || text === undefined) return false;
+  return /^-?\d{1,3}\.(\d{1,2}|\d{4,})$/.test(text.trim().replace(/\s+/g, ""));
+}
+
+/** Mensaje de un número rechazado por parseNumberInput: el de siempre + la pista si corresponde. */
+export function numberInputError(message: string, text: string | null | undefined): string {
+  return isShortDotDecimal(text) ? `${message} ${DECIMAL_COMMA_HINT}` : message;
 }

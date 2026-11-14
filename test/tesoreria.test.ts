@@ -117,6 +117,25 @@ const base = (over: Record<string, unknown> = {}) => ({ fecha: "2026-10-15", cue
 describe("movimientos · alta", () => {
   beforeEach(() => loginAs(ids.admin));
 
+  it("importe / TC con punto decimal corto → 400 con la pista de coma; otros rechazos sin pista", async () => {
+    const HINT = "Para decimales usá coma (ej.: 12,5).";
+    for (const t of ["5.5", "12.5", "0.75", "950.5", "33.33", "1.23", "1.2345"]) {
+      const res = await crear(base({ importe: t }));
+      expect(res.status, t).toBe(400);
+      expect(res.json.error, t).toBe(`Revisá el importe: no es un número válido. ${HINT}`);
+    }
+    const tc = await crear(base({ cuenta: ids.usd, tipoCambio: "950.5" }));
+    expect(tc).toMatchObject({ status: 400, json: { error: `Revisá el tipo de cambio: no es un número válido. ${HINT}` } });
+    for (const t of ["12.34.567", "1,234.56", "abc"]) {
+      const res = await crear(base({ importe: t }));
+      expect(res, t).toMatchObject({ status: 400, json: { error: "Revisá el importe: no es un número válido." } });
+    }
+    expect((await crear(base({ importe: "" }))).json.error).not.toContain(HINT);
+    const ok = await crear(base({ importe: "5,5" }));
+    expect(ok.status).toBe(201);
+    expect(rows().find((r) => r.id === ok.json.id)!.fields[M.importe]).toBe(5.5);
+  });
+
   it("guarda solo campos escribibles de schema.ts; TC solo en USD; importe es-AR", async () => {
     const res = await crear(base({ importe: "1.234,56", tipoCambio: "999", descripcion: " QA " }));
     expect(res.status).toBe(201);
@@ -192,6 +211,8 @@ describe("transferencias", () => {
   const trf = (over: Record<string, unknown> = {}) => ({ cuentaOrigen: ids.ars1, cuentaDestino: ids.ars2, importe: "250", fecha: "2026-10-20", descripcion: "QA", ...over });
 
   it("crea 2 registros (Pago en origen, Cobranza en destino), mismo ID, Suma N; Impacto 0 y neto 0 en $", async () => {
+    const hint = await crearTrf(trf({ importe: "0.75" }));
+    expect(hint).toMatchObject({ status: 400, json: { error: "Revisá el importe: no es un número válido. Para decimales usá coma (ej.: 12,5)." } });
     const res = await crearTrf(trf());
     expect(res.status).toBe(201);
     expect(res.json.transferencia).toMatch(/^TR-[0-9a-f-]{36}$/);

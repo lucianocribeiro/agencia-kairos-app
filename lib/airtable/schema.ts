@@ -536,6 +536,8 @@ export const RESTRICTED_FIELDS: ReadonlySet<string> = new Set<FieldId>([
   ...(SECRET_FIELDS as ReadonlySet<FieldId>),
   F.proyectos.valorHora,
   F.proyectos.monedaValorHora,
+  /** Segunda barrera: el camino del Empleado ya no lo lee (criterio 7 de Fase 1). */
+  F.proyectos.cliente,
 ]);
 
 /** fieldId → tableId, para validar que un campo pertenece a la tabla que se escribe. */

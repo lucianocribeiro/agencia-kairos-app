@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DECIMAL_COMMA_HINT,
   displayDateToIso,
   displayToPercent,
   formatCurrency,
   formatDateTime,
   formatNumber,
   hhmmToSeconds,
+  isShortDotDecimal,
   isoToDisplayDate,
+  numberInputError,
   parseNumber,
   parseNumberInput,
   percentToDisplay,
@@ -138,11 +141,16 @@ describe("porcentajes", () => {
 });
 
 describe("parseNumberInput (inputs es-AR)", () => {
-  it("formato es-AR completo", () => {
-    expect(parseNumberInput("1.234,56")).toBe(1234.56);
-    expect(parseNumberInput("1.234.567,8")).toBe(1234567.8);
+  it("punto de miles: 1–3 dígitos y grupos de exactamente 3, con decimales opcionales con coma", () => {
+    expect(parseNumberInput("5.000")).toBe(5000);
     expect(parseNumberInput("1.234.567")).toBe(1234567);
+    expect(parseNumberInput("1.234,56")).toBe(1234.56);
+    expect(parseNumberInput("12.345,5")).toBe(12345.5);
+    expect(parseNumberInput("1.234.567,8")).toBe(1234567.8);
+    expect(parseNumberInput("1.234")).toBe(1234);
+    expect(parseNumberInput("-5.000")).toBe(-5000);
     expect(parseNumberInput("-1.234,5")).toBe(-1234.5);
+    expect(parseNumberInput(" 5.000 ")).toBe(5000);
   });
 
   it("sin miles, decimal con coma", () => {
@@ -150,19 +158,41 @@ describe("parseNumberInput (inputs es-AR)", () => {
     expect(parseNumberInput("0,5")).toBe(0.5);
     expect(parseNumberInput("1234")).toBe(1234);
     expect(parseNumberInput(" -42 ")).toBe(-42);
+    expect(parseNumberInput("5 000")).toBe(5000);
   });
 
-  it("un solo punto como decimal", () => {
+  it("un solo punto como decimal, solo con 4 o más dígitos enteros", () => {
     expect(parseNumberInput("1234.56")).toBe(1234.56);
-    expect(parseNumberInput("12.5")).toBe(12.5);
-    expect(parseNumberInput("0.75")).toBe(0.75);
-    expect(parseNumberInput("1.2345")).toBe(1.2345);
+    expect(parseNumberInput("1050.25")).toBe(1050.25);
+    expect(parseNumberInput("-1234.5")).toBe(-1234.5);
   });
 
   it("rechaza lo ambiguo o mal formado", () => {
-    for (const bad of ["1.234", "-1.234", "1,234.56", "1.23,4", "12.345,6.7", "1,2,3", ",5", "5,", ".5", "5.", "", "  ", "abc", "1e3", "1 234,5x"]) {
+    for (const bad of [
+      "5.5", "1.23", "1.2345", "12.5", "0.75", "12.34.567", "1.234.56", "1,234.56", "1.234,",
+      "1.23,4", "12.345,6.7", "1,2,3", ",5", "5,", ".5", "5.", "", "  ", "abc", "1e3", "1 234,5x", "1.000.00", "1234.567.890",
+    ]) {
       expect(parseNumberInput(bad), bad).toBeNull();
     }
     expect(parseNumberInput(null)).toBeNull();
+    expect(parseNumberInput(undefined)).toBeNull();
+  });
+});
+
+describe("pista de coma decimal (isShortDotDecimal / numberInputError)", () => {
+  it("decimales cortos con punto: se rechazan y llevan la pista", () => {
+    for (const t of [...["5.5", "12.5", "0.75", "950.5", "33.33", "1.23", "1.2345"], "-5.5", " 12.5 "]) {
+      expect(parseNumberInput(t), t).toBeNull();
+      expect(isShortDotDecimal(t), t).toBe(true);
+      expect(numberInputError("Mensaje.", t), t).toBe(`Mensaje. ${DECIMAL_COMMA_HINT}`);
+    }
+    expect(DECIMAL_COMMA_HINT).toBe("Para decimales usá coma (ej.: 12,5).");
+  });
+
+  it("otros rechazos y lo válido: sin pista, mensaje igual", () => {
+    for (const t of [...["12.34.567", "1,234.56", "abc", ""], "1.234.56", "1.234,", "5.000", "1234.56", null, undefined]) {
+      expect(isShortDotDecimal(t), String(t)).toBe(false);
+      expect(numberInputError("Mensaje.", t), String(t)).toBe("Mensaje.");
+    }
   });
 });

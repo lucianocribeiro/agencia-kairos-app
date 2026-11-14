@@ -49,7 +49,7 @@ describe("schema", () => {
   });
 
   it("campos restringidos", () => {
-    expect([...RESTRICTED_FIELDS].sort()).toEqual([U.passwordHash, P.valorHora, P.monedaValorHora].sort());
+    expect([...RESTRICTED_FIELDS].sort()).toEqual([U.passwordHash, P.valorHora, P.monedaValorHora, P.cliente].sort());
   });
 });
 
@@ -63,6 +63,13 @@ describe("access", () => {
     expect(canReadField(P.valorHora, "Empleado")).toBe(false);
     expect(canReadField(P.valorHora, "Admin")).toBe(true);
     expect(readableFields([H.fecha, H.tarea, P.valorHora, P.monedaValorHora], "Empleado")).toEqual([H.fecha, H.tarea]);
+  });
+
+  it("Proyectos › cliente: Empleado no lo ve; Admin sí", () => {
+    expect(canReadField(P.cliente, "Empleado")).toBe(false);
+    expect(canReadField(P.cliente, "Admin")).toBe(true);
+    expect(readableFields([P.codigo, P.estado, P.cliente], "Empleado")).toEqual([P.codigo, P.estado]);
+    expect(redactFields({ [P.codigo]: "QZ - Uno", [P.cliente]: ["recCLIENTE0000000"] }, "Empleado")).toEqual({ [P.codigo]: "QZ - Uno" });
   });
 
   it("redactFields saca campos no permitidos", () => {

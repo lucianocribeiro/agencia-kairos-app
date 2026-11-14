@@ -416,6 +416,28 @@ describe("Mis horas · exposición de datos (criterio 7)", () => {
     }
   });
 
+  it("Proyectos › cliente (RESTRICTED_FIELDS): ningún pedido del Empleado lo lee ni lo devuelve", async () => {
+    expect(RESTRICTED_FIELDS.has(P.fields.cliente)).toBe(true);
+    seedHora(ids.eva, ids.uno, "2026-11-03", "09:00", "12:00");
+    fake.calls.length = 0;
+    const responses = [
+      await call(ME_PROYECTOS, "GET"),
+      await call(ME_HORAS, "GET"),
+      await call(ME_HORAS, "POST", { body: nueva() }),
+    ];
+    expect(responses.map((r) => r.status)).toEqual([200, 200, 201]);
+    const props = await loadMisHorasPageProps(ids.eva);
+    for (const text of [...responses.map((r) => r.text), JSON.stringify(props)]) {
+      expect(text).not.toContain(P.fields.cliente);
+      expect(text).not.toContain(ids.cliente);
+      expect(text).not.toContain("QA Cliente Secreto");
+    }
+    const proyectoReads = fake.calls.filter((c) => c.method === "list" && c.tableId === P.id);
+    expect(proyectoReads.length).toBeGreaterThan(0);
+    for (const c of proyectoReads) expect((c.options as { fields: string[] }).fields).not.toContain(P.fields.cliente);
+    expect(fake.calls.some((c) => c.tableId === TABLES.clientes.id)).toBe(false);
+  });
+
   it("sin proyectos activos asignados: mensaje y sin formulario", async () => {
     fake.rows(TABLES.usuarios.id).find((r) => r.id === ids.eva)!.fields[U.proyectosAsignados] = [ids.tres];
     const props = await loadMisHorasPageProps(ids.eva);

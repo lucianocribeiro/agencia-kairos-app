@@ -26,7 +26,7 @@ const item = await import("@/app/api/admin/tesoreria/[id]/route");
 const trfColl = await import("@/app/api/admin/tesoreria/transferencias/route");
 const trfItem = await import("@/app/api/admin/tesoreria/transferencias/[transferencia]/route");
 const { CONTROL } = await import("@/lib/tesoreria/rules");
-const { COMPUTED_FIELDS } = await import("@/lib/airtable/schema");
+const { COMPUTED_FIELDS, FIELD_TABLE } = await import("@/lib/airtable/schema");
 
 const T = TABLES;
 const M = T.tesoreria.fields;
@@ -117,13 +117,16 @@ const base = (over: Record<string, unknown> = {}) => ({ fecha: "2026-10-15", cue
 describe("movimientos · alta", () => {
   beforeEach(() => loginAs(ids.admin));
 
-  it("guarda los campos escribibles (nunca calculados); TC solo en USD; importe es-AR", async () => {
+  it("guarda solo campos escribibles de schema.ts; TC solo en USD; importe es-AR", async () => {
     const res = await crear(base({ importe: "1.234,56", tipoCambio: "999", descripcion: " QA " }));
     expect(res.status).toBe(201);
     const f = rows()[0].fields;
     expect(f).toMatchObject({ [M.fecha]: "2026-10-15", [M.cuenta]: [ids.ars1], [M.movimiento]: "Pago", [M.importe]: 1234.56, [M.tipoOperacion]: [ids.otro], [M.descripcion]: "QA" });
     expect(f).not.toHaveProperty(M.tipoCambio);
-    for (const k of Object.keys(f)) expect(COMPUTED_FIELDS.has(k)).toBe(false);
+    for (const k of Object.keys(f)) {
+      expect(FIELD_TABLE.get(k), k).toBe(T.tesoreria.id);
+      expect(COMPUTED_FIELDS.has(k), k).toBe(false);
+    }
     const usd = await crear(base({ cuenta: ids.usd, tipoCambio: "1050,25" }));
     expect(rows().find((r) => r.id === usd.json.id)!.fields[M.tipoCambio]).toBe(1050.25);
   });
@@ -602,13 +605,14 @@ describe("lista y saldo", () => {
     expect(res.saldoActual).toBe(9001);
   });
 
-  it("cuenta obligatoria; filtros inválidos → 400; nunca se piden campos calculados", async () => {
+  it("cuenta obligatoria; filtros inválidos → 400; solo se piden campos de schema.ts", async () => {
     expect((await list("")).status).toBe(400);
     expect((await list("?cuenta=x")).status).toBe(400);
     for (const bad of ["&movimiento=Otro", "&control=nada", "&tipo=x", "&pagina=0", "&desde=2026-02-01&hasta=2026-01-01"]) expect((await list(`?cuenta=${ids.ars1}${bad}`)).status, bad).toBe(400);
     await list(`?cuenta=${ids.ars1}`);
     const fields = fake.calls.filter((c) => c.tableId === T.tesoreria.id).flatMap((c) => (c.options as { fields: string[] }).fields);
-    expect(fields.some((f) => COMPUTED_FIELDS.has(f) && f !== M.numero)).toBe(false);
+    expect(fields.length).toBeGreaterThan(0);
+    for (const f of fields) expect(FIELD_TABLE.get(f), f).toBe(T.tesoreria.id);
   });
 
   it("límite: 5.000 movimientos en el rango → 200; 5.001 → 400", async () => {

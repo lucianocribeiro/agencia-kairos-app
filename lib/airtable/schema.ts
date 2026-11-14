@@ -261,7 +261,7 @@ export const TABLES = {
   /**
    * Ventas: base ARCA «Mis Comprobantes Emitidos». Las columnas ARCA se guardan tal
    * cual (importes en la moneda del comprobante); los importes en pesos los calcula
-   * la app (lib/ventas-compras) y también Airtable (fórmulas, solo de control).
+   * solo la app (lib/ventas-compras).
    */
   ventas: {
     id: "tbl1N4iLAHBLwycxx",
@@ -311,18 +311,6 @@ export const TABLES = {
       /** link → Clientes; del proyecto o por CUIT (lo setea la app) */
       cliente: "fldqeqrBsP8fG7erx",
       observaciones: "fld0RYRhVnGh7Ss9l",
-      /** rollup (solo lectura) */
-      signo: "fldCSo5f6v2OEcf6D",
-      /** fórmula (solo lectura) */
-      tcAplicado: "flde7FkdOAevnNdzt",
-      /** fórmula (solo lectura) */
-      mesDevengadoAAAAMM: "flduBxlV8FfcKWsZv",
-      /** fórmula (solo lectura); control de los cálculos de la app */
-      totalPesos: "fldq0nsGBZTyPULd5",
-      /** fórmula (solo lectura) */
-      ivaPesos: "fldALZBc64EFME5of",
-      /** fórmula (solo lectura) */
-      netoPesos: "fldBQcuHPoES9YGGP",
     },
   },
 
@@ -377,22 +365,6 @@ export const TABLES = {
       observaciones: "fldgUTLTZwcWuLWpw",
       /** link → Proveedores; por CUIT (Nro. Doc. Emisor), lo setea la app */
       proveedor: "fldc2aAKhaT2ipH72",
-      /** rollup (solo lectura) */
-      signo: "fldpmRG15vt4VFvFo",
-      /** fórmula (solo lectura) */
-      tcAplicado: "fldlV8L6QB6Wd9HND",
-      /** fórmula (solo lectura) */
-      mesDevengadoAAAAMM: "fldnhcbt0HJ6Hxulv",
-      /** fórmula (solo lectura) */
-      totalPesos: "fld1Vd237VBCzxcBc",
-      /** fórmula (solo lectura) */
-      ivaPesos: "fldktzln1OsNYQbk8",
-      /** fórmula (solo lectura) */
-      netoPesos: "fldBlG5SfUczJmZyT",
-      /** fórmula (solo lectura) */
-      impactoResultados: "fldGTtokq07JO8mXl",
-      /** fórmula (solo lectura) */
-      cuentaSocio: "fld6Z42Bf5T0d9BNX",
     },
   },
 
@@ -400,7 +372,7 @@ export const TABLES = {
    * Tesorería: un registro por movimiento. Importe siempre positivo en la moneda de
    * la cuenta; Movimiento dice si entra o sale. Transferencia propia = 2 registros
    * con el mismo `transferencia`. Los importes en pesos los calcula la app
-   * (lib/tesoreria); las fórmulas de Airtable no se leen.
+   * (lib/tesoreria).
    */
   tesoreria: {
     id: "tblsY1CLYlxflED9i",
@@ -432,14 +404,6 @@ export const TABLES = {
       descripcion: "fldiiy3Ff9kkrpnFb",
       /** ID compartido por los 2 registros de una transferencia propia (lo escribe la app) */
       transferencia: "fldx7UFCK79B1XzIr",
-      /** rollup (solo lectura) */
-      moneda: "fldl3YL2HRZciQpvT",
-      /** fórmula (solo lectura) */
-      mesAAAAMM: "flddUTzaQwf4kcFCp",
-      /** fórmula (solo lectura) */
-      entraSale: "fldPc72La6n5JxpOQ",
-      /** fórmula (solo lectura) */
-      importePesos: "fldGzB3GxYEfxAW3D",
     },
     choices: {
       movimiento: ["Cobranza", "Pago"],
@@ -467,20 +431,6 @@ export const TABLES = {
       facturable: "fldXXGI9Udo683Uef",
       /** date */
       mesAFacturar: "fldPEfmYeYcbQeVhD",
-      /** formula */
-      horas: "fldTSWNksJnEbYTLW",
-      /** rollup */
-      valorHora: "fldwFQXJUDKuqgk1G",
-      /** rollup */
-      moneda: "fld602JbfkZ5JTc2o",
-      /** lookup */
-      cliente: "fldZENPxhthEKLFwI",
-      /** formula */
-      importeAFacturar: "fldiP68Xn1FBguBef",
-      /** formula */
-      mesTrabajado: "fldGHAQu50u2bplH6",
-      /** formula */
-      mesAFacturarAAAAMM: "fldZnamaVXZbFf2YX",
       /** createdTime */
       creado: "fldJBZYpRBvDMWhdO",
       /** link → Usuarios */
@@ -519,43 +469,21 @@ export type FieldId = {
 
 const F = {
   tesoreria: TABLES.tesoreria.fields,
-  ventas: TABLES.ventas.fields,
-  compras: TABLES.compras.fields,
   usuarios: TABLES.usuarios.fields,
   proyectos: TABLES.proyectos.fields,
   horas: TABLES.horas.fields,
 };
 
-/** Campos formula, rollup, lookup, createdTime y autoNumber. Nunca se envían en escrituras. */
+/**
+ * Campos que llena Airtable solo (autoNumber y createdTime): Airtable rechaza
+ * cualquier escritura. Nunca se envían en escrituras (guard en payload.ts).
+ * En la base no hay campos fórmula, rollup, lookup ni count: todo cálculo vive en
+ * la app (AGENTS.md). Si se agrega un campo que llena Airtable, va acá.
+ */
 export const COMPUTED_FIELDS: ReadonlySet<string> = new Set<FieldId>([
   F.horas.numero,
-  F.horas.horas,
-  F.horas.valorHora,
-  F.horas.moneda,
-  F.horas.cliente,
-  F.horas.importeAFacturar,
-  F.horas.mesTrabajado,
-  F.horas.mesAFacturarAAAAMM,
   F.horas.creado,
-  F.ventas.signo,
-  F.ventas.tcAplicado,
-  F.ventas.mesDevengadoAAAAMM,
-  F.ventas.totalPesos,
-  F.ventas.ivaPesos,
-  F.ventas.netoPesos,
-  F.compras.signo,
-  F.compras.tcAplicado,
-  F.compras.mesDevengadoAAAAMM,
-  F.compras.totalPesos,
-  F.compras.ivaPesos,
-  F.compras.netoPesos,
-  F.compras.impactoResultados,
-  F.compras.cuentaSocio,
   F.tesoreria.numero,
-  F.tesoreria.moneda,
-  F.tesoreria.mesAAAAMM,
-  F.tesoreria.entraSale,
-  F.tesoreria.importePesos,
 ]);
 
 /**
@@ -606,10 +534,6 @@ export const SECRET_FIELDS: ReadonlySet<string> = new Set<FieldId>([F.usuarios.p
  */
 export const RESTRICTED_FIELDS: ReadonlySet<string> = new Set<FieldId>([
   ...(SECRET_FIELDS as ReadonlySet<FieldId>),
-  F.horas.valorHora,
-  F.horas.moneda,
-  F.horas.importeAFacturar,
-  F.horas.cliente,
   F.proyectos.valorHora,
   F.proyectos.monedaValorHora,
 ]);

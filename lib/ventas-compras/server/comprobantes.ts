@@ -30,8 +30,7 @@ import { validarEdicion } from "./service";
 
 /**
  * Listas, edición y borrado de comprobantes de Ventas y Compras (Admin). Los
- * importes y valores efectivos se calculan en código (lib/ventas-compras/listado.ts),
- * nunca se leen de las fórmulas de Airtable.
+ * importes y valores efectivos se calculan solo en código (lib/ventas-compras/listado.ts).
  */
 
 export const PAGE_SIZE = 50;

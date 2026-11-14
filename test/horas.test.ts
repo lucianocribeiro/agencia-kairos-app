@@ -53,7 +53,6 @@ const C = TABLES.clientes;
 const HT = TABLES.horas;
 const H = HT.fields;
 const VALOR_HORA = 98765.43;
-const IMPORTE = 4242424.42;
 
 let hash: string;
 beforeAll(async () => {
@@ -95,7 +94,7 @@ beforeEach(() => {
   ids = { cliente, otroCliente, uno, dos, tres, otro, admin, eva, otto, ines };
 });
 
-/** Registro de Horas con los campos calculados llenos (como en la base real). */
+/** Registro de Horas con los campos que se cargan (la base no tiene campos calculados). */
 function seedHora(colaborador: string, proyecto: string, fecha: string, desde: string, hasta: string, extra: Record<string, unknown> = {}) {
   const t = (s: string) => Number(s.slice(0, 2)) * 3600 + Number(s.slice(3, 5)) * 60;
   return fake.seed(HT.id, {
@@ -107,11 +106,6 @@ function seedHora(colaborador: string, proyecto: string, fecha: string, desde: s
     [H.horaHasta]: t(hasta),
     [H.facturable]: true,
     [H.cargadoPor]: [colaborador],
-    [H.valorHora]: [VALOR_HORA],
-    [H.moneda]: ["USD"],
-    [H.cliente]: [ids.cliente],
-    [H.importeAFacturar]: IMPORTE,
-    [H.horas]: 999, // la app nunca usa la fórmula de Airtable: calcula con recordHours
     ...extra,
   });
 }
@@ -387,11 +381,11 @@ describe("Mis horas · exposición de datos (criterio 7)", () => {
   const RESTRICTED_KEYS = /valorHora|valor hora|monedaValorHora|moneda|importe|cliente/i;
   function expectClean(text: string, label: string) {
     for (const fieldId of RESTRICTED_FIELDS) expect(text.includes(fieldId), `${label}: ${fieldId}`).toBe(false);
-    for (const fieldId of [H.valorHora, H.moneda, H.cliente, H.importeAFacturar, P.fields.valorHora, P.fields.monedaValorHora, P.fields.cliente, H.horas]) {
+    for (const fieldId of [P.fields.valorHora, P.fields.monedaValorHora, P.fields.cliente]) {
       expect(text.includes(fieldId), `${label}: ${fieldId}`).toBe(false);
     }
     expect(text, label).not.toMatch(RESTRICTED_KEYS);
-    for (const value of ["98765", "98.765", "4242424", "4.242.424", "USD", "QA Cliente Secreto", ids.cliente]) expect(text.includes(value), `${label}: ${value}`).toBe(false);
+    for (const value of ["98765", "98.765", "USD", "QA Cliente Secreto", ids.cliente]) expect(text.includes(value), `${label}: ${value}`).toBe(false);
   }
 
   it("ninguna respuesta de /api/me, ni la página renderizada, lleva valor hora, moneda, importe o cliente", async () => {

@@ -2,18 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { formatHours, formatTime, parseTime, recordHours, sumHours } from "./time";
 
-/**
- * Referencia exacta de la fórmula de Airtable fldTSWNksJnEbYTLW:
- *   IF(AND({desde}, {hasta}), ROUND(({hasta} - {desde}) / 3600, 2))
- * ROUND(x, 2) con aritmética entera (mitad hacia arriba): floor((s·100 + 1800) / 3600) / 100.
- */
-function airtableFormula(desde: number, hasta: number): number | null {
-  if (!desde || !hasta) return null; // AND() con 0 es falso
-  const s = hasta - desde;
-  const sign = s < 0 ? -1 : 1;
-  return (sign * Math.floor((Math.abs(s) * 100 + 1800) / 3600)) / 100;
-}
-
 describe("parseTime / formatTime", () => {
   it("HH:mm de 00:00 a 23:59 ↔ segundos múltiplos de 60", () => {
     expect(parseTime("00:00")).toBe(0);
@@ -36,17 +24,7 @@ describe("parseTime / formatTime", () => {
   });
 });
 
-describe("recordHours = fórmula de Airtable", () => {
-  it("coincide en todos los rangos de minutos posibles desde las 00:01", () => {
-    for (let desdeMin = 1; desdeMin < 1440; desdeMin += 7) {
-      for (let hastaMin = desdeMin + 1; hastaMin < 1440; hastaMin++) {
-        const d = desdeMin * 60;
-        const h = hastaMin * 60;
-        expect(recordHours(d, h)).toBe(airtableFormula(d, h));
-      }
-    }
-  });
-
+describe("recordHours = ROUND((hasta − desde) / 3600, 2)", () => {
   it("valores de borde: 1 minuto, 1/3 y 2/3 de hora, día casi completo y empates con segundos", () => {
     expect(recordHours(3600, 3660)).toBe(0.02); // 0,01666…
     expect(recordHours(3600, 4800)).toBe(0.33); // 20 min
@@ -54,7 +32,8 @@ describe("recordHours = fórmula de Airtable", () => {
     expect(recordHours(60, 86_340)).toBe(23.97);
     expect(recordHours(32_400, 37_800)).toBe(1.5);
     // Datos viejos con segundos: 18 s = 0,005 h → empate, hacia arriba como ROUND.
-    for (const s of [18, 54, 90, 1818, 3618, 35_982]) expect(recordHours(3600, 3600 + s)).toBe(airtableFormula(3600, 3600 + s));
+    const empates: [number, number][] = [[18, 0.01], [54, 0.02], [90, 0.03], [1818, 0.51], [3618, 1.01], [35_982, 10]];
+    for (const [s, horas] of empates) expect(recordHours(3600, 3600 + s), String(s)).toBe(horas);
   });
 
   it("falta una hora o el rango no es positivo → 0", () => {
@@ -64,9 +43,8 @@ describe("recordHours = fórmula de Airtable", () => {
     expect(recordHours(3600, 3600)).toBe(0);
   });
 
-  it("diferencia conocida: desde 00:00 cuenta acá, en la fórmula de Airtable queda en blanco", () => {
+  it("desde 00:00 (0 segundos) cuenta como una hora cargada", () => {
     expect(recordHours(0, 5400)).toBe(1.5);
-    expect(airtableFormula(0, 5400)).toBeNull();
   });
 });
 

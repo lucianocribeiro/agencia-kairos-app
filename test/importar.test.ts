@@ -282,9 +282,9 @@ describe("confirmar · escritura", () => {
     const usd = rows.find((r) => r.fields[V.numeroDesde] === 3)!.fields;
     expect(usd).toMatchObject({ [V.tipoCambio]: 1000.5, [V.moneda]: "DOL", [V.otrosTributos]: 0.5 });
     expect(usd).not.toHaveProperty(V.cliente); // sin match por CUIT
-    // ninguna escritura manda campos calculados
-    const { COMPUTED_FIELDS } = await import("@/lib/airtable/schema");
-    for (const r of rows) for (const k of Object.keys(r.fields)) expect(COMPUTED_FIELDS.has(k)).toBe(false);
+    // toda escritura usa solo campos de Ventas declarados en schema.ts
+    const { FIELD_TABLE } = await import("@/lib/airtable/schema");
+    for (const r of rows) for (const k of Object.keys(r.fields)) expect(FIELD_TABLE.get(k), k).toBe(T.ventas.id);
     // lotes de ≤ 10
     expect(fake.calls.filter((c) => c.method === "create").every((c) => (c.payload as unknown[]).length <= 10)).toBe(true);
 

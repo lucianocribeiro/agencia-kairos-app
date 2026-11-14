@@ -127,3 +127,12 @@ Es un chequeo no atómico con compensación. Queda una ventana chica en la que u
 - Fechas de Tesorería: `isIsoDate` de `lib/horas/dates.ts` (fechas reales).
 - Campo «Transferencia» (fldx7UFCK79B1XzIr) creado por Meta API en CC-F2-04.
 - Cuentas: la Moneda no cambia si la cuenta tiene movimientos (`MaestroSpec.bloqueadoConReferencias` en la UI; `cuentasBeforeWrite` en maestros-config.ts: 409 antes de escribir y, si la Moneda cambió, verificación posterior que relee las referencias: un movimiento creado en el medio → se deshace → 409; relectura fallida → se deshace → 503). Así la moneda que usan la verificación de las transferencias y la red de seguridad no cambia por debajo. Mismo riesgo residual que el resto de las verificaciones posteriores (ventana de milisegundos sin transacciones).
+
+## Reportes (CC-F3-05)
+
+- Funciones puras en `lib/reportes/` (`resultados.ts`, `por-proyecto.ts`, `socios.ts`, `saldos.ts`, `periodo.ts`), con datos ya evaluados (`normalizar.ts`: `aComprobanteR` desde `evaluarComprobante`, `aMovimientoR` desde `evaluarMovimiento`). Nunca recalcular importes ni valores efectivos de otra forma: siempre las reglas de `lib/ventas-compras` y `lib/tesoreria`. Sumas en centavos enteros.
+- Servidor: `lib/reportes/server/load.ts` (lecturas con los campos justos: `COMPROBANTE_FIELDS`, `MOVIMIENTO_FIELDS`, `HORA_FIELDS`) y `service.ts` (`cargarReporte` → `{ data, vista }`; `reporteXlsx`). Rutas `GET /api/admin/reportes/[reporte]` y `/[reporte]/excel` con `adminRoute` y `maxDuration = 300`; páginas `app/(admin)/reportes/*` con `<Guarded admin>`, sin caché entre requests.
+- La pantalla (`components/reportes/report-view.tsx`) y el Excel (`lib/reportes/excel.ts` → `lib/xlsx/write.ts`) salen de la MISMA vista (`lib/reportes/vista.ts`): un cambio de filas o columnas va en la vista, no en uno solo de los dos.
+- Ventas: Impacto = Neto $ (el `impacto` de `evaluar` es solo de Compras). Una categoría efectiva vacía o que no es de Ingreso/Gasto va a «Sin categoría (revisar CONTROL)»; una UN o un proyecto que no existe va a «Sin unidad de negocio» / «Sin proyecto» (los totales cierran siempre).
+- Tipos de operación por nombre exacto: Socios exige «Retiro de socio», «Gasto particular de socio» y «Aporte de socio» (si falta → error en pantalla); Saldos usa «Cobro a cliente» y «Pago a proveedor» (si falta → aviso y 0).
+- `lib/xlsx/write.ts`: escritor propio (ZIP con `node:zlib`, `server-only`), una hoja, números siempre numéricos con estilo. Los tests lo leen con `lib/xlsx/read.ts`.

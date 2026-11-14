@@ -105,7 +105,8 @@ export function parseField(spec: FieldSpec, raw: RawValue | undefined): Parsed {
       if (!text) return empty();
       const numberText = text.replace(/%\s*$/, "");
       const n = parseNumberInput(numberText);
-      if (n === null) return { error: numberInputError(FIELD_MESSAGES.number, numberText) };
+      // La pista «usá coma» solo en number y percent: un entero no lleva decimales.
+      if (n === null) return { error: spec.kind === "integer" ? FIELD_MESSAGES.number : numberInputError(FIELD_MESSAGES.number, numberText) };
       if (spec.kind === "integer" && !Number.isInteger(n)) return { error: FIELD_MESSAGES.integer };
       if (spec.numberOptions && !spec.numberOptions.includes(n)) return { error: FIELD_MESSAGES.option };
       if (spec.min !== undefined && n < spec.min) return { error: FIELD_MESSAGES.min(spec.min) };

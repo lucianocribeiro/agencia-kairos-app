@@ -55,6 +55,11 @@ describe("número rechazado: pista de coma decimal", () => {
     expect(parseField(num, t)).toEqual({ error: HINT });
     expect(parseField(pct, `${t}%`)).toEqual({ error: HINT });
   });
+  it.each(["5.5", "12.5", "1.23"])("%s en un campo entero → mensaje de siempre, sin pista", (t) => {
+    const int: FieldSpec = { key: "i", label: "I", kind: "integer" };
+    expect(parseField(int, t)).toEqual({ error: NUMBER });
+    expect(parseField(int, "5,5")).toEqual({ error: "Ingresá un número entero." });
+  });
   it.each(["12.34.567", "1,234.56", "abc"])("%s → mensaje de siempre, sin pista", (t) => {
     expect(parseField(num, t)).toEqual({ error: NUMBER });
   });

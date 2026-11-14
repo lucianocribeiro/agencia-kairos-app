@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   Briefcase,
+  ChartColumn,
   Building2,
   Clock,
   Database,
@@ -10,6 +11,8 @@ import {
   Handshake,
   Landmark,
   List,
+  Scale,
+  TrendingUp,
   Receipt,
   LayoutDashboard,
   ShoppingCart,
@@ -54,6 +57,13 @@ export const MAESTROS: readonly NavLink[] = [
   { label: "Parámetros", href: "/maestros/parametros", icon: SlidersHorizontal },
 ];
 
+export const REPORTES_NAV: readonly NavLink[] = [
+  { label: "Resultados", href: "/reportes/resultados", icon: TrendingUp },
+  { label: "Por UN y proyecto", href: "/reportes/resultados-por-proyecto", icon: FolderKanban },
+  { label: "Socios", href: "/reportes/socios", icon: Handshake },
+  { label: "Saldos", href: "/reportes/saldos", icon: Scale },
+];
+
 export const NAV_BY_ROLE: Record<Role, readonly NavItem[]> = {
   Admin: [
     { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -77,6 +87,7 @@ export const NAV_BY_ROLE: Record<Role, readonly NavItem[]> = {
       ],
     },
     { label: "Tesorería", href: "/tesoreria", icon: Wallet },
+    { label: "Reportes", href: "/reportes", icon: ChartColumn, children: REPORTES_NAV },
     { label: "Usuarios", href: "/usuarios", icon: Users },
     { label: "Maestros", href: "/maestros", icon: Database, children: MAESTROS },
   ],

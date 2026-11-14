@@ -2,7 +2,7 @@
 
 App interna de Agencia Kairos. Next.js (App Router) + TypeScript + Tailwind CSS, con Airtable como base de datos. Se deploya en Vercel.
 
-> Estado: **Fase 2 · CC-F2-04 (Tesorería)**. Fase 1 completa: login, guards por rol, ABM de Usuarios y Maestros, carga de horas del Empleado, Horas y Dashboard de Admin. Fase 2: Clientes Activo / Inactivo (CC-F2-01).
+> Estado: **Fase 3 · CC-F3-05 (Reportes)**. Fase 1 completa: login, guards por rol, ABM de Usuarios y Maestros, carga de horas del Empleado, Horas y Dashboard de Admin. Fase 2: Clientes Activo / Inactivo (CC-F2-01).
 
 ## Requisitos
 
@@ -177,6 +177,18 @@ Reglas (de `Gestion_Kairos_ERP_v4.xlsx`, implementadas solo en `lib/ventas-compr
 - **Saldo** por cuenta = Saldo inicial (vacío = 0) + suma de los importes con signo de **todos** sus movimientos, en la moneda de la cuenta, ordenados por Fecha y después N° (regla del Excel). **La Fecha saldo inicial no se usa en el cálculo.** Con un filtro de Fecha, la primera fila ya incluye todo lo anterior; se muestran el saldo actual, el del inicio y el del final del período. Los filtros de tipo, movimiento y Control no cambian el saldo corrido de cada fila.
 - **Totales** del conjunto filtrado: entradas, salidas y neto (moneda de la cuenta), Importe $, Impacto en resultados $ y A cuenta del socio $.
 - **Límite**: si el rango de Fechas tiene más de 5.000 movimientos de la cuenta, la lista pide un rango más corto. La lista lee toda la tabla (el saldo necesita todos los movimientos anteriores).
+
+## Reportes
+
+**Reportes** (`/reportes/*`), solo Admin: Resultados, Resultados por UN y proyecto, Socios y Saldos (las hojas del Excel). Cada uno tiene «Descargar Excel» con los mismos valores que la pantalla.
+
+- **Período**: 12 meses desde el mes inicial (`?desde=AAAA-MM`, selector «Mes inicial»), ambos incluidos. Por defecto, el Parámetro «Primer mes de los reportes» (AAAA-MM-DD o AAAA-MM); si falta o no es válido, enero del año actual y el aviso «Revisá el parámetro Primer mes de los reportes en Maestros.». Saldos no tiene período (histórico).
+- **Reglas**: las de las listas, sin recalcular de otra forma (`evaluarComprobante` de Ventas/Compras, `evaluarMovimiento` de Tesorería, `recordHours`). Valores efectivos como en las listas (Mes devengado, UN, Categoría, Cliente de Ventas calculado al leer). Impacto en resultados: Ventas = Neto $; Compras = −Neto $ (0 si se imputó a un socio); Tesorería = Importe $ si Suma = S. Importes en pesos, en centavos enteros.
+- **Resultados**: categoría × mes. Ingreso = S, Gasto = −S (sin importar de qué tabla viene el registro). «Sin categoría (revisar CONTROL)» junta lo que no tiene categoría efectiva (o tiene una que no es de Ingreso/Gasto). Resultado y Margen %.
+- **Por UN y proyecto**: Ingresos = Impacto de Ventas, Gastos = −Impacto de Compras, por UN efectiva y por proyecto (todos los estados), más «Sin unidad de negocio», «Tesorería (sin comprobante)» (positivos / negativos) y «Sin proyecto». Horas trabajadas = horas del proyecto con Fecha en el período (facturables o no); Ingreso por hora = Ingresos / horas.
+- **Socios**: histórico por socio (Retiros, Gastos particulares de Tesorería y de Compras, Aportes, Total retirado neto, % y lo que le corresponde, Diferencia, Situación) y total retirado neto por mes del período. Los tipos «Retiro de socio», «Gasto particular de socio» y «Aporte de socio» se buscan por nombre exacto: si falta alguno, el reporte muestra el error.
+- **Saldos**: cuentas (en su moneda; saldo = inicial + entradas − salidas, igual que Tesorería), clientes (Facturado por cliente efectivo, Cobrado = tipo «Cobro a cliente»), «Ventas sin cliente identificado» y proveedores (Pagado = tipo «Pago a proveedor»).
+- **Excel**: una hoja por reporte, con las tablas una debajo de la otra como en pantalla; importes como números con formato `#,##0.00` y porcentajes con `0.0%`. Archivos `Resultados_AAAAMM.xlsx`, `Resultados_por_proyecto_AAAAMM.xlsx`, `Socios_AAAAMM.xlsx` (mes inicial) y `Saldos_AAAAMM.xlsx` (mes de la descarga). Lo arma un escritor propio sin dependencias (`lib/xlsx/write.ts`).
 
 ## Estructura
 

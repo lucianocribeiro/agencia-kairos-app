@@ -62,6 +62,7 @@ export const REPORTES_NAV: readonly NavLink[] = [
   { label: "Por UN y proyecto", href: "/reportes/resultados-por-proyecto", icon: FolderKanban },
   { label: "Socios", href: "/reportes/socios", icon: Handshake },
   { label: "Saldos", href: "/reportes/saldos", icon: Scale },
+  { label: "Proforma", href: "/reportes/proforma", icon: FileText },
 ];
 
 export const NAV_BY_ROLE: Record<Role, readonly NavItem[]> = {

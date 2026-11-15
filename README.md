@@ -190,6 +190,17 @@ Reglas (de `Gestion_Kairos_ERP_v4.xlsx`, implementadas solo en `lib/ventas-compr
 - **Saldos**: cuentas (en su moneda; saldo = inicial + entradas − salidas, igual que Tesorería), clientes (Facturado por cliente efectivo, Cobrado = tipo «Cobro a cliente»), «Ventas sin cliente identificado» y proveedores (Pagado = tipo «Pago a proveedor»). Si falta alguno de esos dos tipos, su tabla se reemplaza por un error que lo nombra; Cuentas se muestra siempre.
 - **Excel**: una hoja por reporte, con las tablas una debajo de la otra como en pantalla; importes como números con formato `#,##0.00` y porcentajes con `0.0%`. Archivos `Resultados_AAAAMM.xlsx`, `Resultados_por_proyecto_AAAAMM.xlsx`, `Socios_AAAAMM.xlsx` (mes inicial) y `Saldos_AAAAMM.xlsx` (mes de la descarga). Lo arma un escritor propio sin dependencias (`lib/xlsx/write.ts`).
 
+## Proforma de horas
+
+**Reportes › Proforma** (`/reportes/proforma`), solo Admin. Replica la hoja «Proforma» del Excel: las horas a facturar de un cliente en un mes, con totales por moneda y «Descargar PDF». Es una vista: no escribe nada.
+
+- **Selección**: Cliente (solo Activos, por nombre) y Mes a facturar (`?cliente=rec…&mes=AAAA-MM`; por defecto el mes actual; de 2000-01 a 2099-12).
+- **Qué cuenta**: registros de Horas de un proyecto del cliente, Facturables, con Mes a facturar efectivo = el mes (el guardado; si está vacío, el mes de la Fecha). Horas = `recordHours`; Importe por registro = ROUND(horas × Valor hora actual del proyecto; 2), en la Moneda valor hora del proyecto.
+- **Resumen por proyecto** (Importe = suma de los importes por registro, como el Excel), **Totales por moneda** (ARS y USD por separado: Subtotal, IVA = ROUND(Subtotal × alícuota; 2), Total) y **Detalle de horas** (por Fecha y Hora desde).
+- Un proyecto sin Valor hora o Moneda aparece con «Falta valor hora o moneda en el proyecto», no suma en los totales y la proforma avisa que está incompleta.
+- **Alícuota**: Parámetro «Alícuota IVA (proforma de horas)» (texto): `0.21`, `0,21`, `21%` o `21`. Si falta o no es válida, la proforma se bloquea con «Revisá el parámetro Alícuota IVA (proforma de horas) en Maestros.».
+- **PDF** (`GET /api/admin/proforma/pdf`): A4 vertical, `Proforma_<Sigla>_<AAAAMM>.pdf`, logo sobre una banda negra, fuente Sora (OFL, `assets/fonts/sora`), detalle paginado con el encabezado repetido, «Página X de Y» y fecha de generación. Lo arma `pdf-lib` (sin binarios nativos).
+
 ## Estructura
 
 ```

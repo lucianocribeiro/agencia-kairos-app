@@ -147,4 +147,3 @@ Es un chequeo no atómico con compensación. Queda una ventana chica en la que u
 - Estados: mes inválido, cliente mal formado, Inactivo o sin cliente → 400; cliente inexistente → 404; alícuota inválida → 409 (bloquea pantalla y PDF); PDF de un mes sin horas → 404.
 - PDF: `lib/proforma/pdf.ts` con `pdf-lib` + `@pdf-lib/fontkit` (MIT, JS puro). Fuente Sora embebida (OFL; `assets/fonts/sora`, con su licencia) y logo recortado `assets/brand/logo-kairos-pdf.png` (claro → banda negra). `next.config.ts` suma esos archivos al trace de `/api/admin/proforma/pdf` (`outputFileTracingIncludes`); si se mueven, actualizar ahí y en `lib/proforma/server/assets.ts`.
 - Tests del PDF: se extrae el texto con `pdfjs-dist` (solo desarrollo, `test/pdf-text.ts`).
-

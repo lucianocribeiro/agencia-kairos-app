@@ -58,7 +58,7 @@ describe("PDF de la proforma", () => {
         expect(lines[0], `encabezado finito en página ${i + 1}`).toBe(slim);
         expect(lines, `sin banda en página ${i + 1}`).not.toContain("Proforma de horas");
         expect(imagenes(i), `sin logo en página ${i + 1}`).toBe(0);
-        expect(lines[1], `encabezado de la tabla en página ${i + 1}`).toBe("Fecha   Colaborador   Proyecto   Tarea   Horas   Valor hora   Moneda   Importe");
+        expect(lines[1], `encabezado de la tabla en página ${i + 1}`).toBe("Fecha   Colaborador   Proyecto   Tarea   Horas   Moneda   Importe");
       }
     });
     // Fecha, Colaborador de dos palabras y Código del proyecto entran en una línea
@@ -66,7 +66,13 @@ describe("PDF de la proforma", () => {
       const fecha = r.fecha.split("-").reverse().join("/");
       expect(pages.flat().some((l) => l.startsWith(`${fecha}   QA Smoke Empleado   QZ - Proforma USD   `)), fecha).toBe(true);
     }
-    expect(Object.values(DETALLE_COLS).reduce((a, b) => a + b, 0)).toBeLessThan(595.28 - 2 * 42.52 - 80); // a Tarea le quedan > 80 pt
+    expect(Object.keys(DETALLE_COLS)).not.toContain("valorHora");
+    expect(595.28 - 2 * 42.52 - Object.values(DETALLE_COLS).reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(130); // ancho de Tarea
+    // el detalle no repite el valor hora: la fila es «fecha … horas   moneda   importe»
+    const filas = pages.flat().filter((l) => /^\d{2}\/\d{2}\/\d{4}   /.test(l));
+    expect(filas).toHaveLength(d.detalle.length);
+    for (const l of filas) expect(l, l).toMatch(/ \d+,\d{2}   ARS   [\d.]+,\d{2}$/);
+    expect(pages[0].some((l) => /^QZ - Proforma USD   [\d,.]+   1\.234,57   ARS   /.test(l)), "valor hora en el resumen").toBe(true);
     // todas las filas del detalle están, con su tarea (que corta línea dentro de la celda)
     const plano = pages.flat().join(" ").replace(/\s+/g, " ");
     for (const r of d.detalle) expect(plano).toContain(r.tarea.slice(0, 9));

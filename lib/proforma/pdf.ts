@@ -62,8 +62,9 @@ const TABLE_DETALLE: TableStyle = { size: 8.5, headerSize: 8.5, lh: 10.5, padX: 
  * Anchos del detalle (pt). Con Sora 8,5 pt y 3 pt de padding entran en una línea una Fecha
  * de 10 caracteres, un Colaborador de dos palabras («QA Smoke Empleado»), un Código de
  * proyecto como «QZ - Proforma ARS» e importes hasta 999.999,99. Tarea toma el resto y corta.
+ * Sin «Valor hora»: ya está en el Resumen por proyecto (la pantalla y el JSON lo mantienen).
  */
-export const DETALLE_COLS = { fecha: 58, colaborador: 98, proyecto: 90, horas: 32, valorHora: 51, moneda: 42, importe: 53 } as const;
+export const DETALLE_COLS = { fecha: 58, colaborador: 98, proyecto: 90, horas: 32, moneda: 42, importe: 53 } as const;
 const DETALLE_TAREA = CW - Object.values(DETALLE_COLS).reduce((a, b) => a + b, 0);
 
 interface Col {
@@ -275,11 +276,10 @@ export async function generarProformaPdf(d: ProformaData, assets: PdfAssets, gen
       { label: "Proyecto", width: DETALLE_COLS.proyecto, wrap: true },
       { label: "Tarea", width: DETALLE_TAREA, wrap: true },
       { label: "Horas", width: DETALLE_COLS.horas, align: "right" },
-      { label: "Valor hora", width: DETALLE_COLS.valorHora, align: "right" },
       { label: "Moneda", width: DETALLE_COLS.moneda },
       { label: "Importe", width: DETALLE_COLS.importe, align: "right" },
     ],
-    d.detalle.map((r) => [isoToDisplayDate(r.fecha), r.colaborador, r.proyecto, r.tarea, formatHours(r.horas), valor(r.valorHora), r.moneda ?? "", money(r.importe)]),
+    d.detalle.map((r) => [isoToDisplayDate(r.fecha), r.colaborador, r.proyecto, r.tarea, formatHours(r.horas), r.moneda ?? "", money(r.importe)]),
     { style: TABLE_DETALLE },
   );
 

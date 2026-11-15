@@ -139,3 +139,12 @@ Es un chequeo no atómico con compensación. Queda una ventana chica en la que u
 - `Cache-Control: no-store`: solo con `withNoStore` (`lib/auth/api.ts`). Los 401/403 de `adminRoute`/`userRoute` lo llevan siempre; una ruta que no se debe cachear nunca pasa `{ noStore: true }` (todas las respuestas, también 400/404/500), como las de reportes.
 - `lib/xlsx/write.ts`: escritor propio (ZIP con `node:zlib`, `server-only`), una hoja, números siempre numéricos con estilo. Todo texto pasa por `xmlSafe` (saca lo que XML 1.0 no admite: controles C0 salvo tab/LF/CR, U+FFFE/U+FFFF, surrogates sueltos). Los tests lo leen con `lib/xlsx/read.ts`.
 - `parseNumberInput` rechaza más de 15 dígitos significativos (`MAX_INPUT_DIGITS`), con el mensaje de siempre.
+
+## Proforma de horas (CC-F3-07)
+
+- Lógica pura en `lib/proforma/proforma.ts` (`calcularProforma`, `parseAlicuota`, `isMesProforma`, `mesEfectivo`): `recordHours`/`sumHours` para las horas y `toCents` por registro (el importe del proyecto es la suma de los importes por registro, no horas totales × valor hora). Solo lectura: nunca escribe en Airtable.
+- Servidor: `lib/proforma/server/service.ts` (`cargarProforma`, `clientesActivos`, `horasDelMesFormula`). Horas candidatas en Airtable por mes con los helpers de `formula.ts` (Mes a facturar en el mes, o vacío y Fecha en el mes); cliente y Facturable se filtran en código. Rutas `GET /api/admin/proforma` y `/pdf` con `adminRoute(..., { noStore: true })`; página `/reportes/proforma` (`<Guarded admin>`).
+- Estados: mes inválido, cliente mal formado, Inactivo o sin cliente → 400; cliente inexistente → 404; alícuota inválida → 409 (bloquea pantalla y PDF); PDF de un mes sin horas → 404.
+- PDF: `lib/proforma/pdf.ts` con `pdf-lib` + `@pdf-lib/fontkit` (MIT, JS puro). Fuente Sora embebida (OFL; `assets/fonts/sora`, con su licencia) y logo recortado `assets/brand/logo-kairos-pdf.png` (claro → banda negra). `next.config.ts` suma esos archivos al trace de `/api/admin/proforma/pdf` (`outputFileTracingIncludes`); si se mueven, actualizar ahí y en `lib/proforma/server/assets.ts`.
+- Tests del PDF: se extrae el texto con `pdfjs-dist` (solo desarrollo, `test/pdf-text.ts`).
+

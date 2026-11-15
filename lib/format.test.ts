@@ -196,3 +196,21 @@ describe("pista de coma decimal (isShortDotDecimal / numberInputError)", () => {
     }
   });
 });
+
+describe("parseNumberInput: máximo 15 dígitos significativos", () => {
+  it("más de 15 dígitos (sin ceros a la izquierda del entero ni a la derecha del decimal) → rechazado, sin pista", () => {
+    for (const t of ["9007199254740993", "9007199254740993,00", "9".repeat(42), "1.234.567.890.123.456", "1234567890123,456"]) {
+      expect(parseNumberInput(t), t).toBeNull();
+      expect(numberInputError("Mensaje.", t), t).toBe("Mensaje.");
+    }
+  });
+
+  it("hasta 15 dígitos → aceptado; los ceros de relleno no cuentan", () => {
+    expect(parseNumberInput("999.999.999.999,99")).toBe(999999999999.99); // 14
+    expect(parseNumberInput("123456789012345")).toBe(123456789012345); // 15
+    expect(parseNumberInput("12345678901234,5")).toBe(12345678901234.5); // 15
+    expect(parseNumberInput("000123456789012345")).toBe(123456789012345);
+    expect(parseNumberInput("1,50000000000000000000")).toBe(1.5);
+    expect(parseNumberInput("-123456789012345")).toBe(-123456789012345);
+  });
+});

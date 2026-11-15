@@ -523,6 +523,11 @@ describe("Otros maestros", () => {
       fieldErrors: { saldoInicial: "Ingresá un número (por ejemplo 1.234,56)." },
     });
     expect(await createMaestro("socios", { sigla: "QA", nombre: "QA", porcentajeRetiros: "33.33" })).toMatchObject({ status: 400, fieldErrors: { porcentajeRetiros: HINT } });
+    // Tipos de comprobante › Código y Signo son enteros: sin pista.
+    expect(await createMaestro("tipos-de-comprobante", { codigo: "5.5", descripcion: "X", signo: "1" })).toMatchObject({
+      status: 400,
+      fieldErrors: { codigo: "Ingresá un número (por ejemplo 1.234,56)." },
+    });
   });
 
   it("Cuentas: saldo inicial (puede ser negativo) exige fecha", async () => {

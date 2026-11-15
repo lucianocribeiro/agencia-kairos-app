@@ -171,7 +171,8 @@ export function displayToPercent(text: string | null | undefined): number | null
  *          "1234.56" (un solo punto como decimal, solo con 4 o más dígitos enteros: no puede
  *          ser un punto de miles) · signo "-" adelante y espacios.
  * Rechaza lo ambiguo o mal formado (devuelve null): "5.5", "1.23", "12.5" (¿decimal o miles
- *          mal agrupados?), "1.2345", "12.34.567", "1.234.56", "1,234.56", "1.234,", ",5", "", "abc".
+ *          mal agrupados?), "1.2345", "12.34.567", "1.234.56", "1,234.56", "1.234,", ",5", "", "abc",
+ *          y más de 15 dígitos significativos (MAX_INPUT_DIGITS): "9007199254740993".
  */
 export function parseNumberInput(text: string | null | undefined): number | null {
   if (text === null || text === undefined) return null;
@@ -186,8 +187,18 @@ export function parseNumberInput(text: string | null | undefined): number | null
     normalized = s; // un solo punto como decimal con 4+ dígitos enteros ("1234.56")
   }
   if (normalized === null) return null;
+  if (significantDigits(normalized) > MAX_INPUT_DIGITS) return null;
   const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Máximo de dígitos de un número tipeado (como Excel): más se perdería precisión en un double. */
+export const MAX_INPUT_DIGITS = 15;
+
+/** Dígitos de "-0012.3400": enteros sin ceros a la izquierda + decimales sin ceros a la derecha (→ 4). */
+function significantDigits(normalized: string): number {
+  const [int = "", frac = ""] = normalized.replace(/^-/, "").split(".");
+  return int.replace(/^0+/, "").length + frac.replace(/0+$/, "").length;
 }
 
 /** Pista que se agrega al mensaje de error cuando el input parece un decimal con punto. */

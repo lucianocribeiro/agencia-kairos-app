@@ -96,12 +96,14 @@ describe("todas las rutas /api/admin/** (parametrizado)", () => {
   it.each(endpoints)("$method $file sin sesión → 401", async ({ file, method }) => {
     const res = await handler(file, method)(request(method, "/api/admin/x", method === "DELETE" || method === "GET" ? undefined : {}), ctx(paramsFor(file)));
     expect(res.status).toBe(401);
+    expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
   it.each(endpoints)("$method $file con sesión de Empleado → 403", async ({ file, method }) => {
     await loginAs(empleadoId);
     const res = await handler(file, method)(request(method, "/api/admin/x", method === "DELETE" || method === "GET" ? undefined : {}), ctx(paramsFor(file)));
     expect(res.status).toBe(403);
+    expect(res.headers.get("cache-control")).toBe("no-store");
     // y no tocó nada
     expect(fake.calls.some((c) => c.method !== "list")).toBe(false);
   });

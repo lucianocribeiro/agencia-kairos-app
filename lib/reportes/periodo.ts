@@ -13,9 +13,14 @@ export const PERIODO_MESSAGES = {
 
 const MES_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;
 
-export const isMes = (v: unknown): v is string => typeof v === "string" && MES_RE.test(v);
+/** Años soportados: 2000–2099. El mes inicial va de 2000-01 a 2099-01, así los 12 meses terminan a más tardar en 2099-12. */
+export const MES_INICIAL_MIN = "2000-01";
+export const MES_INICIAL_MAX = "2099-01";
 
-/** Valor del parámetro: "AAAA-MM-DD" o "AAAA-MM" → "AAAA-MM". Otro formato → null. */
+/** ¿Es un mes inicial válido? "AAAA-MM" entre 2000-01 y 2099-01 (comparación de texto: mismo formato). */
+export const isMes = (v: unknown): v is string => typeof v === "string" && MES_RE.test(v) && v >= MES_INICIAL_MIN && v <= MES_INICIAL_MAX;
+
+/** Valor del parámetro: "AAAA-MM-DD" o "AAAA-MM" → "AAAA-MM", dentro del rango de isMes. Otro valor → null. */
 export function parsePrimerMes(valor: unknown): string | null {
   const s = typeof valor === "string" ? valor.trim() : "";
   const m = /^(\d{4}-(?:0[1-9]|1[0-2]))(?:-(\d{2}))?$/.exec(s);
@@ -26,14 +31,14 @@ export function parsePrimerMes(valor: unknown): string | null {
     const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
     if (day < 1 || day > last) return null;
   }
-  return m[1];
+  return isMes(m[1]) ? m[1] : null;
 }
 
 /** "2026-11" + n meses → "AAAA-MM". */
 export function sumarMeses(mes: string, n: number): string {
   const [y, m] = mes.split("-").map(Number);
   const total = y * 12 + (m - 1) + n;
-  return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, "0")}`;
+  return `${String(Math.floor(total / 12)).padStart(4, "0")}-${String((total % 12) + 1).padStart(2, "0")}`;
 }
 
 /** "2026-01" → "01/2026". */

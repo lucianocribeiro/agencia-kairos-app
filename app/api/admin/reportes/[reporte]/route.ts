@@ -7,7 +7,7 @@ import { cargarReporte } from "@/lib/reportes/server/service";
 
 type Context = { params: Promise<{ reporte: string }> };
 
-/** Vercel Hobby: 300 s es el máximo. Los reportes leen Ventas, Compras y Tesorería completas. */
+/** Vercel Hobby: 300 s es el máximo. Los reportes leen Ventas, Compras y Tesorería completas. Toda respuesta: no-store. */
 export const maxDuration = 300;
 
 /**
@@ -20,5 +20,5 @@ export const GET = adminRoute<Context>(async (request, _user, { params }) => {
   if (!isReporteSlug(reporte)) return NextResponse.json({ error: "No encontramos ese reporte." }, { status: 404 });
   const res = await cargarReporte(reporte, request.nextUrl.searchParams.get("desde") || null);
   if (!res.ok) return toResponse(res);
-  return NextResponse.json({ ok: true, reporte, data: res.data.data, vista: res.data.vista }, { headers: { "cache-control": "no-store" } });
-});
+  return NextResponse.json({ ok: true, reporte, data: res.data.data, vista: res.data.vista });
+}, { noStore: true });

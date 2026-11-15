@@ -93,7 +93,7 @@ function req(url: string) {
 const ctx = (reporte: string) => ({ params: Promise.resolve({ reporte }) });
 async function getJson(reporte: string, q = "") {
   const res = await jsonRoute.GET(req(`/api/admin/reportes/${reporte}${q}`), ctx(reporte));
-  return { status: res.status, json: await res.json() };
+  return { status: res.status, json: await res.json(), cacheControl: res.headers.get("cache-control") };
 }
 async function getExcel(reporte: string, q = "") {
   const res = await excelRoute.GET(req(`/api/admin/reportes/${reporte}/excel${q}`), ctx(reporte));
@@ -116,6 +116,11 @@ function expectSheetMatchesVista(rows: (string | number | boolean | null)[][], v
     cursor = i + 1;
   };
   for (const t of vista.tablas) {
+    if (t.error) {
+      next([t.titulo]);
+      next([t.error]);
+      continue;
+    }
     next(t.columnas.map((c) => c.label));
     for (const f of t.filas) {
       const expected = t.columnas.map((c, i) => valorExcel(kindDe(c, f), f.cells[i] ?? null));
@@ -216,6 +221,65 @@ describe("reportes · Admin", () => {
     expect(json.vista.tablas).toEqual([]);
     const rows = readFirstSheet((await getExcel("socios")).bytes);
     expect(rows.flat()).toContain(json.vista.error);
+  });
+});
+
+describe("reportes · Cache-Control: no-store en todas las respuestas", () => {
+  beforeEach(() => loginAs(ids.admin));
+
+  it("200, 400, 404 y 500 en la API y en la descarga", async () => {
+    const both = async (reporte: string, q = "") => [await getJson(reporte, q), await getExcel(reporte, q)].map((r) => [r.status, "cacheControl" in r ? r.cacheControl : r.headers.get("cache-control")]);
+    expect(await both("resultados")).toEqual([[200, "no-store"], [200, "no-store"]]);
+    expect(await both("saldos")).toEqual([[200, "no-store"], [200, "no-store"]]);
+    expect(await both("resultados", "?desde=2099-02")).toEqual([[400, "no-store"], [400, "no-store"]]);
+    expect(await both("otro")).toEqual([[404, "no-store"], [404, "no-store"]]);
+    fake.fail("list", T.ventas.id); // error no controlado → 500 genérico del wrapper
+    expect(await both("resultados")).toEqual([[500, "no-store"], [500, "no-store"]]);
+  });
+
+  it("401 y 403 (los responde el guard de adminRoute)", async () => {
+    cookieJar.clear();
+    expect((await getJson("socios")).cacheControl).toBe("no-store");
+    await loginAs(ids.empleado);
+    const r = await getExcel("socios");
+    expect([r.status, r.headers.get("cache-control")]).toEqual([403, "no-store"]);
+  });
+
+  it("período: 2099-01 → 01/2099 a 12/2099; 1999-12 y 2099-02 → 400 con el mensaje", async () => {
+    expect((await getJson("resultados", "?desde=2099-01")).json.data.periodo.label).toBe("Período: 01/2099 a 12/2099");
+    for (const q of ["?desde=1999-12", "?desde=2099-02", "?desde=0000-01", "?desde=9999-12"]) {
+      expect((await getJson("resultados", q)).json, q).toEqual({ error: "Elegí un mes válido (AAAA-MM)." });
+    }
+  });
+});
+
+describe("Saldos sin un tipo de operación", () => {
+  beforeEach(() => loginAs(ids.admin));
+  const quitar = (nombre: string) => {
+    const rows = fake.rows(T.tiposOperacion.id);
+    rows.splice(rows.findIndex((r) => r.fields[T.tiposOperacion.fields.nombre] === nombre), 1);
+  };
+
+  it.each([
+    ["Cobro a cliente", "Clientes", "No encontramos el tipo de operación «Cobro a cliente» en Maestros. Sin ese tipo no se pueden calcular los saldos de clientes."],
+    ["Pago a proveedor", "Proveedores", "No encontramos el tipo de operación «Pago a proveedor» en Maestros. Sin ese tipo no se pueden calcular los saldos de proveedores."],
+  ])("sin «%s»: la tabla %s se reemplaza por el error en pantalla y en el .xlsx; Cuentas sigue", async (tipo, tabla, mensaje) => {
+    quitar(tipo);
+    const { status, json } = await getJson("saldos");
+    expect(status).toBe(200);
+    const t = json.vista.tablas.find((x: { titulo: string }) => x.titulo === tabla);
+    expect(t).toMatchObject({ error: mensaje, columnas: [], filas: [] });
+    expect(json.vista.tablas[0].titulo).toBe("Cuentas (en la moneda de cada cuenta)");
+    expect(json.vista.tablas[0].error).toBeUndefined();
+    expect(json.vista.tablas[0].filas[0].cells[0]).toBe("Banco $");
+    const rows = readFirstSheet((await getExcel("saldos")).bytes);
+    expect(rows.flat()).toContain(mensaje);
+    if (tabla === "Clientes") {
+      expect(rows.flat()).not.toContain("Ventas sin cliente identificado");
+      expect(rows.flat()).not.toContain("QA Cliente");
+    } else expect(rows.flat()).not.toContain("QA Proveedor");
+    expect(rows.flat()).toContain("Banco $");
+    expectSheetMatchesVista(rows, json.vista);
   });
 });
 

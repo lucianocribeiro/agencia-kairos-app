@@ -2,7 +2,7 @@ import { inflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
 import { readFirstSheet } from "./read";
-import { colName, writeXlsx } from "./write";
+import { colName, writeXlsx, xmlSafe } from "./write";
 
 /** Lee una entrada del ZIP que arma writeXlsx (headers locales simples, deflate). */
 function entry(zip: Buffer, name: string): string {
@@ -63,5 +63,41 @@ describe("writeXlsx", () => {
 
   it("rechaza números no finitos", () => {
     expect(() => writeXlsx({ name: "x", widths: [], rows: [[Number.NaN]] })).toThrow(RangeError);
+  });
+});
+
+describe("writeXlsx: solo XML 1.0 válido (regresión)", () => {
+  const INVALIDOS: [string, string][] = [
+    ...Array.from({ length: 32 }, (_, i) => i)
+      .filter((i) => i !== 0x09 && i !== 0x0a && i !== 0x0d)
+      .map((i): [string, string] => [`U+${i.toString(16).toUpperCase().padStart(4, "0")}`, String.fromCharCode(i)]),
+    ["U+FFFE", "\uFFFE"],
+    ["U+FFFF", "\uFFFF"],
+    ["surrogate alto suelto", "\uD83D"],
+    ["surrogate bajo suelto", "\uDE00"],
+    ["bajo antes del alto", "\uDE00\uD83D"],
+  ];
+
+  it.each(INVALIDOS)("%s: se saca de celdas y nombre de hoja; el archivo se lee", (_label, ch) => {
+    const bytes = writeXlsx({ name: `Hoja${ch}A`, widths: [10], rows: [[`a${ch}b`], [`🎉${ch}ñ`]] });
+    expect(readFirstSheet(bytes)).toEqual([["ab"], ["🎉ñ"]]);
+    expect(entry(bytes, "xl/workbook.xml")).toContain('<sheet name="HojaA" ');
+    for (const part of ["xl/workbook.xml", "xl/worksheets/sheet1.xml"]) expect(entry(bytes, part).includes(ch), part).toBe(false);
+  });
+
+  it("todos juntos (separados por «.»), más tab/LF/CR y emoji que quedan", () => {
+    // Separados: un surrogate alto suelto seguido de uno bajo suelto formarían un par válido (que sí queda).
+    const todos = INVALIDOS.map(([, c]) => c).join(".");
+    const puntos = ".".repeat(INVALIDOS.length - 1);
+    const bytes = writeXlsx({ name: `${todos}Socios 🎉`, widths: [10], rows: [[`x${todos}\ty\nz\r😀`]] });
+    expect(readFirstSheet(bytes)).toEqual([[`x${puntos}\ty\nz\r😀`]]);
+    expect(xmlSafe(`${todos}ok🎉`)).toBe(`${puntos}ok🎉`);
+    expect(xmlSafe("\uD83D\uDE00")).toBe("😀"); // par válido
+  });
+
+  it("el recorte a 31 caracteres del nombre no deja un surrogate partido", () => {
+    const bytes = writeXlsx({ name: `${"a".repeat(30)}🎉`, widths: [], rows: [["x"]] });
+    expect(readFirstSheet(bytes)).toEqual([["x"]]);
+    expect(xmlSafe(`${"a".repeat(30)}🎉`.slice(0, 31))).toBe("a".repeat(30));
   });
 });

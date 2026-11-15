@@ -44,6 +44,23 @@ describe("período", () => {
     expect(resolverPeriodo("2026-05", "2026-01-01", "2026-11-14")).toEqual({ periodo: periodoDesde("2026-05"), aviso: null });
     expect(resolverPeriodo("2026-5", null, "2026-11-14")).toEqual({ error: PERIODO_MESSAGES.mes });
   });
+
+  it("rango soportado: mes inicial de 2000-01 a 2099-01 (los 12 meses terminan a más tardar en 2099-12)", () => {
+    for (const bad of ["1999-12", "2099-02", "0000-01", "9999-12"]) expect(resolverPeriodo(bad, "2026-01-01", "2026-11-14"), bad).toEqual({ error: PERIODO_MESSAGES.mes });
+    expect(resolverPeriodo("2000-01", null, "2026-11-14")).toEqual({ periodo: periodoDesde("2000-01"), aviso: null });
+    const fin = resolverPeriodo("2099-01", null, "2026-11-14");
+    expect(fin).toMatchObject({ periodo: { desde: "2099-01", hasta: "2099-12", label: "Período: 01/2099 a 12/2099" }, aviso: null });
+    expect(PERIODO_MESSAGES.mes).toBe("Elegí un mes válido (AAAA-MM).");
+    // parámetro fuera de rango = inválido → enero del año actual con aviso
+    for (const param of ["1999-12-01", "2099-02-01", "2099-12", "0000-01-01", "9999-12"]) {
+      expect(resolverPeriodo(null, param, "2026-11-14"), param).toEqual({ periodo: periodoDesde("2026-01"), aviso: PERIODO_MESSAGES.parametro });
+    }
+    expect(parsePrimerMes("2099-01-31")).toBe("2099-01");
+    // la cuenta de meses siempre da años de 4 dígitos
+    expect(periodoDesde("2000-01").meses.every((m) => /^\d{4}-\d{2}$/.test(m))).toBe(true);
+    expect(sumarMeses("2000-01", -1)).toBe("1999-12");
+    expect(sumarMeses("0001-01", 0)).toBe("0001-01");
+  });
 });
 
 describe("datos del fixture (reglas reales)", () => {
@@ -211,12 +228,22 @@ describe("Saldos", () => {
       { id: ID.prov2, nombre: "QA Proveedor Dos", facturado: 70000, pagado: 0, saldo: 70000 },
       { id: ID.prov1, nombre: "QA Proveedor Uno", facturado: 151000, pagado: 100000, saldo: 51000 },
     ]);
-    expect(d.avisos).toEqual([]);
+    expect(d.errorClientes).toBeNull();
+    expect(d.errorProveedores).toBeNull();
   });
 
-  it("sin el tipo «Cobro a cliente»: aviso y Cobrado en 0", () => {
+  it("sin el tipo «Cobro a cliente»: no hay tabla de Clientes (error con el nombre); Cuentas y Proveedores siguen", () => {
     const d2 = calcularSaldos("2026-11-14", { ...refsSaldos, tipos: refsSaldos.tipos.filter((t) => t.id !== ID.cobro) }, comprobantes, movimientos);
-    expect(d2.avisos).toEqual(["No encontramos el tipo de operación «Cobro a cliente» en Maestros: esa columna queda en 0."]);
-    expect(d2.clientes.find((c) => c.id === ID.cli1)!.cobrado).toBe(0);
+    expect(d2).toMatchObject({ clientes: null, ventasSinCliente: null, errorProveedores: null });
+    expect(d2.errorClientes).toBe("No encontramos el tipo de operación «Cobro a cliente» en Maestros. Sin ese tipo no se pueden calcular los saldos de clientes.");
+    expect(d2.cuentas).toEqual(d.cuentas);
+    expect(d2.proveedores).toEqual(d.proveedores);
+  });
+
+  it("sin el tipo «Pago a proveedor»: no hay tabla de Proveedores (error con el nombre)", () => {
+    const d3 = calcularSaldos("2026-11-14", { ...refsSaldos, tipos: refsSaldos.tipos.filter((t) => t.id !== ID.pago) }, comprobantes, movimientos);
+    expect(d3).toMatchObject({ proveedores: null, errorClientes: null, ventasSinCliente: 10006001 });
+    expect(d3.errorProveedores).toBe("No encontramos el tipo de operación «Pago a proveedor» en Maestros. Sin ese tipo no se pueden calcular los saldos de proveedores.");
+    expect(d3.cuentas).toEqual(d.cuentas);
   });
 });

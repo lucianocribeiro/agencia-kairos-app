@@ -16,6 +16,17 @@ export const API_MESSAGES = {
 } as const;
 
 type Handler<C> = (request: NextRequest, context: C) => Promise<Response>;
+
+export interface RouteOptions {
+  /** Toda respuesta de la ruta (éxito y errores, también los 500 del catch) lleva Cache-Control: no-store. */
+  noStore?: boolean;
+}
+
+/** Único lugar que pone Cache-Control: no-store (respuestas de guards, reportes). Devuelve la misma respuesta. */
+export function withNoStore<T extends Response>(res: T): T {
+  res.headers.set("cache-control", "no-store");
+  return res;
+}
 type GuardedHandler<C> = (request: NextRequest, user: SessionUser, context: C) => Promise<Response>;
 
 /**
@@ -26,29 +37,35 @@ type GuardedHandler<C> = (request: NextRequest, user: SessionUser, context: C) =
  * - Cualquier otro error → 500 genérico, sin detalles internos.
  * Los logs solo llevan código/status/tipo: nunca bodies, mensajes de la API ni el token.
  * Las rutas públicas de auth lo usan directo; el resto usa adminRoute / userRoute.
+ * Los 401/403 de los guards siempre llevan Cache-Control: no-store; con `noStore`, todas las respuestas.
  */
-export function apiRoute<C = unknown>(handler: Handler<C>): Handler<C> {
+export function apiRoute<C = unknown>(handler: Handler<C>, options: RouteOptions = {}): Handler<C> {
   return (request, context) =>
     runInApiContext(async () => {
-      try {
-        return await handler(request, context);
-      } catch (err) {
-        unstable_rethrow(err);
-        if (err instanceof AuthError) {
-          const res = NextResponse.json({ error: err.message }, { status: err.status });
-          if (err.clearCookie) clearSessionCookie(res);
-          return res;
-        }
-        if (err instanceof AirtableError) {
-          console.error("[api] Error de Airtable", summarizeError(err));
-          if (err.code === "not_found") return NextResponse.json({ error: API_MESSAGES.noEncontrado }, { status: 404 });
-          if (err.retryable) return NextResponse.json({ error: API_MESSAGES.noDisponible }, { status: 503 });
-          return NextResponse.json({ error: API_MESSAGES.error }, { status: 500 });
-        }
-        console.error("[api] Error no controlado", describeError(err));
-        return NextResponse.json({ error: API_MESSAGES.error }, { status: 500 });
-      }
+      const res = await handle(handler, request, context);
+      return options.noStore ? withNoStore(res) : res;
     });
+}
+
+async function handle<C>(handler: Handler<C>, request: NextRequest, context: C): Promise<Response> {
+  try {
+    return await handler(request, context);
+  } catch (err) {
+    unstable_rethrow(err);
+    if (err instanceof AuthError) {
+      const res = withNoStore(NextResponse.json({ error: err.message }, { status: err.status }));
+      if (err.clearCookie) clearSessionCookie(res);
+      return res;
+    }
+    if (err instanceof AirtableError) {
+      console.error("[api] Error de Airtable", summarizeError(err));
+      if (err.code === "not_found") return NextResponse.json({ error: API_MESSAGES.noEncontrado }, { status: 404 });
+      if (err.retryable) return NextResponse.json({ error: API_MESSAGES.noDisponible }, { status: 503 });
+      return NextResponse.json({ error: API_MESSAGES.error }, { status: 500 });
+    }
+    console.error("[api] Error no controlado", describeError(err));
+    return NextResponse.json({ error: API_MESSAGES.error }, { status: 500 });
+  }
 }
 
 /**
@@ -56,8 +73,8 @@ export function apiRoute<C = unknown>(handler: Handler<C>): Handler<C> {
  *   export const GET = adminRoute(async (request, user) => { ... })
  * Corre requireAdmin() antes del handler. Lo verifica test/route-guards.test.ts (AST).
  */
-export function adminRoute<C = unknown>(handler: GuardedHandler<C>): Handler<C> {
-  return apiRoute<C>(async (request, context) => handler(request, await requireAdmin(), context));
+export function adminRoute<C = unknown>(handler: GuardedHandler<C>, options: RouteOptions = {}): Handler<C> {
+  return apiRoute<C>(async (request, context) => handler(request, await requireAdmin(), context), options);
 }
 
 /**
@@ -65,8 +82,8 @@ export function adminRoute<C = unknown>(handler: GuardedHandler<C>): Handler<C> 
  *   export const GET = userRoute(async (request, user) => { ... })
  * Corre requireUser() antes del handler. Las respuestas pasan por lib/airtable/access.ts.
  */
-export function userRoute<C = unknown>(handler: GuardedHandler<C>): Handler<C> {
-  return apiRoute<C>(async (request, context) => handler(request, await requireUser(), context));
+export function userRoute<C = unknown>(handler: GuardedHandler<C>, options: RouteOptions = {}): Handler<C> {
+  return apiRoute<C>(async (request, context) => handler(request, await requireUser(), context), options);
 }
 
 export const REQUEST_MESSAGES = {

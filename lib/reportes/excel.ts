@@ -27,6 +27,10 @@ export function vistaToSheet(vista: Vista, sheetName: string): XlsxSheet {
   vista.tablas.forEach((t, ti) => {
     if (ti > 0) rows.push([]);
     if (t.titulo) rows.push([{ v: t.titulo, s: "bold" }]);
+    if (t.error) {
+      rows.push([{ v: t.error, s: "bold" }]);
+      return;
+    }
     rows.push(t.columnas.map((c) => ({ v: c.label, s: "bold" as const })));
     ncols = Math.max(ncols, t.columnas.length);
     for (const f of t.filas) {

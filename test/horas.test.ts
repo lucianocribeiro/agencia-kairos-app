@@ -125,7 +125,7 @@ async function call(file: string, method: string, opts: { body?: unknown; params
   });
   const res = await ALL[`/app/api/${file}`][method](req, { params: Promise.resolve(opts.params ?? {}) });
   const text = await res.text();
-  return { status: res.status, text, json: text ? JSON.parse(text) : null };
+  return { status: res.status, text, json: text ? JSON.parse(text) : null, cacheControl: res.headers.get("cache-control") };
 }
 
 const ME_HORAS = "me/horas/route.ts";
@@ -159,7 +159,9 @@ describe("/api/me/** (estructura)", () => {
   it("sin sesión → 401 en todas las rutas de /api/me", async () => {
     for (const [file, mod] of Object.entries(ME_ROUTES)) {
       for (const m of HTTP.filter((x) => mod[x])) {
-        expect((await call(file.replace("/app/api/", ""), m, m === "GET" ? {} : { body: {} })).status, `${m} ${file}`).toBe(401);
+        const res = await call(file.replace("/app/api/", ""), m, m === "GET" ? {} : { body: {} });
+        expect(res.status, `${m} ${file}`).toBe(401);
+        expect(res.cacheControl, `${m} ${file}`).toBe("no-store"); // userRoute: 401 sin caché
       }
     }
   });

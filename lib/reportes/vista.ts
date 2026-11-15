@@ -35,6 +35,8 @@ export interface VistaTabla {
   titulo: string | null;
   columnas: VistaColumna[];
   filas: VistaFila[];
+  /** Error que reemplaza a esta tabla (sin columnas ni filas), p. ej. falta un tipo de operación. */
+  error?: string | null;
 }
 
 export interface Vista {
@@ -160,10 +162,38 @@ export function vistaSocios(d: SociosData): Vista {
 }
 
 export function vistaSaldos(d: SaldosData): Vista {
+  const clientes: VistaTabla = d.clientes
+    ? {
+        titulo: "Clientes",
+        columnas: [
+          { label: "Cliente", kind: "text" },
+          { label: "Sigla", kind: "text" },
+          { label: "Facturado $", kind: "money" },
+          { label: "Cobrado $", kind: "money" },
+          { label: "Saldo a cobrar $", kind: "money" },
+        ],
+        filas: [
+          ...d.clientes.map((c) => ({ cells: [c.nombre, c.sigla, c.facturado, c.cobrado, c.saldo] })),
+          { cells: ["Ventas sin cliente identificado", null, d.ventasSinCliente, null, null], total: true },
+        ],
+      }
+    : { titulo: "Clientes", columnas: [], filas: [], error: d.errorClientes };
+  const proveedores: VistaTabla = d.proveedores
+    ? {
+        titulo: "Proveedores",
+        columnas: [
+          { label: "Proveedor", kind: "text" },
+          { label: "Facturado $", kind: "money" },
+          { label: "Pagado $", kind: "money" },
+          { label: "Saldo a pagar $", kind: "money" },
+        ],
+        filas: d.proveedores.map((p) => ({ cells: [p.nombre, p.facturado, p.pagado, p.saldo] })),
+      }
+    : { titulo: "Proveedores", columnas: [], filas: [], error: d.errorProveedores };
   return {
     titulo: "Saldos",
     lineas: [`Histórico al ${isoToDisplayDate(d.hoy)}`],
-    avisos: d.avisos,
+    avisos: [],
     error: null,
     tablas: [
       {
@@ -178,30 +208,8 @@ export function vistaSaldos(d: SaldosData): Vista {
         ],
         filas: d.cuentas.map((c) => ({ cells: [c.nombre, c.moneda, c.saldoInicial, c.entradas, c.salidas, c.saldoActual] })),
       },
-      {
-        titulo: "Clientes",
-        columnas: [
-          { label: "Cliente", kind: "text" },
-          { label: "Sigla", kind: "text" },
-          { label: "Facturado $", kind: "money" },
-          { label: "Cobrado $", kind: "money" },
-          { label: "Saldo a cobrar $", kind: "money" },
-        ],
-        filas: [
-          ...d.clientes.map((c) => ({ cells: [c.nombre, c.sigla, c.facturado, c.cobrado, c.saldo] })),
-          { cells: ["Ventas sin cliente identificado", null, d.ventasSinCliente, null, null], total: true },
-        ],
-      },
-      {
-        titulo: "Proveedores",
-        columnas: [
-          { label: "Proveedor", kind: "text" },
-          { label: "Facturado $", kind: "money" },
-          { label: "Pagado $", kind: "money" },
-          { label: "Saldo a pagar $", kind: "money" },
-        ],
-        filas: d.proveedores.map((p) => ({ cells: [p.nombre, p.facturado, p.pagado, p.saldo] })),
-      },
+      clientes,
+      proveedores,
     ],
   };
 }

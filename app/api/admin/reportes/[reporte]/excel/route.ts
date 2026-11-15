@@ -23,7 +23,6 @@ export const GET = adminRoute<Context>(async (request, _user, { params }) => {
       "content-type": XLSX_CONTENT_TYPE,
       "content-disposition": `attachment; filename="${filename}"`,
       "content-length": String(bytes.length),
-      "cache-control": "no-store",
     },
   });
-});
+}, { noStore: true });

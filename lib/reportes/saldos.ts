@@ -54,15 +54,19 @@ export interface FilaProveedor {
 export interface SaldosData {
   /** Fecha del cálculo ("AAAA-MM-DD"); el nombre del archivo usa su mes. */
   hoy: string;
-  avisos: string[];
   cuentas: FilaCuenta[];
-  clientes: FilaCliente[];
-  ventasSinCliente: number;
-  proveedores: FilaProveedor[];
+  /** null si falta el tipo «Cobro a cliente» (ver `errorClientes`). */
+  clientes: FilaCliente[] | null;
+  ventasSinCliente: number | null;
+  errorClientes: string | null;
+  /** null si falta el tipo «Pago a proveedor» (ver `errorProveedores`). */
+  proveedores: FilaProveedor[] | null;
+  errorProveedores: string | null;
 }
 
 export const SALDOS_MESSAGES = {
-  faltaTipo: (nombre: string) => `No encontramos el tipo de operación «${nombre}» en Maestros: esa columna queda en 0.`,
+  faltaCobro: `No encontramos el tipo de operación «${TIPO_COBRO}» en Maestros. Sin ese tipo no se pueden calcular los saldos de clientes.`,
+  faltaPago: `No encontramos el tipo de operación «${TIPO_PAGO}» en Maestros. Sin ese tipo no se pueden calcular los saldos de proveedores.`,
 } as const;
 
 export function calcularSaldos(
@@ -71,12 +75,7 @@ export function calcularSaldos(
   comprobantes: readonly ComprobanteR[],
   movimientos: readonly MovimientoR[],
 ): SaldosData {
-  const avisos: string[] = [];
-  const tipoId = (nombre: string) => {
-    const id = refs.tipos.find((t) => t.nombre === nombre)?.id ?? null;
-    if (!id) avisos.push(SALDOS_MESSAGES.faltaTipo(nombre));
-    return id;
-  };
+  const tipoId = (nombre: string) => refs.tipos.find((t) => t.nombre === nombre)?.id ?? null;
   const cobro = tipoId(TIPO_COBRO);
   const pago = tipoId(TIPO_PAGO);
   const byNombre = <X extends { nombre: string }>(a: X, b: X) => collator.compare(a.nombre, b.nombre);
@@ -94,26 +93,38 @@ export function calcularSaldos(
   });
 
   const ventas = comprobantes.filter((c) => c.kind === "ventas");
-  const clientes: FilaCliente[] = [...refs.clientes]
-    .sort(byNombre)
-    .map((cl) => {
-      const facturado = ventas.filter((v) => v.cliente === cl.id).reduce((n, v) => n + v.total, 0);
-      const cobrado = cobro ? movimientos.filter((m) => m.tipo === cobro && m.cliente === cl.id).reduce((n, m) => n + m.importePesos, 0) : 0;
-      return { fila: { id: cl.id, nombre: cl.nombre, sigla: cl.sigla, facturado: facturado || 0, cobrado: cobrado || 0, saldo: facturado - cobrado || 0 }, activo: cl.activo };
-    })
-    .filter(({ fila, activo }) => activo || fila.facturado !== 0 || fila.cobrado !== 0)
-    .map(({ fila }) => fila);
-  const ventasSinCliente = ventas.filter((v) => !v.cliente).reduce((n, v) => n + v.total, 0) || 0;
+  const clientes: FilaCliente[] | null = cobro
+    ? [...refs.clientes]
+        .sort(byNombre)
+        .map((cl) => {
+          const facturado = ventas.filter((v) => v.cliente === cl.id).reduce((n, v) => n + v.total, 0);
+          const cobrado = movimientos.filter((m) => m.tipo === cobro && m.cliente === cl.id).reduce((n, m) => n + m.importePesos, 0);
+          return { fila: { id: cl.id, nombre: cl.nombre, sigla: cl.sigla, facturado: facturado || 0, cobrado: cobrado || 0, saldo: facturado - cobrado || 0 }, activo: cl.activo };
+        })
+        .filter(({ fila, activo }) => activo || fila.facturado !== 0 || fila.cobrado !== 0)
+        .map(({ fila }) => fila)
+    : null;
+  const ventasSinCliente = cobro ? ventas.filter((v) => !v.cliente).reduce((n, v) => n + v.total, 0) || 0 : null;
 
   const compras = comprobantes.filter((c) => c.kind === "compras");
-  const proveedores: FilaProveedor[] = [...refs.proveedores]
-    .sort(byNombre)
-    .map((p) => {
-      const facturado = compras.filter((c) => c.proveedor === p.id).reduce((n, c) => n + c.total, 0);
-      const pagado = pago ? -movimientos.filter((m) => m.tipo === pago && m.proveedor === p.id).reduce((n, m) => n + m.importePesos, 0) : 0;
-      return { id: p.id, nombre: p.nombre, facturado: facturado || 0, pagado: pagado || 0, saldo: facturado - pagado || 0 };
-    })
-    .filter((f) => f.facturado !== 0 || f.pagado !== 0);
+  const proveedores: FilaProveedor[] | null = pago
+    ? [...refs.proveedores]
+        .sort(byNombre)
+        .map((p) => {
+          const facturado = compras.filter((c) => c.proveedor === p.id).reduce((n, c) => n + c.total, 0);
+          const pagado = -movimientos.filter((m) => m.tipo === pago && m.proveedor === p.id).reduce((n, m) => n + m.importePesos, 0);
+          return { id: p.id, nombre: p.nombre, facturado: facturado || 0, pagado: pagado || 0, saldo: facturado - pagado || 0 };
+        })
+        .filter((f) => f.facturado !== 0 || f.pagado !== 0)
+    : null;
 
-  return { hoy, avisos, cuentas, clientes, ventasSinCliente, proveedores };
+  return {
+    hoy,
+    cuentas,
+    clientes,
+    ventasSinCliente,
+    errorClientes: cobro ? null : SALDOS_MESSAGES.faltaCobro,
+    proveedores,
+    errorProveedores: pago ? null : SALDOS_MESSAGES.faltaPago,
+  };
 }

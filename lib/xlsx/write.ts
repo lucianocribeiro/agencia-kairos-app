@@ -26,10 +26,17 @@ const STYLE_INDEX: Record<XlsxStyle, number> = { text: 0, bold: 1, money: 2, mon
 
 export const XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+/**
+ * Saca todo lo que XML 1.0 no admite: controles C0 salvo tab/LF/CR, U+FFFE, U+FFFF y
+ * surrogates sueltos. Los caracteres astrales válidos (pares de surrogates, p. ej. emoji) quedan.
+ */
+export function xmlSafe(s: string): string {
+  return s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
+}
+
+/** Todo texto que va a un XML pasa por acá (celdas, nombre de hoja). */
 const esc = (s: string) =>
-  s
-    // Fuera los caracteres de control que XML 1.0 no admite.
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+  xmlSafe(s)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -110,7 +117,9 @@ function zip(files: { name: string; data: Buffer }[]): Buffer {
 
 /** Una hoja → bytes del .xlsx. */
 export function writeXlsx(sheet: XlsxSheet): Buffer {
-  const name = esc(sheet.name.replace(/[[\]:*?/\\]/g, " ").slice(0, 31).trim() || "Hoja1");
+  // Se sanea antes de recortar a 31 (y otra vez en esc: el recorte puede partir un par de surrogates).
+  const recortado = xmlSafe(xmlSafe(sheet.name).replace(/[[\]:*?/\\]/g, " ").slice(0, 31)).trim();
+  const name = esc(recortado || "Hoja1");
   const parts: Record<string, string> = {
     "[Content_Types].xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
     "_rels/.rels": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,

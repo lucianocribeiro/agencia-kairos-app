@@ -226,10 +226,10 @@ export async function generarProformaPdf(d: ProformaData, assets: PdfAssets, gen
   section("Detalle de horas");
   table(
     [
-      { label: "Fecha", width: 52 },
+      { label: "Fecha", width: 56 },
       { label: "Colaborador", width: 78, wrap: true },
       { label: "Proyecto", width: 70, wrap: true },
-      { label: "Tarea", width: 140, wrap: true },
+      { label: "Tarea", width: 136, wrap: true },
       { label: "Horas", width: 34, align: "right" },
       { label: "Valor hora", width: 52, align: "right" },
       { label: "Moneda", width: 34 },

@@ -4,12 +4,12 @@ import ts from "typescript";
  * Chequeo por AST (TypeScript compiler API) de un archivo de Route Handler.
  * Cada método HTTP exportado tiene que ser exactamente
  *   export const GET = <wrapper>(...)
- * donde <wrapper> es adminRoute o userRoute importado de "@/lib/auth/api".
+ * donde <wrapper> es adminRoute, userRoute o clienteRoute importado de "@/lib/auth/api".
  * Falla también con `export async function GET`, `export { x as GET }`,
  * `export *` y `export default`.
  */
 export const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
-export type Wrapper = "adminRoute" | "userRoute";
+export type Wrapper = "adminRoute" | "userRoute" | "clienteRoute";
 
 const hasModifier = (node: ts.Node, kind: ts.SyntaxKind) =>
   ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === kind);

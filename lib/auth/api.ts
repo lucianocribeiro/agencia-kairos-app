@@ -5,7 +5,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { AirtableError, summarizeError } from "@/lib/airtable/errors";
 import { runInApiContext } from "./api-context";
-import { AuthError, requireAdmin, requireUser } from "./guards";
+import { AuthError, requireAdmin, requireCliente, requireUser } from "./guards";
 import { clearSessionCookie, type SessionUser } from "./session";
 import { describeError } from "./users";
 
@@ -36,7 +36,7 @@ type GuardedHandler<C> = (request: NextRequest, user: SessionUser, context: C) =
  *   errores de red → 503; el resto (incluido 422) → 500 genérico.
  * - Cualquier otro error → 500 genérico, sin detalles internos.
  * Los logs solo llevan código/status/tipo: nunca bodies, mensajes de la API ni el token.
- * Las rutas públicas de auth lo usan directo; el resto usa adminRoute / userRoute.
+ * Las rutas públicas de auth lo usan directo; el resto usa adminRoute / userRoute / clienteRoute.
  * Los 401/403 de los guards siempre llevan Cache-Control: no-store; con `noStore`, todas las respuestas.
  */
 export function apiRoute<C = unknown>(handler: Handler<C>, options: RouteOptions = {}): Handler<C> {
@@ -80,10 +80,21 @@ export function adminRoute<C = unknown>(handler: GuardedHandler<C>, options: Rou
 /**
  * Obligatorio para todo método exportado en app/api/me/**:
  *   export const GET = userRoute(async (request, user) => { ... })
- * Corre requireUser() antes del handler. Las respuestas pasan por lib/airtable/access.ts.
+ * Corre requireUser() antes del handler (Admin o Empleado; un Cliente → 403).
+ * Las respuestas pasan por lib/airtable/access.ts.
  */
 export function userRoute<C = unknown>(handler: GuardedHandler<C>, options: RouteOptions = {}): Handler<C> {
   return apiRoute<C>(async (request, context) => handler(request, await requireUser(), context), options);
+}
+
+/**
+ * Obligatorio para todo método exportado en app/api/cliente/**:
+ *   export const GET = clienteRoute(async (request, user) => { ... }, { noStore: true })
+ * Corre requireCliente() antes del handler (Admin y Empleado → 403). Las respuestas son
+ * DTOs con lista de campos permitidos (lib/cliente/types.ts).
+ */
+export function clienteRoute<C = unknown>(handler: GuardedHandler<C>, options: RouteOptions = {}): Handler<C> {
+  return apiRoute<C>(async (request, context) => handler(request, await requireCliente(), context), options);
 }
 
 export const REQUEST_MESSAGES = {

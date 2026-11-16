@@ -7,7 +7,7 @@ import { useState, type FormEvent } from "react";
 import { Button, Card, CardContent, CardHeader, CardTitle, FormField, InlineMessage, Input, useToast } from "@/components/ui";
 import { formatForInput, type FieldErrors, type RawValues } from "@/lib/abm/fields";
 import type { AbmData, RecordDTO } from "@/lib/abm/types";
-import { USUARIO_FIELDS, validateTemporaryPassword, validateUsuario } from "@/lib/abm/usuarios";
+import { rolConProyectos, USUARIO_FIELDS, usuarioFieldsFor, validateTemporaryPassword, validateUsuario } from "@/lib/abm/usuarios";
 import { generateTemporaryPassword } from "@/lib/auth/password-policy";
 import { formatDateTime } from "@/lib/format";
 
@@ -55,11 +55,11 @@ export function UsuariosManager({ data, currentUserId }: { data: AbmData; curren
       key: "proyectos",
       label: "Proyectos",
       numeric: true,
-      text: (r) => (r.values.rol === "Empleado" ? String((r.values.proyectosAsignados as string[]).length) : ""),
+      text: (r) => (rolConProyectos(r.values.rol) ? String((r.values.proyectosAsignados as string[]).length) : ""),
     },
   ];
   const filters: Filter[] = [
-    { key: "rol", label: "Rol", options: ["Admin", "Empleado"], value: (r) => String(r.values.rol ?? "") },
+    { key: "rol", label: "Rol", options: ["Admin", "Empleado", "Cliente"], value: (r) => String(r.values.rol ?? "") },
     { key: "estado", label: "Estado", options: ["Activo", "Inactivo"], value: (r) => String(r.values.estado ?? "") },
   ];
 
@@ -86,7 +86,9 @@ export function UsuariosManager({ data, currentUserId }: { data: AbmData; curren
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!editing) return;
-    const local = validateUsuario(raw, editing.mode);
+    // Un Cliente no tiene Socio: el campo no se muestra y se guarda vacío.
+    const values: RawValues = raw.rol === "Cliente" ? { ...raw, socio: [] } : raw;
+    const local = validateUsuario(values, editing.mode);
     if (Object.keys(local.errors).length > 0) {
       setErrors(local.errors);
       setFormError("Revisá los campos marcados.");
@@ -94,7 +96,7 @@ export function UsuariosManager({ data, currentUserId }: { data: AbmData; curren
     }
     setSaving(true);
     const keys = [...USUARIO_FIELDS.map((f) => f.key), ...(editing.mode === "create" ? ["password"] : [])];
-    const body = Object.fromEntries(keys.map((k) => [k, raw[k]]));
+    const body = Object.fromEntries(keys.map((k) => [k, values[k]]));
     const res =
       editing.mode === "create"
         ? await callApi("POST", "/api/admin/usuarios", body)
@@ -138,7 +140,8 @@ export function UsuariosManager({ data, currentUserId }: { data: AbmData; curren
     router.refresh();
   }
 
-  const isEmpleado = raw.rol === "Empleado";
+  const conProyectos = rolConProyectos(raw.rol);
+  const fields = usuarioFieldsFor(raw.rol);
   const record = editing?.mode === "edit" ? editing.record : null;
   const isSelf = record?.id === currentUserId;
 
@@ -170,14 +173,14 @@ export function UsuariosManager({ data, currentUserId }: { data: AbmData; curren
                 </p>
               )}
               <div className="grid gap-4 md:grid-cols-2">
-                {USUARIO_FIELDS.filter((f) => f.key !== "proyectosAsignados" || isEmpleado).map((f) => (
+                {fields.filter((f) => f.key !== "proyectosAsignados" || conProyectos).map((f) => (
                   <div key={f.key} className={f.key === "proyectosAsignados" ? "md:col-span-2" : undefined}>
                     <FieldInput
                       spec={f}
                       value={raw[f.key]}
                       onChange={(v) => setRaw((prev) => ({ ...prev, [f.key]: v }))}
                       error={errors[f.key]}
-                      options={data.options[f.key]}
+                      options={f.key === "proyectosAsignados" && raw.rol === "Cliente" ? data.options.proyectosCliente : data.options[f.key]}
                       labels={data.labels[f.key]}
                       disabled={saving || (f.key === "rol" && isSelf)}
                     />

@@ -5,7 +5,8 @@ import { read, sourceFiles } from "./source-files";
 
 /**
  * Convención (AST): todo método exportado en app/api/admin/** es
- * `export const X = adminRoute(...)`, y en app/api/me/** `export const X = userRoute(...)`.
+ * `export const X = adminRoute(...)`, en app/api/me/** `export const X = userRoute(...)` y en
+ * app/api/cliente/** `export const X = clienteRoute(...)`.
  */
 const routesIn = (dir: string) => {
   try {
@@ -28,6 +29,12 @@ describe("app/api/me/** usa userRoute", () => {
     if (file.startsWith("(")) return;
     expect(check(file, "userRoute")).toEqual([]);
   });
+});
+
+describe("app/api/cliente/** usa clienteRoute", () => {
+  const routes = routesIn("app/api/cliente");
+  it("hay al menos una ruta (el test no pasa vacío)", () => expect(routes.length).toBeGreaterThan(0));
+  it.each(routes)("%s", (file) => expect(check(file, "clienteRoute")).toEqual([]));
 });
 
 describe("el chequeo detecta violaciones (fixtures fuera de app/)", () => {
@@ -54,6 +61,11 @@ describe("el chequeo detecta violaciones (fixtures fuera de app/)", () => {
   it("userRoute en una ruta de admin → falla; adminRoute en una de me → falla", () => {
     expect(check(`${F}/wrong-wrapper.ts`, "adminRoute")).toEqual([expect.stringMatching(/GET no está envuelto en adminRoute/)]);
     expect(check(`${F}/ok.ts`, "userRoute")).toHaveLength(2);
+  });
+
+  it("adminRoute o userRoute en una ruta de cliente → falla", () => {
+    expect(check(`${F}/ok.ts`, "clienteRoute")).toHaveLength(2);
+    expect(check(`${F}/wrong-wrapper.ts`, "clienteRoute")).toEqual([expect.stringMatching(/GET no está envuelto en clienteRoute/)]);
   });
 
   it("todo envuelto (con alias) → pasa", () => {

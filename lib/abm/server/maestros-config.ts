@@ -6,6 +6,7 @@ import { REFERENCE_FIELDS, TABLES, type FieldId, type TableKey } from "@/lib/air
 import type { FieldErrors, Mode, Values } from "@/lib/abm/fields";
 import { isClienteActivo } from "@/lib/abm/cliente-estado";
 import { MAESTRO_SPECS, type MaestroSlug, type MaestroSpec } from "@/lib/abm/maestros";
+import { ROL_CLIENTE } from "@/lib/roles";
 import type { CheckConflict } from "./compensation";
 
 /**
@@ -89,6 +90,8 @@ export const PROYECTO_MESSAGES = {
   quitarSigla: "No se puede quitar la sigla de un cliente que tiene proyectos.",
   colisiones: (codigos: string[]) => `No se puede cambiar la sigla: estos códigos de proyecto ya existen: ${codigos.join(", ")}.`,
   sinNombreCorto: (proyectos: string[]) => `No se puede cambiar la sigla: estos proyectos no tienen nombre corto: ${proyectos.join(", ")}.`,
+  clienteSinValorHora: "Este proyecto está asignado a un usuario Cliente: no se puede dejar sin valor hora ni moneda.",
+  clienteCambioCliente: "Este proyecto está asignado a un usuario Cliente: no se puede cambiar su cliente.",
 } as const;
 
 /** "2 proyectos", "1 venta"… por link inverso de Clientes. */
@@ -146,8 +149,59 @@ const links = {
 const P = T.proyectos.fields;
 const C = T.clientes.fields;
 
-/** Proyectos: el Código lo arma el servidor (nunca se acepta del cliente) y es único. */
+/** Usuarios Activos con Rol Cliente entre estos IDs (los del link inverso Usuarios del proyecto). */
+async function clientesActivosAsignados(userIds: readonly string[]): Promise<string[]> {
+  if (userIds.length === 0) return [];
+  const ids = new Set(userIds);
+  const rows = await getAirtableClient().list(T.usuarios.id, { fields: [T.usuarios.fields.rol, T.usuarios.fields.estado] });
+  return rows.filter((r) => ids.has(r.id) && r.fields[T.usuarios.fields.rol] === ROL_CLIENTE && r.fields[T.usuarios.fields.estado] === "Activo").map((r) => r.id);
+}
+
+const vacio = (v: unknown) => v === null || v === undefined || v === "";
+
+/**
+ * Un proyecto asignado a un usuario Cliente Activo no puede quedar sin Valor hora ni
+ * Moneda, ni cambiar de Cliente (el usuario dejaría de ver solo proyectos de su cliente).
+ * Cambiar los valores o cerrarlo sí se puede. Se chequea antes de escribir y se vuelve a
+ * verificar después (relee los usuarios del proyecto: un Cliente asignado en el medio →
+ * se deshace, 409; relectura fallida → 503).
+ */
+function proyectoClientePlan(ctx: WriteContext): { conflict?: WritePlan["conflict"]; verify?: WritePlan["verify"] } | null {
+  if (ctx.mode !== "edit" || !ctx.existing || !ctx.id) return null;
+  const after = (key: "valorHora" | "monedaValorHora" | "cliente", fieldId: string) => (key in ctx.values ? ctx.values[key] : ctx.existing![fieldId]);
+  const sinValor = vacio(after("valorHora", P.valorHora)) || vacio(after("monedaValorHora", P.monedaValorHora));
+  const clienteAntes = first(ctx.existing[P.cliente]);
+  const cambiaCliente = "cliente" in ctx.values && first(ctx.values.cliente) !== clienteAntes;
+  if (!sinValor && !cambiaCliente) return null;
+  const mensaje = sinValor ? PROYECTO_MESSAGES.clienteSinValorHora : PROYECTO_MESSAGES.clienteCambioCliente;
+  const field = sinValor ? (vacio(after("valorHora", P.valorHora)) ? "valorHora" : "monedaValorHora") : "cliente";
+  const conflict = { error: mensaje, fieldErrors: { [field]: mensaje } };
+  const id = ctx.id;
+  return {
+    conflict,
+    verify: async () => {
+      const record = await getAirtableClient().get(T.proyectos.id, id, { fields: [P.usuarios] });
+      if (!record) throw new WrittenRecordMissingError(id);
+      return (await clientesActivosAsignados((record.fields[P.usuarios] as string[] | undefined) ?? [])).length > 0 ? conflict : null;
+    },
+  };
+}
+
+/** Proyectos: reglas de Cliente (arriba) y el Código (abajo). */
 async function proyectosBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
+  const cliente = proyectoClientePlan(ctx);
+  if (cliente && (await clientesActivosAsignados((ctx.existing![P.usuarios] as string[] | undefined) ?? [])).length > 0) {
+    return { conflict: cliente.conflict };
+  }
+  const plan = await codigoBeforeWrite(ctx);
+  if (!cliente?.verify || plan.invalid || plan.conflict) return plan;
+  const own = plan.verify;
+  const extra = cliente.verify;
+  return { ...plan, verify: async () => (own ? await own() : null) ?? (await extra()) };
+}
+
+/** Proyectos: el Código lo arma el servidor (nunca se acepta del cliente) y es único. */
+async function codigoBeforeWrite(ctx: WriteContext): Promise<WritePlan> {
   const clienteId = first(ctx.values.cliente);
   const nombreCorto = text(ctx.values.nombreCorto);
   if (!clienteId || !nombreCorto) return {};

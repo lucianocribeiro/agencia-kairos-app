@@ -2,18 +2,18 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { apiRoute, readJsonBody } from "@/lib/auth/api";
 import { HOME_BY_ROLE } from "@/lib/auth/constants";
-import { requireUser } from "@/lib/auth/guards";
+import { requireSession } from "@/lib/auth/guards";
 import { clientIp } from "@/lib/auth/login";
 import { changePassword } from "@/lib/auth/password-change";
 import { setSessionCookie } from "@/lib/auth/session";
 
 /**
  * POST /api/auth/password · body JSON { actual, nueva, repetir } → { redirectTo } + cookie nueva.
- * Usa apiRoute + requireUser({ allowPendingPasswordChange }) en vez de userRoute: es la única
- * API permitida mientras «Debe cambiar password» está activo.
+ * Usa apiRoute + requireSession({ allowPendingPasswordChange }) en vez de userRoute: es la única
+ * API permitida mientras «Debe cambiar password» está activo, y la usan los tres roles.
  */
 export const POST = apiRoute(async (request: NextRequest) => {
-  const user = await requireUser({ allowPendingPasswordChange: true });
+  const user = await requireSession({ allowPendingPasswordChange: true });
   const body = await readJsonBody(request);
   if (body instanceof Response) return body;
 

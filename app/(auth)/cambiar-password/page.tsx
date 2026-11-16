@@ -8,7 +8,7 @@ import { PageSkeleton } from "@/components/auth/guarded";
 import { Logo } from "@/components/shell/logo";
 import { buttonClasses, Card, CardContent, CardDescription, CardHeader, CardTitle, InlineMessage } from "@/components/ui";
 import { HOME_BY_ROLE } from "@/lib/auth/constants";
-import { requireUser } from "@/lib/auth/guards";
+import { requireSession } from "@/lib/auth/guards";
 
 export const metadata: Metadata = { title: "Cambiar contraseña" };
 
@@ -21,7 +21,7 @@ export default function CambiarPasswordPage() {
 }
 
 async function CambiarPassword() {
-  const user = await requireUser({ allowPendingPasswordChange: true });
+  const user = await requireSession({ allowPendingPasswordChange: true });
 
   return (
     <div className="flex w-full flex-col items-center gap-4">

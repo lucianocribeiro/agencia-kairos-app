@@ -134,6 +134,31 @@ export interface ProformaData {
 
 const collator = new Intl.Collator("es", { sensitivity: "base", numeric: true });
 
+/**
+ * Reglas de importes de la proforma, compartidas con la vista Cliente (lib/cliente):
+ * - importe de un registro = round2(horas × valor hora), en centavos;
+ * - el importe de un proyecto (o de un colaborador) es la SUMA de los importes de sus registros;
+ * - por moneda: subtotal = Σ importes; IVA = round2(subtotal × alícuota); total = subtotal + IVA.
+ * Nunca se suman monedas distintas.
+ */
+export const importeRegistro = (horas: number, valorHora: number): number => toCents(horas * valorHora) || 0;
+
+/** IVA (centavos) de un neto en centavos. */
+export const ivaDe = (subtotal: number, alicuota: number): number => toCents((subtotal / 100) * alicuota) || 0;
+
+/** Totales por moneda (ARS, después USD) de los importes con moneda; los null no suman. */
+export function totalesPorMoneda(items: readonly { moneda: Moneda | null; importe: number | null }[], alicuota: number): TotalMoneda[] {
+  return (["ARS", "USD"] as const)
+    .map((moneda) => {
+      const filas = items.filter((p) => p.moneda === moneda && p.importe !== null);
+      if (!filas.length) return null;
+      const subtotal = filas.reduce((n, p) => n + p.importe!, 0);
+      const iva = ivaDe(subtotal, alicuota);
+      return { moneda, subtotal, iva, total: subtotal + iva };
+    })
+    .filter((t): t is TotalMoneda => t !== null);
+}
+
 /** Mes a facturar efectivo: el guardado; si no, el mes de la Fecha. "AAAA-MM" o null. */
 export const mesEfectivo = (h: Pick<HoraP, "mesAFacturar" | "fecha">): string | null => (h.mesAFacturar ?? h.fecha)?.slice(0, 7) ?? null;
 
@@ -165,7 +190,7 @@ export function calcularProforma(input: {
         horas,
         valorHora: p.valorHora,
         moneda: p.moneda,
-        importe: conValor ? toCents(horas * p.valorHora!) || 0 : null,
+        importe: conValor ? importeRegistro(horas, p.valorHora!) : null,
         desde: h.desde,
       };
     })
@@ -189,15 +214,7 @@ export function calcularProforma(input: {
     })
     .sort((a, b) => collator.compare(a.codigo, b.codigo));
 
-  const totales: TotalMoneda[] = (["ARS", "USD"] as const)
-    .map((moneda) => {
-      const filas = proyectos.filter((p) => p.moneda === moneda && p.importe !== null);
-      if (!filas.length) return null;
-      const subtotal = filas.reduce((n, p) => n + p.importe!, 0);
-      const iva = toCents((subtotal / 100) * alicuota) || 0;
-      return { moneda, subtotal, iva, total: subtotal + iva };
-    })
-    .filter((t): t is TotalMoneda => t !== null);
+  const totales = totalesPorMoneda(proyectos, alicuota);
 
   return {
     cliente: {

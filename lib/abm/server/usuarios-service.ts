@@ -7,6 +7,7 @@ import { isClienteActivo } from "@/lib/abm/cliente-estado";
 import { FIELD_MESSAGES, type FieldErrors, type RawValues, type Values } from "@/lib/abm/fields";
 import type { AbmData, LinkOption, RecordDTO, ServiceResult } from "@/lib/abm/types";
 import { USUARIO_MESSAGES, validateTemporaryPassword, validateUsuario } from "@/lib/abm/usuarios";
+import { WrittenRecordMissingError } from "@/lib/airtable/integrity";
 import { createUserWithTemporaryPassword, setTemporaryPassword } from "@/lib/auth/credentials";
 import { invalidateCachedUser } from "@/lib/auth/user-cache";
 import { Compensation, previousOf, runPostWriteChecks, type CheckConflict, type PostWriteCheck } from "./compensation";
@@ -25,6 +26,11 @@ import { ABM_MESSAGES } from "./maestros-service";
  * activo, email y sigla únicos) con runPostWriteChecks (el mismo de Maestros,
  * fail-closed): si otro request ganó la carrera → se deshace y 409; si la
  * verificación no se puede leer → se deshace y 503. Ver AGENTS.md, "Concurrencia".
+ *
+ * Rol Cliente: al menos un proyecto asignado; los nuevos, Activos de clientes Activos y
+ * con valor hora y moneda; todos (nuevos y conservados) con valor hora y moneda y del
+ * mismo Cliente; sin Socio. Se valida antes de escribir y se vuelve a verificar después
+ * (`clienteProyectos`, fail-closed), también al activar un usuario Cliente.
  */
 
 const U = TABLES.usuarios.fields;
@@ -77,7 +83,7 @@ async function loadOptions(): Promise<Pick<AbmData, "labels" | "options">> {
   const client = getAirtableClient();
   const [socios, proyectos, clientes] = await Promise.all([
     client.list(TABLES.socios.id, { fields: [S.sigla, S.nombre] }),
-    client.list(TABLES.proyectos.id, { fields: [P.codigo, P.estado, P.cliente] }),
+    client.list(TABLES.proyectos.id, { fields: PROYECTO_FIELDS }),
     client.list(TABLES.clientes.id, { fields: [TABLES.clientes.fields.estado] }),
   ]);
   const clientesActivos = new Set(clientes.filter((r) => isClienteActivo(r.fields[TABLES.clientes.fields.estado])).map((r) => r.id));
@@ -102,9 +108,58 @@ async function loadOptions(): Promise<Pick<AbmData, "labels" | "options">> {
         .filter((r) => asignable(r.fields))
         .map((r) => ({ id: r.id, label: proyectoLabel(r.fields) }))
         .sort(sort),
+      // Rol Cliente: además, con valor hora y moneda (la regla «mismo cliente» la valida el guardado).
+      proyectosCliente: proyectos
+        .filter((r) => asignable(r.fields) && conValorHora(r.fields))
+        .map((r) => ({ id: r.id, label: proyectoLabel(r.fields) }))
+        .sort(sort),
     },
   };
 }
+
+const PROYECTO_FIELDS = [P.codigo, P.estado, P.cliente, P.valorHora, P.monedaValorHora];
+
+/** Valor hora (número) y moneda (ARS/USD) cargados. */
+const conValorHora = (f: Fields) =>
+  typeof f[P.valorHora] === "number" && Number.isFinite(f[P.valorHora]) && (f[P.monedaValorHora] === "ARS" || f[P.monedaValorHora] === "USD");
+
+/**
+ * Reglas de los proyectos de un usuario Cliente que dependen de la base: cada proyecto
+ * existe y tiene valor hora y moneda, y todos son del mismo Cliente. null = OK.
+ */
+function problemaProyectosCliente(ids: readonly string[], proyectos: ReadonlyMap<string, Fields>): string | null {
+  if (ids.length === 0) return USUARIO_MESSAGES.clienteSinProyectos;
+  if (ids.some((id) => !proyectos.has(id))) return FIELD_MESSAGES.link;
+  if (ids.some((id) => !conValorHora(proyectos.get(id)!))) return USUARIO_MESSAGES.clienteSinValorHora;
+  const clientes = new Set(ids.map((id) => (proyectos.get(id)![P.cliente] as string[] | undefined)?.[0] ?? null));
+  if (clientes.size !== 1 || clientes.has(null)) return USUARIO_MESSAGES.clienteMismoCliente;
+  return null;
+}
+
+async function proyectosPorId(): Promise<Map<string, Fields>> {
+  const rows = await getAirtableClient().list(TABLES.proyectos.id, { fields: PROYECTO_FIELDS });
+  return new Map(rows.map((r) => [r.id, r.fields]));
+}
+
+/**
+ * Verificación posterior (carreras) para un usuario que quedó con Rol Cliente: relee el
+ * usuario y sus proyectos. Un proyecto que perdió valor hora o moneda, o que cambió de
+ * cliente, mientras se escribía → conflicto (se deshace, 409). Si la relectura no trae
+ * al usuario → WrittenRecordMissingError (deshacer → 503).
+ */
+const clienteProyectosCheck = (id: string): PostWriteCheck => ({
+  name: "clienteProyectos",
+  run: async () => {
+    const [user, proyectos] = await Promise.all([
+      getAirtableClient().get(TABLES.usuarios.id, id, { fields: [U.rol, U.proyectosAsignados] }),
+      proyectosPorId(),
+    ]);
+    if (!user) throw new WrittenRecordMissingError(id);
+    if (user.fields[U.rol] !== "Cliente") return null;
+    const problema = problemaProyectosCliente((user.fields[U.proyectosAsignados] as string[] | undefined) ?? [], proyectos);
+    return problema ? { error: ABM_MESSAGES.validacion, fieldErrors: { proyectosAsignados: problema } } : null;
+  },
+});
 
 export async function loadUsuarios(): Promise<AbmData> {
   const [records, linkData] = await Promise.all([
@@ -134,17 +189,33 @@ async function wouldRemoveLastAdmin(id: string, existing: Fields): Promise<boole
 async function checkLinksAndUnique(values: Values, excludeId?: string, existing?: Fields): Promise<{ status: 400 | 409; errors: FieldErrors } | null> {
   const { options } = await loadOptions();
   const errors: FieldErrors = {};
+  const cliente = values.rol === "Cliente";
   for (const key of ["socio", "proyectosAsignados"] as const) {
     const ids = values[key];
     if (!Array.isArray(ids) || ids.length === 0) continue;
-    const allowed = new Set([...options[key].map((o) => o.id), ...((existing?.[KEY_TO_FIELD[key]] as string[] | undefined) ?? [])]);
-    if (ids.some((id) => !allowed.has(id))) errors[key] = FIELD_MESSAGES.link;
+    // Cliente: solo los proyectos del selector de Cliente (lo ya asignado se puede conservar).
+    const source = key === "proyectosAsignados" && cliente ? options.proyectosCliente : options[key];
+    // Al cambiar de rol se aplican las reglas del rol nuevo: un Cliente solo conserva lo que ya tenía como Cliente.
+    const kept = key === "proyectosAsignados" && cliente && existing?.[U.rol] !== "Cliente" ? [] : ((existing?.[KEY_TO_FIELD[key]] as string[] | undefined) ?? []);
+    const allowed = new Set([...source.map((o) => o.id), ...kept]);
+    if (ids.some((id) => !allowed.has(id))) errors[key] = key === "proyectosAsignados" && cliente ? await motivoNoAsignable(ids, allowed) : FIELD_MESSAGES.link;
+  }
+  if (cliente && !errors.proyectosAsignados) {
+    const problema = problemaProyectosCliente((values.proyectosAsignados as string[] | undefined) ?? [], await proyectosPorId());
+    if (problema) errors.proyectosAsignados = problema;
   }
   if (Object.keys(errors).length > 0) return { status: 400, errors };
 
   if (!(await isUnique(TABLES.usuarios.id, U.email, values.email, { excludeId }))) errors.email = USUARIO_MESSAGES.emailDuplicado;
   if (!(await isUnique(TABLES.usuarios.id, U.sigla, values.sigla, { excludeId }))) errors.sigla = USUARIO_MESSAGES.siglaDuplicada;
   return Object.keys(errors).length > 0 ? { status: 409, errors } : null;
+}
+
+/** Mensaje para un proyecto que no se puede asignar a un Cliente: sin valor hora/moneda tiene su propio texto. */
+async function motivoNoAsignable(ids: readonly string[], allowed: ReadonlySet<string>): Promise<string> {
+  const proyectos = await proyectosPorId();
+  const malos = ids.filter((id) => !allowed.has(id));
+  return malos.some((id) => proyectos.has(id) && !conValorHora(proyectos.get(id)!)) ? USUARIO_MESSAGES.clienteSinValorHora : FIELD_MESSAGES.link;
 }
 
 function toFields(values: Values): Fields {
@@ -202,7 +273,7 @@ export async function createUsuario(raw: RawValues): Promise<ServiceResult<{ id:
   const tx = new Compensation();
   tx.created(TABLES.usuarios.id, id);
 
-  return verify(tx, id, uniqueChecks(id, fields, "create"));
+  return verify(tx, id, [...uniqueChecks(id, fields, "create"), ...(values.rol === "Cliente" ? [clienteProyectosCheck(id)] : [])]);
 }
 
 export async function updateUsuario(actor: Actor, id: string, raw: RawValues): Promise<ServiceResult<{ id: string }>> {
@@ -232,6 +303,7 @@ export async function updateUsuario(actor: Actor, id: string, raw: RawValues): P
   const checks = removesActiveAdmin(existing, { rol: values.rol })
     ? [lastAdminCheck({ error: USUARIO_MESSAGES.ultimoAdmin, fieldErrors: { rol: USUARIO_MESSAGES.ultimoAdmin } })]
     : [];
+  if (values.rol === "Cliente") checks.push(clienteProyectosCheck(id));
   return verify(tx, id, [...checks, ...uniqueChecks(id, fields, "edit")]);
 }
 
@@ -245,13 +317,21 @@ export async function setUsuarioActivo(actor: Actor, id: string, activo: unknown
     if (id === actor.id) return fail(409, USUARIO_MESSAGES.propioDesactivar);
     if (await wouldRemoveLastAdmin(id, existing)) return fail(409, USUARIO_MESSAGES.ultimoAdmin);
   }
+  // Activar un Cliente: sus proyectos tienen que cumplir las reglas de hoy (mientras estuvo Inactivo pudieron cambiar).
+  const activaCliente = activo && existing[U.rol] === "Cliente";
+  if (activaCliente) {
+    const problema = problemaProyectosCliente((existing[U.proyectosAsignados] as string[] | undefined) ?? [], await proyectosPorId());
+    if (problema) return fail(409, problema, { proyectosAsignados: problema });
+  }
   const fields = { [U.estado]: activo ? "Activo" : "Inactivo" };
   const tx = new Compensation();
   await tx.update(TABLES.usuarios.id, [{ id, fields, previous: previousOf(fields, existing) }]);
   invalidateCachedUser(id);
 
   // Dos desactivaciones a la vez pueden pasar el chequeo previo: se verifica después.
-  return verify(tx, id, removesActiveAdmin(existing, { estado: fields[U.estado] }) ? [lastAdminCheck({ error: USUARIO_MESSAGES.ultimoAdmin })] : []);
+  const checks = removesActiveAdmin(existing, { estado: fields[U.estado] }) ? [lastAdminCheck({ error: USUARIO_MESSAGES.ultimoAdmin })] : [];
+  if (activaCliente) checks.push(clienteProyectosCheck(id));
+  return verify(tx, id, checks);
 }
 
 export async function resetUsuarioPassword(actor: Actor, id: string, password: unknown): Promise<ServiceResult<{ id: string }>> {

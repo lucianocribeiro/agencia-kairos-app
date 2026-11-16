@@ -24,7 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import type { Role } from "@/lib/roles";
+import { CLIENTE_HOME, type Role } from "@/lib/roles";
 
 export interface NavLink {
   label: string;
@@ -93,6 +93,7 @@ export const NAV_BY_ROLE: Record<Role, readonly NavItem[]> = {
     { label: "Maestros", href: "/maestros", icon: Database, children: MAESTROS },
   ],
   Empleado: [{ label: "Mis horas", href: "/mis-horas", icon: Clock }],
+  Cliente: [{ label: "Horas", href: CLIENTE_HOME, icon: Clock }],
 };
 
 export { HOME_BY_ROLE } from "@/lib/roles";

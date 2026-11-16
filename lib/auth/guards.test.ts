@@ -40,7 +40,7 @@ let dbUser: AuthUser | null = null;
 const loadAuthUser = vi.fn(async (id: string) => (id === USER_ID ? dbUser : null));
 vi.mock("./credentials", () => ({ loadAuthUser: (id: string) => loadAuthUser(id) }));
 
-const { requireAdmin, requireUser, AuthError } = await import("./guards");
+const { requireAdmin, requireCliente, requireSession, requireUser, AuthError } = await import("./guards");
 const { apiRoute } = await import("./api");
 const { signSessionToken } = await import("./token");
 const { clearUserCache, invalidateCachedUser } = await import("./user-cache");
@@ -123,6 +123,44 @@ describe("rol", () => {
     await loginAs();
     expect((await asApi(() => requireAdmin())).status).toBe(200);
     expect(await asPage(() => requireAdmin())).toBe("ok");
+  });
+});
+
+describe("rol Cliente (deny by default)", () => {
+  it("Cliente en APIs de admin y de Empleado → 403; en la suya pasa", async () => {
+    await loginAs({ rol: "Cliente" });
+    for (const guard of [requireAdmin, requireUser]) {
+      const res = await asApi(() => guard());
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: "No tenés permiso para hacer esto." });
+      expect(res.headers.get("cache-control")).toBe("no-store");
+    }
+    expect((await asApi(() => requireCliente())).status).toBe(200);
+  });
+
+  it("Cliente en páginas de Admin o Empleado → su vista, nunca un error", async () => {
+    await loginAs({ rol: "Cliente" });
+    expect(await asPage(() => requireAdmin())).toBe("/cliente/horas");
+    expect(await asPage(() => requireUser())).toBe("/cliente/horas");
+    expect(await asPage(() => requireCliente())).toBe("ok");
+    expect(await asPage(() => requireSession({ allowPendingPasswordChange: true }))).toBe("ok");
+  });
+
+  it("Admin y Empleado en la vista Cliente → su inicio; en la API → 403", async () => {
+    await loginAs({ rol: "Admin" });
+    expect(await asPage(() => requireCliente())).toBe("/dashboard");
+    expect((await asApi(() => requireCliente())).status).toBe(403);
+    clearUserCache();
+    await loginAs({ rol: "Empleado" });
+    expect(await asPage(() => requireCliente())).toBe("/mis-horas");
+    expect((await asApi(() => requireCliente())).status).toBe(403);
+  });
+
+  it("Cliente con contraseña temporal → /cambiar-password (y la API de cambio pasa)", async () => {
+    await loginAs({ rol: "Cliente", debeCambiarPassword: true });
+    expect(await asPage(() => requireCliente())).toBe("/cambiar-password");
+    expect((await asApi(() => requireCliente())).status).toBe(403);
+    expect((await asApi(() => requireSession({ allowPendingPasswordChange: true }))).status).toBe(200);
   });
 });
 

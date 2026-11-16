@@ -26,6 +26,7 @@ const RECORD_ID_RE = /^rec[A-Za-z0-9]{14}$/;
 
 export const HORA_ADMIN_MESSAGES = {
   colaboradorInactivo: "Elegí un colaborador activo.",
+  colaboradorCliente: "Un usuario Cliente no puede ser colaborador.",
   proyectoInexistente: "Elegí un proyecto válido.",
   filtro: "El filtro no es válido.",
 } as const;
@@ -38,12 +39,14 @@ const collator = new Intl.Collator("es", { sensitivity: "base", numeric: true })
 export async function loadHorasOptions(): Promise<HorasOptions> {
   const client = getAirtableClient();
   const [usuarios, proyectos, clientes] = await Promise.all([
-    client.list(TABLES.usuarios.id, { fields: [U.nombre, U.estado] }),
+    client.list(TABLES.usuarios.id, { fields: [U.nombre, U.estado, U.rol] }),
     client.list(TABLES.proyectos.id, { fields: [P.codigo, P.estado, P.cliente] }),
     client.list(TABLES.clientes.id, { fields: [C.nombre, C.estado] }),
   ]);
   return {
+    // Un usuario Cliente nunca es colaborador: no aparece en el selector ni en los filtros.
     usuarios: usuarios
+      .filter((r) => r.fields[U.rol] !== "Cliente")
       .map((r) => ({ id: r.id, nombre: String(r.fields[U.nombre] ?? "") || "(sin nombre)", activo: r.fields[U.estado] === "Activo" }))
       .sort((a, b) => collator.compare(a.nombre, b.nombre)),
     proyectos: proyectos
@@ -109,10 +112,15 @@ export async function listHorasAdmin(query: HorasAdminQuery, now = new Date(), o
   return { ok: true, data: { range: resolved.range, records, total: sumHours(records.map((r) => r.horas)) } };
 }
 
-/** Colaborador: Activo (o el que ya tenía el registro) y que exista en Usuarios. */
-async function colaboradorOk(id: string, keep: string | null): Promise<boolean> {
-  const user = await getAirtableClient().get(TABLES.usuarios.id, id, { fields: [U.estado] });
-  return !!user && (user.fields[U.estado] === "Activo" || id === keep);
+/**
+ * Colaborador: que exista en Usuarios, Activo (o el que ya tenía el registro) y que no
+ * sea un usuario Cliente (nunca, ni siquiera el que ya tenía). null = OK; si no, el error.
+ */
+async function colaboradorError(id: string, keep: string | null): Promise<string | null> {
+  const user = await getAirtableClient().get(TABLES.usuarios.id, id, { fields: [U.estado, U.rol] });
+  if (!user) return HORA_ADMIN_MESSAGES.colaboradorInactivo;
+  if (user.fields[U.rol] === "Cliente") return HORA_ADMIN_MESSAGES.colaboradorCliente;
+  return user.fields[U.estado] === "Activo" || id === keep ? null : HORA_ADMIN_MESSAGES.colaboradorInactivo;
 }
 
 /** Proyecto: cualquiera (también Cerrado) que exista en Proyectos. */
@@ -128,7 +136,8 @@ export async function createHora(actor: Actor, raw: RawValues): Promise<ServiceR
   const { values, errors } = validateHora(raw, "admin");
   if (!values) return fail(400, HORA_MESSAGES.validacion, errors);
   const refErrors: Record<string, string> = {};
-  if (!(await colaboradorOk(values.colaborador!, null))) refErrors.colaborador = HORA_ADMIN_MESSAGES.colaboradorInactivo;
+  const colaborador = await colaboradorError(values.colaborador!, null);
+  if (colaborador) refErrors.colaborador = colaborador;
   if (!(await proyectoOk(values.proyecto))) refErrors.proyecto = HORA_ADMIN_MESSAGES.proyectoInexistente;
   if (Object.keys(refErrors).length > 0) return fail(400, HORA_MESSAGES.validacion, refErrors);
 
@@ -161,7 +170,8 @@ export async function updateHora(_actor: Actor, id: string, raw: RawValues): Pro
   const { values, errors } = validateHora(raw, "admin");
   if (!values) return fail(400, HORA_MESSAGES.validacion, errors);
   const refErrors: Record<string, string> = {};
-  if (!(await colaboradorOk(values.colaborador!, existing.colaborador))) refErrors.colaborador = HORA_ADMIN_MESSAGES.colaboradorInactivo;
+  const colaborador = await colaboradorError(values.colaborador!, existing.colaborador);
+  if (colaborador) refErrors.colaborador = colaborador;
   if (values.proyecto !== existing.proyecto && !(await proyectoOk(values.proyecto))) refErrors.proyecto = HORA_ADMIN_MESSAGES.proyectoInexistente;
   if (Object.keys(refErrors).length > 0) return fail(400, HORA_MESSAGES.validacion, refErrors);
 

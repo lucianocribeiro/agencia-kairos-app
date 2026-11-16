@@ -50,7 +50,7 @@ export const TABLES = {
       horas2Reverse: "fldF1Kkuo2a3Y3mtp",
     },
     choices: {
-      rol: ["Admin", "Empleado"],
+      rol: ["Admin", "Empleado", "Cliente"],
       estado: ["Activo", "Inactivo"],
     },
   },

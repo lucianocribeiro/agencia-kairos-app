@@ -51,7 +51,7 @@ export function ClienteHorasView({ today, initial, aviso }: { today: string; ini
     return (
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
         <h1 className="text-2xl font-semibold tracking-tight text-white">{VISTA_CLIENTE_TITULO}</h1>
-        {aviso && aviso !== CLIENTE_MESSAGES.sinProyectos && <InlineMessage tone="danger">{aviso}</InlineMessage>}
+        {aviso && aviso !== CLIENTE_MESSAGES.sinProyectos && <InlineMessage tone={aviso === CLIENTE_MESSAGES.noAsignado ? "info" : "danger"}>{aviso}</InlineMessage>}
         <InlineMessage tone="info">{CLIENTE_MESSAGES.sinProyectos}</InlineMessage>
       </div>
     );
@@ -85,7 +85,7 @@ export function ClienteHorasView({ today, initial, aviso }: { today: string; ini
         {displayDate(data.range.desde)} al {displayDate(data.range.hasta)} · Solo horas facturables · Total{" "}
         <span className="font-semibold text-white tabular-nums">{formatHours(data.total)}</span> h
       </p>
-      {error && <InlineMessage tone="danger">{error}</InlineMessage>}
+      {error && <InlineMessage tone={error === CLIENTE_MESSAGES.noAsignado ? "info" : "danger"}>{error}</InlineMessage>}
 
       <HoursChart buckets={data.buckets} columnTotals={data.columnTotals} grouping={data.grouping} />
 

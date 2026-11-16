@@ -52,8 +52,9 @@ export function calcularImportesCliente(input: {
     return {
       id: p.id,
       codigo: p.codigo,
-      valorHora: conValor ? p.valorHora : null,
-      moneda: conValor ? p.moneda : null,
+      // Como en la Proforma: valor hora y moneda se muestran aunque falte el otro (el importe no).
+      valorHora: p.valorHora,
+      moneda: p.moneda,
       horas: sumHours(propias.map((h) => h.horas)),
       neto,
       iva,

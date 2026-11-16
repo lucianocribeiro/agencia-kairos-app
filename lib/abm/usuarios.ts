@@ -49,6 +49,7 @@ export const USUARIO_MESSAGES = {
   clienteSocio: "Un usuario Cliente no puede tener socio.",
   clienteMismoCliente: "Todos los proyectos de un usuario Cliente tienen que ser del mismo cliente.",
   clienteSinValorHora: "El proyecto tiene que tener valor hora y moneda para asignarlo a un usuario Cliente.",
+  clienteConHoras: "Este usuario tiene horas cargadas: no se puede cambiar a Cliente.",
 } as const;
 
 /**

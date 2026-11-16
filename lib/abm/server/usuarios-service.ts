@@ -30,7 +30,8 @@ import { ABM_MESSAGES } from "./maestros-service";
  * Rol Cliente: al menos un proyecto asignado; los nuevos, Activos de clientes Activos y
  * con valor hora y moneda; todos (nuevos y conservados) con valor hora y moneda y del
  * mismo Cliente; sin Socio. Se valida antes de escribir y se vuelve a verificar después
- * (`clienteProyectos`, fail-closed), también al activar un usuario Cliente.
+ * (`clienteProyectos`, fail-closed), también al activar un usuario Cliente. Un usuario
+ * con Horas (Colaborador o Cargado por) no puede pasar a Cliente (`clienteSinHoras`).
  */
 
 const U = TABLES.usuarios.fields;
@@ -211,6 +212,25 @@ async function checkLinksAndUnique(values: Values, excludeId?: string, existing?
   return Object.keys(errors).length > 0 ? { status: 409, errors } : null;
 }
 
+/**
+ * ¿El usuario está en algún registro de Horas (como Colaborador o como Cargado por)?
+ * Se lee de los links inversos del propio usuario (los mantiene Airtable). Si el usuario
+ * no aparece → WrittenRecordMissingError (en la verificación posterior: deshacer → 503).
+ */
+async function tieneHoras(id: string): Promise<boolean> {
+  const user = await getAirtableClient().get(TABLES.usuarios.id, id, { fields: [U.horasReverse, U.horas2Reverse] });
+  if (!user) throw new WrittenRecordMissingError(id);
+  return [U.horasReverse, U.horas2Reverse].some((f) => ((user.fields[f] as unknown[] | undefined) ?? []).length > 0);
+}
+
+const conHorasConflict: CheckConflict = { error: USUARIO_MESSAGES.clienteConHoras, fieldErrors: { rol: USUARIO_MESSAGES.clienteConHoras } };
+
+/** Verificación posterior del cambio a Cliente: si en el medio se cargó una hora suya → se deshace (409). */
+const sinHorasCheck = (id: string): PostWriteCheck => ({
+  name: "clienteSinHoras",
+  run: async () => ((await tieneHoras(id)) ? conHorasConflict : null),
+});
+
 /** Mensaje para un proyecto que no se puede asignar a un Cliente: sin valor hora/moneda tiene su propio texto. */
 async function motivoNoAsignable(ids: readonly string[], allowed: ReadonlySet<string>): Promise<string> {
   const proyectos = await proyectosPorId();
@@ -284,8 +304,11 @@ export async function updateUsuario(actor: Actor, id: string, raw: RawValues): P
   const { values, errors } = validateUsuario(raw, "edit");
   if (Object.keys(errors).length > 0) return fail(400, ABM_MESSAGES.validacion, errors);
 
+  const pasaACliente = values.rol === "Cliente" && existing[U.rol] !== "Cliente";
   if (values.rol !== existing[U.rol]) {
     if (id === actor.id) return fail(409, USUARIO_MESSAGES.propioRol, { rol: USUARIO_MESSAGES.propioRol });
+    // Un usuario con horas (como Colaborador o Cargado por) no puede pasar a Cliente.
+    if (pasaACliente && (await tieneHoras(id))) return fail(409, conHorasConflict.error, conHorasConflict.fieldErrors);
     if (values.rol !== "Admin" && (await wouldRemoveLastAdmin(id, existing))) {
       return fail(409, USUARIO_MESSAGES.ultimoAdmin, { rol: USUARIO_MESSAGES.ultimoAdmin });
     }
@@ -304,6 +327,7 @@ export async function updateUsuario(actor: Actor, id: string, raw: RawValues): P
     ? [lastAdminCheck({ error: USUARIO_MESSAGES.ultimoAdmin, fieldErrors: { rol: USUARIO_MESSAGES.ultimoAdmin } })]
     : [];
   if (values.rol === "Cliente") checks.push(clienteProyectosCheck(id));
+  if (pasaACliente) checks.push(sinHorasCheck(id));
   return verify(tx, id, [...checks, ...uniqueChecks(id, fields, "edit")]);
 }
 

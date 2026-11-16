@@ -35,7 +35,7 @@ export function tablasImportes(d: ClienteHorasData): VistaTabla[] {
       (p): VistaFila => ({
         cells:
           p.neto === null
-            ? [p.codigo, null, null, p.horas, nd, null, null]
+            ? [p.codigo, p.valorHora === null ? null : toCents(p.valorHora), p.moneda, p.horas, nd, null, null]
             : [p.codigo, toCents(p.valorHora!), p.moneda, p.horas, p.neto, p.iva, p.total],
       }),
     ),

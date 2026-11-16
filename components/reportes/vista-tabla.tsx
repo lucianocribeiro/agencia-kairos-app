@@ -57,4 +57,3 @@ export function Tabla({ tabla }: { tabla: VistaTabla }) {
     </section>
   );
 }
-

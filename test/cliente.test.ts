@@ -61,6 +61,7 @@ const { PROYECTO_MESSAGES } = await import("@/lib/abm/server/maestros-config");
 const { HORA_ADMIN_MESSAGES, loadHorasOptions } = await import("@/lib/horas/server/admin-service");
 const { valorExcel } = await import("@/lib/reportes/excel");
 const { kindDe } = await import("@/lib/reportes/vista");
+const { NotFoundContent, NOT_FOUND_TEXT } = await import("@/components/shell/not-found-view");
 
 type Handler = (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>;
 const ALL_ROUTES = import.meta.glob<Record<string, Handler>>("/app/api/**/route.ts", { eager: true });
@@ -401,6 +402,26 @@ describe("C.4 Importes: reglas de la Proforma", () => {
     expect(tablas[0].filas.find((f) => f.cells[0] === "QZ - Gamma")!.cells).toEqual(["QZ - Gamma", null, null, 2, "Importe no disponible", null, null]);
   });
 
+  it.each([
+    ["solo falta la Moneda", { [P.fields.valorHora]: 80 }, 80, null],
+    ["solo falta el Valor hora", { [P.fields.monedaValorHora]: "USD" }, null, "USD"],
+  ])("fallback: %s → se muestra lo que hay, «Importe no disponible» (API, vista y Excel)", async (_n, fields, valorHora, moneda) => {
+    Object.assign(fake.rows(P.id).find((r) => r.id === ids.gamma)!.fields, fields);
+    fake.rows(TABLES.usuarios.id).find((r) => r.id === ids.cli)!.fields[U.proyectosAsignados] = [ids.alfa, ids.gamma];
+    seedHora(ids.eva, ids.gamma, "2026-11-09", "09:00", "11:00");
+    const d = (await call(VISTA, "GET", { search: NOV })).json;
+    const gamma = d.importes.proyectos.find((p: { codigo: string }) => p.codigo === "QZ - Gamma");
+    expect(gamma).toMatchObject({ horas: 2, valorHora, moneda, neto: null, iva: null, total: null });
+    expect(d.importes.totales.map((t: { moneda: string; neto: number }) => [t.moneda, t.neto])).toEqual([["ARS", 164198 + 40741 + 308643]]);
+    const fila = tablasImportes(d)[0].filas.find((f) => f.cells[0] === "QZ - Gamma")!;
+    expect(fila.cells).toEqual(["QZ - Gamma", valorHora === null ? null : valorHora * 100, moneda, 2, "Importe no disponible", null, null]);
+    const xl = await call(EXCEL, "GET", { search: NOV });
+    const row = readFirstSheet(xl.bytes).find((r) => r[0] === "QZ - Gamma" && r.length > 3)!;
+    const trim = (r: unknown[]) => { const o = [...r]; while (o.length && o[o.length - 1] == null) o.pop(); return o; };
+    expect(trim(row)).toEqual(trim(["QZ - Gamma", valorHora, moneda, 2, "Importe no disponible", null, null]));
+    expect([...keysOf(d)].filter((k) => !CLIENTE_RESPONSE_KEYS.has(k))).toEqual([]);
+  });
+
   it("fallback: alícuota inválida → horas sí, importes reemplazados por el aviso (sin nombrar el Parámetro)", async () => {
     fake.rows(TABLES.parametros.id)[0].fields[PA.valor] = "mucho";
     const res = await call(VISTA, "GET", { search: NOV });
@@ -439,6 +460,10 @@ describe("C.1 Página de la vista Cliente", () => {
     const { props, html } = await renderPage({ ...NOV, proyectos: ids.otro });
     expect(props.aviso).toBe(CLIENTE_MESSAGES.noAsignado);
     expect(html).toContain("Este proyecto no está asignado a tu usuario.");
+    // Aviso neutro (como «No tenés proyectos asignados…»), no el rojo de error.
+    expect(html).toMatch(/role="status" class="[^"]*border-line[^"]*"(?:(?!role=)[\s\S])*Este proyecto no está asignado a tu usuario\./);
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toMatch(/text-danger/);
     expect(html).toContain("QZ - Alfa");
     expect(html).toContain("QZ - Beta");
     expect(html).not.toContain("OT - Otro");
@@ -596,6 +621,48 @@ describe("B. Usuarios con Rol Cliente", () => {
     expect(c.json.fieldErrors.sigla).toBe("Este campo es obligatorio.");
   });
 
+  describe("cambio a Cliente de un usuario con horas", () => {
+    const body = (nombre: string, email: string, sigla: string) => ({ nombre, email, rol: "Cliente", sigla, socio: [], proyectosAsignados: [ids.alfa] });
+    const setUser = (id: string, f: Record<string, unknown>) => Object.assign(fake.rows(TABLES.usuarios.id).find((r) => r.id === id)!.fields, f);
+    const horaDe = (id: string) => fake.rows(HT.id).find((r) => (r.fields[H.colaborador] as string[])[0] === id)!.id;
+
+    it.each([
+      ["como Colaborador", "horasReverse"],
+      ["como Cargado por", "horas2Reverse"],
+    ])("con horas %s → 409 con el mensaje en Rol; nada escrito", async (_n, campo) => {
+      setUser(ids.eva, { [U[campo as "horasReverse"]]: [horaDe(ids.eva)] });
+      const res = await call(USUARIO, "PATCH", { params: { id: ids.eva }, body: body("Eva Empleada", "eva.empleada@kairos.test", "EVQ") });
+      expect(res.status).toBe(409);
+      expect(res.json).toEqual({ error: USUARIO_MESSAGES.clienteConHoras, fieldErrors: { rol: USUARIO_MESSAGES.clienteConHoras } });
+      expect(USUARIO_MESSAGES.clienteConHoras).toBe("Este usuario tiene horas cargadas: no se puede cambiar a Cliente.");
+      expect(writes()).toEqual([]);
+    });
+
+    it("también desde Admin; sin horas sí se puede; crear un Cliente nuevo no cambia", async () => {
+      setUser(ids.admin, { [U.horas2Reverse]: [horaDe(ids.eva)] });
+      const otroAdmin = fake.seed(TABLES.usuarios.id, { [U.nombre]: "Bea Admin", [U.email]: "bea@kairos.test", [U.rol]: "Admin", [U.estado]: "Activo", [U.sigla]: "BB", [U.horas2Reverse]: [horaDe(ids.otto)] });
+      expect((await call(USUARIO, "PATCH", { params: { id: otroAdmin }, body: body("Bea Admin", "bea@kairos.test", "BB") })).status).toBe(409);
+      const sinHoras = fake.seed(TABLES.usuarios.id, { [U.nombre]: "Sin Horas", [U.email]: "sin.horas@kairos.test", [U.rol]: "Empleado", [U.estado]: "Activo", [U.sigla]: "SH" });
+      expect((await call(USUARIO, "PATCH", { params: { id: sinHoras }, body: body("Sin Horas", "sin.horas@kairos.test", "SH") })).status).toBe(200);
+      expect(fake.rows(TABLES.usuarios.id).find((r) => r.id === sinHoras)!.fields[U.rol]).toBe("Cliente");
+      expect((await call(USUARIOS, "POST", { body: nuevoCliente() })).status).toBe(201);
+    }, 30_000);
+
+    it("verificación posterior: si le cargan una hora mientras se escribe → se deshace (409)", async () => {
+      const sinHoras = fake.seed(TABLES.usuarios.id, { [U.nombre]: "Sin Horas", [U.email]: "sin.horas@kairos.test", [U.rol]: "Empleado", [U.estado]: "Activo", [U.sigla]: "SH" });
+      const original = fake.client.update.bind(fake.client);
+      vi.spyOn(fake.client, "update").mockImplementation(async (tableId, records, ...rest) => {
+        const out = await original(tableId, records, ...rest);
+        if (tableId === TABLES.usuarios.id) setUser(sinHoras, { [U.horasReverse]: [horaDe(ids.eva)] });
+        return out;
+      });
+      const res = await call(USUARIO, "PATCH", { params: { id: sinHoras }, body: body("Sin Horas", "sin.horas@kairos.test", "SH") });
+      expect(res.status).toBe(409);
+      expect(res.json.fieldErrors.rol).toBe(USUARIO_MESSAGES.clienteConHoras);
+      expect(fake.rows(TABLES.usuarios.id).find((r) => r.id === sinHoras)!.fields[U.rol]).toBe("Empleado");
+    });
+  });
+
   it("verificación posterior: si el proyecto pierde el valor hora mientras se escribe → se deshace (409)", async () => {
     // Otro request borra el valor hora de Beta justo después de que se escribe el usuario.
     const original = fake.client.update.bind(fake.client);
@@ -697,5 +764,29 @@ describe("B.5 Un usuario Cliente nunca es Colaborador", () => {
     const opts = await loadHorasOptions();
     expect(opts.usuarios.map((u) => u.id)).not.toContain(ids.cli);
     expect(opts.usuarios.map((u) => u.id)).toContain(ids.eva);
+  });
+});
+
+// ── Página no encontrada ────────────────────────────────────────────────────
+
+describe("Página no encontrada (URL desconocida)", () => {
+  it.each([
+    ["admin", "/dashboard"],
+    ["eva", "/mis-horas"],
+    ["cli", "/cliente/horas"],
+  ])("sesión %s: «No encontramos esta página.» y «Volver al inicio» → %s, sin estilo de error", async (who, home) => {
+    await loginAs(ids[who]);
+    const html = renderToStaticMarkup(await NotFoundContent());
+    expect(html).toContain(NOT_FOUND_TEXT);
+    expect(html).toMatch(new RegExp(`<a[^>]*href="${home}"[^>]*>Volver al inicio</a>`));
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toMatch(/danger/);
+  });
+
+  it("sin sesión: «Volver al inicio» → /login, sin datos", async () => {
+    const html = renderToStaticMarkup(await NotFoundContent());
+    expect(html).toContain(NOT_FOUND_TEXT);
+    expect(html).toMatch(/<a[^>]*href="\/login"[^>]*>Volver al inicio<\/a>/);
+    expect(html).not.toContain("@kairos.test");
   });
 });

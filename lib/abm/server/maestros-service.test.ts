@@ -10,7 +10,8 @@ const { ABM_MESSAGES, createMaestro, deleteCheckMaestro, deleteMaestro, loadMaes
 const { AirtableError } = await import("@/lib/airtable/errors");
 const { CLIENTE_MESSAGES, MAESTRO_CONFIGS, PROYECTO_MESSAGES } = await import("./maestros-config");
 const { REFERENCED_MESSAGE } = await import("@/lib/airtable/integrity");
-const { MAESTRO_MESSAGES, MAESTRO_SPECS, sociosSumWarning } = await import("@/lib/abm/maestros");
+const { MAESTRO_MESSAGES, MAESTRO_SPECS, sociosSumWarning, TIPO_PROTEGIDO_MESSAGES } = await import("@/lib/abm/maestros");
+const { TIPOS_OPERACION, TIPOS_OPERACION_PROTEGIDOS } = await import("@/lib/tipos-operacion");
 const MAESTRO_LABEL = MAESTRO_SPECS.proyectos.fields.find((f) => f.key === "usuarios")!.label;
 
 const C = TABLES.clientes;
@@ -636,6 +637,76 @@ describe("Tipos de operación · «Transferencia entre cuentas propias» protegi
     const otro = seedTipo("Otro");
     expect(await updateMaestro("tipos-de-operacion", otro, { ...base, nombre: "Otro nombre" })).toMatchObject({ ok: true });
     expect(await deleteMaestro("tipos-de-operacion", otro)).toMatchObject({ ok: true });
+  });
+});
+
+describe("Tipos de operación · los 6 nombres que usa la app protegidos (CC-F4-02)", () => {
+  const TO = TABLES.tiposOperacion;
+  const seedTipo = (nombre: string) =>
+    fake.seed(TO.id, { [TO.fields.nombre]: nombre, [TO.fields.movimiento]: "Ambos", [TO.fields.sumaAResultados]: false, [TO.fields.esDeSocio]: false });
+  const base = (nombre: string) => ({ nombre, movimiento: "Ambos", sumaAResultados: false, pideClienteProveedor: false, esDeSocio: false });
+  const REPORTES = TIPOS_OPERACION_PROTEGIDOS.filter((n) => n !== TIPOS_OPERACION.transferencia);
+  const writes = () => fake.calls.filter((c) => c.method === "create" || c.method === "update" || c.method === "delete");
+
+  it.each(TIPOS_OPERACION_PROTEGIDOS)("«%s»: renombrar → 409 con el mensaje, nada escrito", async (nombre) => {
+    const id = seedTipo(nombre);
+    const res = await updateMaestro("tipos-de-operacion", id, { ...base(nombre), nombre: `${nombre} QA` });
+    const mensaje = nombre === TIPOS_OPERACION.transferencia ? TIPO_PROTEGIDO_MESSAGES.transferencia : TIPO_PROTEGIDO_MESSAGES.reportes;
+    expect(res).toMatchObject({ ok: false, status: 409, error: mensaje });
+    expect(writes()).toEqual([]);
+    expect(fieldsOf(TO.id, id)[TO.fields.nombre]).toBe(nombre);
+  });
+
+  it.each(TIPOS_OPERACION_PROTEGIDOS)("«%s»: borrar → 409, el chequeo previo lo avisa, nada borrado", async (nombre) => {
+    const id = seedTipo(nombre);
+    const mensaje = nombre === TIPOS_OPERACION.transferencia ? TIPO_PROTEGIDO_MESSAGES.transferenciaBorrar : TIPO_PROTEGIDO_MESSAGES.reportesBorrar;
+    expect(await deleteCheckMaestro("tipos-de-operacion", id)).toMatchObject({ ok: true, data: { blocked: true, message: mensaje } });
+    expect(await deleteMaestro("tipos-de-operacion", id)).toMatchObject({ ok: false, status: 409, error: mensaje });
+    expect(writes()).toEqual([]);
+    expect(fake.rows(TO.id).some((r) => r.id === id)).toBe(true);
+  });
+
+  it.each(TIPOS_OPERACION_PROTEGIDOS)("«%s»: nadie más puede tomar ese nombre (alta o renombre)", async (nombre) => {
+    const otro = seedTipo("QA Otro");
+    for (const n of [nombre, ` ${nombre.toUpperCase()} `]) {
+      expect(await createMaestro("tipos-de-operacion", base(n))).toMatchObject({ status: 409, error: TIPO_PROTEGIDO_MESSAGES.reservado(nombre) });
+      expect(await updateMaestro("tipos-de-operacion", otro, base(n))).toMatchObject({ status: 409, fieldErrors: { nombre: TIPO_PROTEGIDO_MESSAGES.reservado(nombre) } });
+    }
+    expect(writes()).toEqual([]);
+  });
+
+  it.each(REPORTES.flatMap((n) => [[n, "Movimiento", { movimiento: "Pago" }], [n, "Es de socio", { esDeSocio: true }]] as const))(
+    "«%s»: cambiar %s → 409 con el mensaje, nada escrito",
+    async (nombre, _campo, change) => {
+      const id = seedTipo(nombre);
+      const res = await updateMaestro("tipos-de-operacion", id, { ...base(nombre), ...change });
+      expect(res).toMatchObject({ ok: false, status: 409, error: TIPO_PROTEGIDO_MESSAGES.reportes });
+      expect(writes()).toEqual([]);
+      expect(fieldsOf(TO.id, id)).toMatchObject({ [TO.fields.nombre]: nombre, [TO.fields.movimiento]: "Ambos", [TO.fields.esDeSocio]: false });
+    },
+  );
+
+  it.each(REPORTES)("«%s»: Suma a resultados, Categoría por defecto y Pide cliente/proveedor se editan como siempre", async (nombre) => {
+    const cat = fake.seed(TABLES.categorias.id, { [TABLES.categorias.fields.nombre]: "QA Categoría", [TABLES.categorias.fields.tipo]: "Gasto" });
+    const id = seedTipo(nombre);
+    const res = await updateMaestro("tipos-de-operacion", id, { ...base(nombre), sumaAResultados: true, categoriaPorDefecto: [cat], pideClienteProveedor: true });
+    expect(res).toMatchObject({ ok: true });
+    expect(fieldsOf(TO.id, id)).toMatchObject({
+      [TO.fields.nombre]: nombre,
+      [TO.fields.movimiento]: "Ambos",
+      [TO.fields.esDeSocio]: false,
+      [TO.fields.sumaAResultados]: true,
+      [TO.fields.categoriaPorDefecto]: [cat],
+      [TO.fields.pideClienteProveedor]: true,
+    });
+  });
+
+  it("un tipo no protegido se renombra y se borra como siempre", async () => {
+    const id = seedTipo("QA Tipo");
+    expect(await updateMaestro("tipos-de-operacion", id, base("QA Tipo renombrado"))).toMatchObject({ ok: true });
+    expect(fieldsOf(TO.id, id)[TO.fields.nombre]).toBe("QA Tipo renombrado");
+    expect(await deleteCheckMaestro("tipos-de-operacion", id)).toMatchObject({ ok: true, data: { blocked: false } });
+    expect(await deleteMaestro("tipos-de-operacion", id)).toMatchObject({ ok: true });
   });
 });
 

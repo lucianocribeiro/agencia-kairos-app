@@ -2,11 +2,13 @@
  * Reporte «Saldos» (hoja Saldos del Excel), histórico (sin período). Puro; centavos.
  * Cuentas en su propia moneda; Clientes y Proveedores en pesos.
  */
+import { TIPOS_OPERACION } from "@/lib/tipos-operacion";
 import { toCents } from "@/lib/ventas-compras/money";
 import { collator, type ComprobanteR, type MovimientoR } from "./types";
 
-export const TIPO_COBRO = "Cobro a cliente";
-export const TIPO_PAGO = "Pago a proveedor";
+/** Tipos de operación por nombre exacto; los nombres viven en `TIPOS_OPERACION`. */
+export const TIPO_COBRO = TIPOS_OPERACION.cobroCliente;
+export const TIPO_PAGO = TIPOS_OPERACION.pagoProveedor;
 
 export interface CuentaR {
   id: string;
@@ -55,11 +57,11 @@ export interface SaldosData {
   /** Fecha del cálculo ("AAAA-MM-DD"); el nombre del archivo usa su mes. */
   hoy: string;
   cuentas: FilaCuenta[];
-  /** null si falta el tipo «Cobro a cliente» (ver `errorClientes`). */
+  /** null si falta el tipo `TIPO_COBRO` (ver `errorClientes`). */
   clientes: FilaCliente[] | null;
   ventasSinCliente: number | null;
   errorClientes: string | null;
-  /** null si falta el tipo «Pago a proveedor» (ver `errorProveedores`). */
+  /** null si falta el tipo `TIPO_PAGO` (ver `errorProveedores`). */
   proveedores: FilaProveedor[] | null;
   errorProveedores: string | null;
 }

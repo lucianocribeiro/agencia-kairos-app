@@ -140,6 +140,32 @@ describe("Tipos de operación · tipo de transferencia protegido (CC-F2-04 v2)",
   });
 });
 
+describe("Tipos de operación · tipos de los reportes protegidos (CC-F4-02)", () => {
+  it("«Retiro de socio»: Nombre, Movimiento y Es de socio bloqueados con el aviso; los otros 3 editables; sin Borrar", async () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+    const values = { nombre: "Retiro de socio", movimiento: "Pago", sumaAResultados: false, categoriaPorDefecto: [], pideClienteProveedor: false, esDeSocio: true };
+    const data: AbmData = { records: [{ id: "recTIPO0000000003", values }], labels: {}, options: {} };
+    act(() =>
+      root.render(
+        <ToastProvider>
+          <MaestroManager slug="tipos-de-operacion" data={data} />
+        </ToastProvider>,
+      ),
+    );
+    await act(async () => (container.querySelector('button[aria-label="Editar Retiro de socio"]') as HTMLButtonElement).click());
+    expect(container.textContent).toContain("Este tipo de operación lo usan los reportes: no se puede renombrar ni borrar, ni cambiar su Movimiento ni Es de socio.");
+    const byLabel = (label: string) => {
+      const l = [...container.querySelectorAll("form label")].find((x) => x.textContent?.replace("*", "").trim() === label) as HTMLLabelElement;
+      return (l.htmlFor ? container.querySelector(`#${CSS.escape(l.htmlFor)}`) : l.querySelector("input,select")) as HTMLInputElement;
+    };
+    for (const label of ["Nombre", "Movimiento", "Es de socio"]) expect(byLabel(label).disabled, label).toBe(true);
+    for (const label of ["Suma a resultados", "Categoría por defecto", "Pide cliente/proveedor"]) expect(byLabel(label).disabled, label).toBe(false);
+    expect([...container.querySelectorAll("form input, form select")].filter((el) => (el as HTMLInputElement).disabled)).toHaveLength(3);
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Borrar")).toBe(false);
+  });
+});
+
 describe("Cuentas · Moneda bloqueada con movimientos (CC-F2-04 v4)", () => {
   it("con movimientos la Moneda se ve bloqueada; sin movimientos, editable", async () => {
     act(() => root.unmount());

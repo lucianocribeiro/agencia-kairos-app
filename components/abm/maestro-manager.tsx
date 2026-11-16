@@ -6,7 +6,7 @@ import { useState, type FormEvent } from "react";
 
 import { Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, InlineMessage, useToast } from "@/components/ui";
 import { editableFields, formatForDisplay, formatForInput, type FieldErrors, type RawValues } from "@/lib/abm/fields";
-import { MAESTRO_SPECS, SIN_ESTADO, sociosSumWarning, validateMaestro, type MaestroSlug } from "@/lib/abm/maestros";
+import { MAESTRO_SPECS, reglaProtegida, SIN_ESTADO, sociosSumWarning, validateMaestro, type MaestroSlug } from "@/lib/abm/maestros";
 import type { AbmData, RecordDTO } from "@/lib/abm/types";
 
 import { callApi } from "./api";
@@ -136,7 +136,7 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
   }
 
   const title = editing?.mode === "edit" ? display(editing.record, spec.primaryKey) || "Editar" : spec.newLabel;
-  const protegido = editing?.mode === "edit" && spec.protegido?.when(editing.record.values) ? spec.protegido : null;
+  const protegido = editing?.mode === "edit" ? reglaProtegida(spec, editing.record.values) : null;
   const bloqueado = editing?.mode === "edit" && (editing.record.referenceCount ?? 0) > 0 ? (spec.bloqueadoConReferencias ?? null) : null;
   const canDelete = spec.deletable && editing?.mode === "edit" && !protegido;
 

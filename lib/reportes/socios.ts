@@ -3,15 +3,16 @@
  * Tabla 1: histórica (todas las fechas). Tabla 2: total retirado neto por mes del período.
  */
 import { formatNumber } from "@/lib/format";
+import { TIPOS_OPERACION } from "@/lib/tipos-operacion";
 import { toCents } from "@/lib/ventas-compras/money";
 import { indiceMes, type Periodo } from "./periodo";
 import { collator, type ComprobanteR, type MovimientoR } from "./types";
 
-/** Tipos de operación por nombre exacto (como en el Excel). */
+/** Tipos de operación por nombre exacto (como en el Excel); los nombres viven en `TIPOS_OPERACION`. */
 export const TIPOS_SOCIO = {
-  retiro: "Retiro de socio",
-  gasto: "Gasto particular de socio",
-  aporte: "Aporte de socio",
+  retiro: TIPOS_OPERACION.retiroSocio,
+  gasto: TIPOS_OPERACION.gastoSocio,
+  aporte: TIPOS_OPERACION.aporteSocio,
 } as const;
 
 export interface SocioR {

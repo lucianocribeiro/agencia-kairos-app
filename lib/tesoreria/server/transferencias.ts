@@ -15,7 +15,7 @@ import { compact, loadTesoreriaCtx, parseInput, READ_FIELDS, toFields, toMovimie
 
 /**
  * Transferencias entre cuentas propias: 2 registros (Pago en origen, Cobranza en
- * destino) con el tipo «Transferencia entre cuentas propias», Suma a resultados N y el
+ * destino) con el tipo `TIPO_TRANSFERENCIA`, Suma a resultados N y el
  * mismo ID nuevo en «Transferencia».
  *
  * Todo se reconcilia POR ID DE TRANSFERENCIA: el ID es nuevo y único, así que todo

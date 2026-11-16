@@ -5,7 +5,7 @@
  * lib/abm/server/maestros-config.ts.
  */
 import { formatNumber } from "@/lib/format";
-import { TIPO_TRANSFERENCIA } from "@/lib/tesoreria/rules";
+import { TIPOS_OPERACION, TIPOS_OPERACION_PROTEGIDOS } from "@/lib/tipos-operacion";
 import { CLIENTE_ACTIVO, CLIENTE_ESTADOS } from "./cliente-estado";
 import { parseValues, type FieldErrors, type FieldSpec, type Mode, type RawValues, type Values } from "./fields";
 
@@ -46,26 +46,55 @@ export interface MaestroSpec {
   /** Reglas entre campos. Corre en cliente y servidor. */
   refine?: (values: Values, mode: Mode) => FieldErrors;
   /**
-   * Registro protegido (lo usa la app por su nombre): si `when` da true, sus `keys` no se
-   * pueden cambiar y no se puede borrar (409); `reservado` impide que otro registro tome
-   * ese nombre. El servidor lo hace cumplir; el formulario muestra esos campos bloqueados.
-   */
-  /**
    * Campos que no se pueden cambiar si el registro tiene referencias (p. ej. la Moneda
    * de una cuenta con movimientos). El servidor lo hace cumplir antes y después de
    * escribir; el formulario los muestra bloqueados cuando `referenceCount > 0`.
    */
   bloqueadoConReferencias?: { keys: readonly string[]; mensaje: string };
-  protegido?: {
-    when: (values: Values) => boolean;
-    keys: readonly string[];
-    mensaje: string;
-    borrar: string;
-    reservado: { key: string; value: string; mensaje: string };
-  };
+  /**
+   * Registros protegidos (los usa la app por su nombre): el registro cuyo `key` es igual
+   * (exacto) al `value` de una regla no puede cambiar las `keys` de esa regla ni borrarse
+   * (409), y ningún otro registro puede tomar ese nombre (`reservado`). El servidor lo
+   * hace cumplir; el formulario muestra esos campos bloqueados y no ofrece borrar.
+   */
+  protegido?: { key: string; reglas: readonly ReglaProtegida[] };
+}
+
+export interface ReglaProtegida {
+  value: string;
+  keys: readonly string[];
+  mensaje: string;
+  borrar: string;
+  reservado: string;
+}
+
+/** La regla que protege a este registro (por su valor actual), o null. */
+export function reglaProtegida(spec: MaestroSpec, values: Values): ReglaProtegida | null {
+  const p = spec.protegido;
+  if (!p) return null;
+  return p.reglas.find((r) => values[p.key] === r.value) ?? null;
 }
 
 export const SIN_ESTADO = "Sin estado";
+
+export const TIPO_PROTEGIDO_MESSAGES = {
+  transferencia: "Este tipo de operación lo usa Tesorería para las transferencias: no se puede renombrar ni borrar, ni cambiar su Movimiento, Suma a resultados ni Es de socio.",
+  transferenciaBorrar: "Este tipo de operación lo usa Tesorería para las transferencias: no se puede borrar.",
+  reportes: "Este tipo de operación lo usan los reportes: no se puede renombrar ni borrar.",
+  reservado: (nombre: string) => `El nombre «${nombre}» está reservado para un tipo de operación que usa la app.`,
+} as const;
+
+/**
+ * La transferencia además bloquea Movimiento, Suma a resultados y Es de socio (Tesorería
+ * arma las transferencias con ellos); los de los reportes, solo el nombre.
+ */
+function reglaTipoOperacion(nombre: string): ReglaProtegida {
+  const reservado = TIPO_PROTEGIDO_MESSAGES.reservado(nombre);
+  if (nombre === TIPOS_OPERACION.transferencia) {
+    return { value: nombre, keys: ["nombre", "movimiento", "sumaAResultados", "esDeSocio"], mensaje: TIPO_PROTEGIDO_MESSAGES.transferencia, borrar: TIPO_PROTEGIDO_MESSAGES.transferenciaBorrar, reservado };
+  }
+  return { value: nombre, keys: ["nombre"], mensaje: TIPO_PROTEGIDO_MESSAGES.reportes, borrar: TIPO_PROTEGIDO_MESSAGES.reportes, reservado };
+}
 
 const CONDICION_IVA_CLIENTE = ["Responsable Inscripto", "Monotributista", "Exento", "Consumidor Final", "Cliente del Exterior"] as const;
 const CONDICION_IVA_PROVEEDOR = ["Responsable Inscripto", "Monotributista", "Exento", "Consumidor Final", "Proveedor del Exterior"] as const;
@@ -229,18 +258,8 @@ export const MAESTRO_SPECS: Record<MaestroSlug, MaestroSpec> = {
       { key: "esDeSocio", label: "Es de socio", kind: "checkbox" },
     ],
     columns: ["nombre", "movimiento", "sumaAResultados", "categoriaPorDefecto", "pideClienteProveedor", "esDeSocio"],
-    // Las transferencias entre cuentas propias de Tesorería buscan este tipo por nombre.
-    protegido: {
-      when: (values) => values.nombre === TIPO_TRANSFERENCIA,
-      keys: ["nombre", "movimiento", "sumaAResultados", "esDeSocio"],
-      mensaje: `«${TIPO_TRANSFERENCIA}» lo usa Tesorería para las transferencias: no se puede renombrar ni cambiar su Movimiento, Suma a resultados ni Es de socio.`,
-      borrar: `«${TIPO_TRANSFERENCIA}» lo usa Tesorería para las transferencias: no se puede borrar.`,
-      reservado: {
-        key: "nombre",
-        value: TIPO_TRANSFERENCIA,
-        mensaje: `El nombre «${TIPO_TRANSFERENCIA}» está reservado para el tipo que usa Tesorería en las transferencias.`,
-      },
-    },
+    // Tesorería (transferencias) y los Reportes (Socios, Saldos) buscan estos tipos por nombre.
+    protegido: { key: "nombre", reglas: TIPOS_OPERACION_PROTEGIDOS.map(reglaTipoOperacion) },
   },
 
   "tipos-de-comprobante": {

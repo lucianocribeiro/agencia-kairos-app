@@ -140,6 +140,28 @@ describe("Tipos de operación · tipo de transferencia protegido (CC-F2-04 v2)",
   });
 });
 
+describe("Tipos de operación · tipos de los reportes protegidos (CC-F4-02)", () => {
+  it("«Retiro de socio»: nombre bloqueado con el aviso, los demás campos editables, sin Borrar", async () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+    const values = { nombre: "Retiro de socio", movimiento: "Pago", sumaAResultados: false, categoriaPorDefecto: [], pideClienteProveedor: false, esDeSocio: true };
+    const data: AbmData = { records: [{ id: "recTIPO0000000003", values }], labels: {}, options: {} };
+    act(() =>
+      root.render(
+        <ToastProvider>
+          <MaestroManager slug="tipos-de-operacion" data={data} />
+        </ToastProvider>,
+      ),
+    );
+    await act(async () => (container.querySelector('button[aria-label="Editar Retiro de socio"]') as HTMLButtonElement).click());
+    expect(container.textContent).toContain("Este tipo de operación lo usan los reportes: no se puede renombrar ni borrar.");
+    const disabled = [...container.querySelectorAll("form input, form select")].filter((el) => (el as HTMLInputElement).disabled) as HTMLInputElement[];
+    expect(disabled).toHaveLength(1);
+    expect(disabled[0].value).toBe("Retiro de socio");
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Borrar")).toBe(false);
+  });
+});
+
 describe("Cuentas · Moneda bloqueada con movimientos (CC-F2-04 v4)", () => {
   it("con movimientos la Moneda se ve bloqueada; sin movimientos, editable", async () => {
     act(() => root.unmount());

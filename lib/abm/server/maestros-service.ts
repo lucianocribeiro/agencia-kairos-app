@@ -6,7 +6,7 @@ import { invalidFieldIds, isRecordId } from "@/lib/airtable/payload";
 import { TABLES } from "@/lib/airtable/schema";
 import type { FieldErrors, FieldSpec, RawValues, Values } from "@/lib/abm/fields";
 import { FIELD_MESSAGES } from "@/lib/abm/fields";
-import { isMaestroSlug, validateMaestro, type MaestroSlug } from "@/lib/abm/maestros";
+import { isMaestroSlug, reglaProtegida, validateMaestro, type MaestroSlug } from "@/lib/abm/maestros";
 import type { AbmData, LinkOption, RecordDTO, ServiceResult } from "@/lib/abm/types";
 import { Compensation, previousOf, rollbackAndLog, runPostWriteChecks, WRITE_MESSAGES, type PostWriteCheck } from "./compensation";
 import { injectFault } from "./fault-injection";
@@ -192,14 +192,16 @@ async function write(
   const { values, errors } = validateMaestro(config.spec, raw, target.mode);
   if (Object.keys(errors).length > 0) return fail(400, ABM_MESSAGES.validacion, errors);
 
-  // Registro protegido: sus claves no cambian; ningún otro puede tomar su nombre reservado.
+  // Registro protegido: sus claves no cambian; ningún otro puede tomar un nombre reservado.
   const protegido = config.spec.protegido;
   if (protegido) {
-    if (existingValues && protegido.when(existingValues)) {
-      const cambia = protegido.keys.some((k) => k in values && JSON.stringify(values[k] ?? null) !== JSON.stringify(existingValues![k] ?? null));
-      if (cambia) return fail(409, protegido.mensaje);
-    } else if (normalizeForUnique(values[protegido.reservado.key]) === normalizeForUnique(protegido.reservado.value)) {
-      return fail(409, protegido.reservado.mensaje, { [protegido.reservado.key]: protegido.reservado.mensaje });
+    const regla = existingValues ? reglaProtegida(config.spec, existingValues) : null;
+    if (regla) {
+      const cambia = regla.keys.some((k) => k in values && JSON.stringify(values[k] ?? null) !== JSON.stringify(existingValues![k] ?? null));
+      if (cambia) return fail(409, regla.mensaje);
+    } else {
+      const tomado = protegido.reglas.find((r) => normalizeForUnique(values[protegido.key]) === normalizeForUnique(r.value));
+      if (tomado) return fail(409, tomado.reservado, { [protegido.key]: tomado.reservado });
     }
   }
 
@@ -284,10 +286,11 @@ async function checkDeletable(config: MaestroConfig | null, id: string): Promise
   if (!config.spec.deletable) return fail(405, ABM_MESSAGES.noBorrable);
   const protegido = config.spec.protegido;
   if (protegido) {
-    const record = await getAirtableClient().get(tableId(config), id, { fields: protegido.keys.map((k) => config.fieldIds[k]) });
+    const record = await getAirtableClient().get(tableId(config), id, { fields: [config.fieldIds[protegido.key]] });
     if (!record) return fail(404, ABM_MESSAGES.noEncontrado);
-    if (protegido.when(toValues(config, record.fields))) {
-      return { ok: true, data: { blocked: true, message: protegido.borrar, counts: Object.fromEntries(config.references.map((f) => [referenceCategory(config, f), 0])) } };
+    const regla = reglaProtegida(config.spec, toValues(config, record.fields));
+    if (regla) {
+      return { ok: true, data: { blocked: true, message: regla.borrar, counts: Object.fromEntries(config.references.map((f) => [referenceCategory(config, f), 0])) } };
     }
   }
   const refs = await findReferences(tableId(config), id, config.references);

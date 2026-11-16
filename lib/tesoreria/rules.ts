@@ -4,6 +4,7 @@
  * Airtable solo guarda los datos: todo importe derivado se calcula acá.
  */
 import { isIsoDate } from "@/lib/horas/dates";
+import { TIPOS_OPERACION } from "@/lib/tipos-operacion";
 import { toCents } from "@/lib/ventas-compras/money";
 
 export type Movimiento = "Cobranza" | "Pago";
@@ -11,7 +12,7 @@ export const MOVIMIENTOS: readonly Movimiento[] = ["Cobranza", "Pago"];
 export type Suma = "S" | "N";
 
 /** Nombre del tipo de operación de las transferencias propias (solo por el formulario de transferencia). */
-export const TIPO_TRANSFERENCIA = "Transferencia entre cuentas propias";
+export const TIPO_TRANSFERENCIA = TIPOS_OPERACION.transferencia;
 
 export interface Ref {
   id: string;

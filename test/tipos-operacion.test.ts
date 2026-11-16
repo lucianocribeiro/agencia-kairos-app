@@ -32,7 +32,7 @@ describe("TIPOS_OPERACION (CC-F4-02)", () => {
     }
   });
 
-  it("Maestros › Tipos de operación protege exactamente esos 6 (la transferencia, además, Movimiento/Suma/Es de socio)", () => {
+  it("Maestros › Tipos de operación protege exactamente esos 6 (reportes: Nombre/Movimiento/Es de socio; transferencia: además Suma)", () => {
     const p = MAESTRO_SPECS["tipos-de-operacion"].protegido!;
     expect(p.key).toBe("nombre");
     expect(p.reglas.map((r) => r.value)).toEqual(NOMBRES);
@@ -40,7 +40,7 @@ describe("TIPOS_OPERACION (CC-F4-02)", () => {
       if (r.value === TIPOS_OPERACION.transferencia) {
         expect(r).toMatchObject({ keys: ["nombre", "movimiento", "sumaAResultados", "esDeSocio"], mensaje: TIPO_PROTEGIDO_MESSAGES.transferencia });
       } else {
-        expect(r).toMatchObject({ keys: ["nombre"], mensaje: TIPO_PROTEGIDO_MESSAGES.reportes, borrar: TIPO_PROTEGIDO_MESSAGES.reportes });
+        expect(r).toMatchObject({ keys: ["nombre", "movimiento", "esDeSocio"], mensaje: TIPO_PROTEGIDO_MESSAGES.reportes, borrar: TIPO_PROTEGIDO_MESSAGES.reportesBorrar });
       }
     }
   });

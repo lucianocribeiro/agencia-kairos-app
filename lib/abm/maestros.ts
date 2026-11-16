@@ -80,20 +80,21 @@ export const SIN_ESTADO = "Sin estado";
 export const TIPO_PROTEGIDO_MESSAGES = {
   transferencia: "Este tipo de operación lo usa Tesorería para las transferencias: no se puede renombrar ni borrar, ni cambiar su Movimiento, Suma a resultados ni Es de socio.",
   transferenciaBorrar: "Este tipo de operación lo usa Tesorería para las transferencias: no se puede borrar.",
-  reportes: "Este tipo de operación lo usan los reportes: no se puede renombrar ni borrar.",
+  reportes: "Este tipo de operación lo usan los reportes: no se puede renombrar ni borrar, ni cambiar su Movimiento ni Es de socio.",
+  reportesBorrar: "Este tipo de operación lo usan los reportes: no se puede renombrar ni borrar.",
   reservado: (nombre: string) => `El nombre «${nombre}» está reservado para un tipo de operación que usa la app.`,
 } as const;
 
 /**
- * La transferencia además bloquea Movimiento, Suma a resultados y Es de socio (Tesorería
- * arma las transferencias con ellos); los de los reportes, solo el nombre.
+ * La transferencia bloquea Nombre, Movimiento, Suma a resultados y Es de socio (Tesorería
+ * arma las transferencias con ellos); los de los reportes, Nombre, Movimiento y Es de socio.
  */
 function reglaTipoOperacion(nombre: string): ReglaProtegida {
   const reservado = TIPO_PROTEGIDO_MESSAGES.reservado(nombre);
   if (nombre === TIPOS_OPERACION.transferencia) {
     return { value: nombre, keys: ["nombre", "movimiento", "sumaAResultados", "esDeSocio"], mensaje: TIPO_PROTEGIDO_MESSAGES.transferencia, borrar: TIPO_PROTEGIDO_MESSAGES.transferenciaBorrar, reservado };
   }
-  return { value: nombre, keys: ["nombre"], mensaje: TIPO_PROTEGIDO_MESSAGES.reportes, borrar: TIPO_PROTEGIDO_MESSAGES.reportes, reservado };
+  return { value: nombre, keys: ["nombre", "movimiento", "esDeSocio"], mensaje: TIPO_PROTEGIDO_MESSAGES.reportes, borrar: TIPO_PROTEGIDO_MESSAGES.reportesBorrar, reservado };
 }
 
 const CONDICION_IVA_CLIENTE = ["Responsable Inscripto", "Monotributista", "Exento", "Consumidor Final", "Cliente del Exterior"] as const;

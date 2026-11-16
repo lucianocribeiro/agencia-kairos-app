@@ -659,7 +659,7 @@ describe("Tipos de operación · los 6 nombres que usa la app protegidos (CC-F4-
 
   it.each(TIPOS_OPERACION_PROTEGIDOS)("«%s»: borrar → 409, el chequeo previo lo avisa, nada borrado", async (nombre) => {
     const id = seedTipo(nombre);
-    const mensaje = nombre === TIPOS_OPERACION.transferencia ? TIPO_PROTEGIDO_MESSAGES.transferenciaBorrar : TIPO_PROTEGIDO_MESSAGES.reportes;
+    const mensaje = nombre === TIPOS_OPERACION.transferencia ? TIPO_PROTEGIDO_MESSAGES.transferenciaBorrar : TIPO_PROTEGIDO_MESSAGES.reportesBorrar;
     expect(await deleteCheckMaestro("tipos-de-operacion", id)).toMatchObject({ ok: true, data: { blocked: true, message: mensaje } });
     expect(await deleteMaestro("tipos-de-operacion", id)).toMatchObject({ ok: false, status: 409, error: mensaje });
     expect(writes()).toEqual([]);
@@ -675,11 +675,30 @@ describe("Tipos de operación · los 6 nombres que usa la app protegidos (CC-F4-
     expect(writes()).toEqual([]);
   });
 
-  it.each(REPORTES)("«%s»: los campos que no son el nombre se editan como siempre", async (nombre) => {
+  it.each(REPORTES.flatMap((n) => [[n, "Movimiento", { movimiento: "Pago" }], [n, "Es de socio", { esDeSocio: true }]] as const))(
+    "«%s»: cambiar %s → 409 con el mensaje, nada escrito",
+    async (nombre, _campo, change) => {
+      const id = seedTipo(nombre);
+      const res = await updateMaestro("tipos-de-operacion", id, { ...base(nombre), ...change });
+      expect(res).toMatchObject({ ok: false, status: 409, error: TIPO_PROTEGIDO_MESSAGES.reportes });
+      expect(writes()).toEqual([]);
+      expect(fieldsOf(TO.id, id)).toMatchObject({ [TO.fields.nombre]: nombre, [TO.fields.movimiento]: "Ambos", [TO.fields.esDeSocio]: false });
+    },
+  );
+
+  it.each(REPORTES)("«%s»: Suma a resultados, Categoría por defecto y Pide cliente/proveedor se editan como siempre", async (nombre) => {
+    const cat = fake.seed(TABLES.categorias.id, { [TABLES.categorias.fields.nombre]: "QA Categoría", [TABLES.categorias.fields.tipo]: "Gasto" });
     const id = seedTipo(nombre);
-    const res = await updateMaestro("tipos-de-operacion", id, { ...base(nombre), movimiento: "Pago", sumaAResultados: true, pideClienteProveedor: true, esDeSocio: true });
+    const res = await updateMaestro("tipos-de-operacion", id, { ...base(nombre), sumaAResultados: true, categoriaPorDefecto: [cat], pideClienteProveedor: true });
     expect(res).toMatchObject({ ok: true });
-    expect(fieldsOf(TO.id, id)).toMatchObject({ [TO.fields.nombre]: nombre, [TO.fields.movimiento]: "Pago", [TO.fields.sumaAResultados]: true, [TO.fields.esDeSocio]: true });
+    expect(fieldsOf(TO.id, id)).toMatchObject({
+      [TO.fields.nombre]: nombre,
+      [TO.fields.movimiento]: "Ambos",
+      [TO.fields.esDeSocio]: false,
+      [TO.fields.sumaAResultados]: true,
+      [TO.fields.categoriaPorDefecto]: [cat],
+      [TO.fields.pideClienteProveedor]: true,
+    });
   });
 
   it("un tipo no protegido se renombra y se borra como siempre", async () => {

@@ -27,6 +27,7 @@ import {
   TableRow,
   useToast,
 } from "@/components/ui";
+import { MES_ANIO_MESSAGES, MesAnioInput } from "@/components/ui/mes-anio-select";
 import { cn } from "@/lib/cn";
 import { formatCuit } from "@/lib/cuit";
 import { formatNumber } from "@/lib/format";
@@ -56,7 +57,8 @@ interface Filtros {
 }
 const SIN_FILTROS: Filtros = { mesDesde: "", mesHasta: "", contraparte: "", proyecto: "", categoria: "", control: "" };
 
-type Form = { mesDevengado: string; proyecto: string; unidadNegocio: string; categoria: string; socio: string; observaciones: string };
+/** `mesDevengado`: "AAAA-MM", "" (vacío = mes de la Fecha) o null (mes o año sin elegir: no se guarda). */
+type Form = { mesDevengado: string | null; proyecto: string; unidadNegocio: string; categoria: string; socio: string; observaciones: string };
 
 const pesos = (cents: number) => formatNumber(cents / 100, { decimals: 2 });
 const num = (v: unknown) => (typeof v === "number" ? formatNumber(v, { maxDecimals: 4 }) : String(v ?? ""));
@@ -111,6 +113,7 @@ export function ComprobantesManager({ kind, today, initial }: { kind: Kind; toda
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!editing || !form) return;
+    if (form.mesDevengado === null) return setFormError(MES_ANIO_MESSAGES.incompleto);
     setSaving(true);
     const body = kind === "ventas" ? { ...form, socio: undefined } : form;
     const res = await callApi("PATCH", `/api/admin/comprobantes/${kind}/${editing.id}`, body);
@@ -176,7 +179,7 @@ export function ComprobantesManager({ kind, today, initial }: { kind: Kind; toda
               </dl>
               <div className="grid gap-4 md:grid-cols-3">
                 <FormField label="Mes devengado" hint={`Vacío: ${displayMonth(String(editing.datos.fecha ?? ""))} (mes de la Fecha).`}>
-                  <Input type="month" value={form.mesDevengado} onChange={(e) => setForm({ ...form, mesDevengado: e.target.value })} disabled={saving} />
+                  <MesAnioInput label="Mes devengado" value={form.mesDevengado} onChange={(v) => setForm({ ...form, mesDevengado: v })} disabled={saving} />
                 </FormField>
                 <FormField label="Proyecto">
                   <Select value={form.proyecto} onChange={(e) => setForm({ ...form, proyecto: e.target.value })} placeholder="Sin proyecto" options={proyectoOpts(editing.guardado.proyecto)} disabled={saving} />
@@ -214,12 +217,12 @@ export function ComprobantesManager({ kind, today, initial }: { kind: Kind; toda
 
       <section aria-label="Filtros" className="flex flex-col gap-3">
         <PeriodFilter value={range} onChange={(r) => (setRange(r), setPagina(1))} today={today} shortcuts={["mesActual", "mesAnterior", "trimestreActual", "anioActual"]} disabled={loading} />
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-6">
           <FormField label="Devengado desde">
-            <Input type="month" value={filtros.mesDesde} onChange={(e) => setFiltro("mesDesde")(e.target.value)} />
+            <MesAnioInput label="Devengado desde" value={filtros.mesDesde} onChange={(v) => v !== null && setFiltro("mesDesde")(v)} />
           </FormField>
           <FormField label="Devengado hasta">
-            <Input type="month" value={filtros.mesHasta} onChange={(e) => setFiltro("mesHasta")(e.target.value)} />
+            <MesAnioInput label="Devengado hasta" value={filtros.mesHasta} onChange={(v) => v !== null && setFiltro("mesHasta")(v)} />
           </FormField>
           <FormField label={kind === "ventas" ? "Cliente" : "Proveedor"}>
             <Select value={filtros.contraparte} onChange={(e) => setFiltro("contraparte")(e.target.value)} placeholder="Todos" options={data.opciones.contrapartes.map((c) => ({ value: c.id, label: c.nombre }))} />

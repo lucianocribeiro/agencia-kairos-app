@@ -20,6 +20,7 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@/components/ui";
+import { MES_ANIO_MESSAGES, MesAnioInput } from "@/components/ui/mes-anio-select";
 import { cn } from "@/lib/cn";
 import { formatCuit } from "@/lib/cuit";
 import { formatNumber } from "@/lib/format";
@@ -65,6 +66,8 @@ export function ImportManager({ kind }: { kind: Kind }) {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [edits, setEdits] = useState<Record<string, Ediciones>>({});
+  /** Filas con Mes devengado a medias (mes o año sin elegir): no se puede confirmar. */
+  const [mesIncompleto, setMesIncompleto] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"preview" | "confirm" | null>(null);
   const [result, setResult] = useState<ResultadoImportacion | null>(null);
@@ -73,6 +76,7 @@ export function ImportManager({ kind }: { kind: Kind }) {
     setFile(null);
     setPreview(null);
     setEdits({});
+    setMesIncompleto(new Set());
     setError(null);
     setResult(null);
     if (inputRef.current) inputRef.current.value = "";
@@ -100,10 +104,12 @@ export function ImportManager({ kind }: { kind: Kind }) {
     }
     setPreview(res.data);
     setEdits({});
+    setMesIncompleto(new Set());
   }
 
   async function confirm() {
     if (!file || !preview) return;
+    if (mesIncompleto.size > 0) return setError(MES_ANIO_MESSAGES.incompletoFilas);
     setError(null);
     setBusy("confirm");
     const res = await postForm<ResultadoImportacion & { ok: true }>(`/api/admin/importar/${kind}/confirmar`, form(true));
@@ -115,6 +121,16 @@ export function ImportManager({ kind }: { kind: Kind }) {
 
   const setEdit = (clave: string, key: keyof Ediciones, value: string) =>
     setEdits((prev) => ({ ...prev, [clave]: { ...prev[clave], [key]: value } }));
+  /** "AAAA-MM" o "" se guardan como edición (igual que el input nativo); null (a medias) no cambia la edición. */
+  const setMesDevengado = (clave: string, value: string | null) => {
+    setMesIncompleto((prev) => {
+      const next = new Set(prev);
+      if (value === null) next.add(clave);
+      else next.delete(clave);
+      return next;
+    });
+    if (value !== null) setEdit(clave, "mesDevengado", value);
+  };
 
   const ctx = preview?.contexto;
   const rows = useMemo(
@@ -311,11 +327,11 @@ export function ImportManager({ kind }: { kind: Kind }) {
                       {editable ? (
                         <>
                           <TableCell className="min-w-36">
-                            <Input
-                              type="month"
-                              aria-label={`Mes devengado, fila ${f.fila}`}
+                            <MesAnioInput
+                              label={`Mes devengado, fila ${f.fila}`}
                               value={ed.mesDevengado ?? (f.mesFecha ?? "").slice(0, 7)}
-                              onChange={(e) => sel("mesDevengado")(e.target.value)}
+                              onChange={(v) => setMesDevengado(f.clave!, v)}
+                              className="min-w-60"
                             />
                           </TableCell>
                           <TableCell className={fixed}>

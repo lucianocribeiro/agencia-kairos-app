@@ -25,10 +25,11 @@ import {
   useToast,
 } from "@/components/ui";
 import { controlClasses } from "@/components/ui/control-classes";
+import { MesAnioSelect, type MesAnioPartes } from "@/components/ui/mes-anio-select";
 import type { FieldErrors } from "@/lib/abm/fields";
 import { cn } from "@/lib/cn";
 import { displayDate, displayMonth, type DateRange } from "@/lib/horas/dates";
-import { aniosMesAFacturar, HORA_MESSAGES, MESES, mesFormAlCambiarFecha, mesFormInicial, partesMes, TAREA_MAX, unirMes, validateHora } from "@/lib/horas/rules";
+import { HORA_MESSAGES, mesFormAlCambiarFecha, mesFormInicial, partesMes, TAREA_MAX, unirMes, validateHora } from "@/lib/horas/rules";
 import { formatHours, parseTime, recordHours } from "@/lib/horas/time";
 import type { HoraAdminDTO, HorasAdminData, HorasOptions } from "@/lib/horas/types";
 
@@ -53,7 +54,6 @@ interface FormState {
   mesAnio: string;
 }
 
-const MES_OPTIONS = MESES.map((label, i) => ({ value: String(i + 1).padStart(2, "0"), label }));
 /** Lo que se manda a la API: el formulario con Mes a facturar "YYYY-MM" ("" si falta mes o año). */
 const payload = ({ mesNum, mesAnio, ...rest }: FormState) => ({ ...rest, mesAFacturar: unirMes(mesAnio, mesNum) });
 const conMes = (mes: string) => {
@@ -198,9 +198,9 @@ export function HorasManager({ today, options, initial }: { today: string; optio
   const setFecha = (fecha: string) =>
     setForm((f) => (f ? { ...f, fecha, ...(mesSigueFecha ? conMes(mesFormAlCambiarFecha(unirMes(f.mesAnio, f.mesNum), fecha, true)) : {}) } : f));
   /** Cambiar el mes o el año a mano deja de seguir a la Fecha. */
-  const setMesParte = (key: "mesNum" | "mesAnio") => (value: string) => {
+  const setMesPartes = ({ mes, anio }: MesAnioPartes) => {
     setMesSigueFecha(false);
-    set(key)(value);
+    setForm((f) => (f ? { ...f, mesNum: mes, mesAnio: anio } : f));
   };
   const live = form ? recordHours(parseTime(form.desde), parseTime(form.hasta)) : 0;
 
@@ -266,18 +266,14 @@ export function HorasManager({ today, options, initial }: { today: string; optio
                   />
                 </FormField>
                 <FormField label="Mes a facturar" required error={errors.mesAFacturar} hint={editing.mode === "create" ? "Por defecto, el mes de la Fecha." : undefined}>
-                  <div className="grid grid-cols-[3fr_2fr] gap-2">
-                    <Select value={form.mesNum} onChange={(e) => setMesParte("mesNum")(e.target.value)} placeholder="Mes" options={MES_OPTIONS} disabled={saving} aria-label="Mes a facturar: mes" />
-                    <Select
-                      id="horas-mes-a-facturar-anio"
-                      value={form.mesAnio}
-                      onChange={(e) => setMesParte("mesAnio")(e.target.value)}
-                      placeholder="Año"
-                      options={aniosMesAFacturar(form.mesAnio).map((y) => ({ value: y, label: y }))}
-                      disabled={saving}
-                      aria-label="Mes a facturar: año"
-                    />
-                  </div>
+                  <MesAnioSelect
+                    label="Mes a facturar"
+                    mes={form.mesNum}
+                    anio={form.mesAnio}
+                    onChange={setMesPartes}
+                    disabled={saving}
+                    anioId="horas-mes-a-facturar-anio"
+                  />
                 </FormField>
                 <div className="flex items-end pb-2">
                   <Checkbox label="Facturable" checked={form.facturable} onChange={(e) => set("facturable")(e.target.checked)} disabled={saving} />

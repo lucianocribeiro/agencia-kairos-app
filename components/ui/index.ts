@@ -8,3 +8,4 @@ export { Select, type SelectOption, type SelectProps } from "./select";
 export { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeaderCell, TableRow } from "./table";
 export { ToastProvider, useToast } from "./toast";
 export { ConfirmDialog, type ConfirmDialogProps } from "./confirm-dialog";
+export { estadoMesAnio, MES_ANIO_MESSAGES, MES_OPTIONS, MesAnioInput, MesAnioSelect, type MesAnioPartes } from "./mes-anio-select";

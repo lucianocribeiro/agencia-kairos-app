@@ -1,9 +1,8 @@
 import { Download } from "lucide-react";
 
 import { InlineMessage } from "@/components/ui";
+import { MesAnioInput } from "@/components/ui/mes-anio-select";
 import { buttonClasses } from "@/components/ui/button";
-import { controlClasses } from "@/components/ui/control-classes";
-import { cn } from "@/lib/cn";
 import { REPORTES, type ReporteSlug } from "@/lib/reportes/excel";
 import type { Vista } from "@/lib/reportes/vista";
 
@@ -28,10 +27,10 @@ export function ReportView({ slug, vista, desde }: { slug: ReporteSlug; vista: V
         <div className="flex flex-wrap items-end gap-3">
           {desde && (
             <form method="get" action={ruta} className="flex items-end gap-2">
-              <label className="flex flex-col gap-1 text-sm text-text">
-                Mes inicial
-                <input type="month" name="desde" defaultValue={desde} required className={cn(controlClasses, "w-44")} />
-              </label>
+              <div role="group" aria-labelledby="reporte-mes-inicial" className="flex flex-col gap-1 text-sm text-text">
+                <span id="reporte-mes-inicial">Mes inicial</span>
+                <MesAnioInput label="Mes inicial" name="desde" defaultValue={desde} required className="w-60" />
+              </div>
               <button type="submit" className={buttonClasses("secondary", "md")}>
                 Ver
               </button>

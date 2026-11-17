@@ -3,6 +3,7 @@ import { Download } from "lucide-react";
 import { InlineMessage } from "@/components/ui";
 import { buttonClasses } from "@/components/ui/button";
 import { controlClasses } from "@/components/ui/control-classes";
+import { MesAnioInput } from "@/components/ui/mes-anio-select";
 import { cn } from "@/lib/cn";
 import { formatNumber, isoToDisplayDate } from "@/lib/format";
 import { formatHours } from "@/lib/horas/time";
@@ -66,10 +67,10 @@ export function ProformaView({ clientes, cliente, mes, data, error }: ProformaVi
                 ))}
               </select>
             </label>
-            <label className="flex flex-col gap-1 text-sm text-text">
-              Mes a facturar
-              <input type="month" name="mes" defaultValue={mes} required className={cn(controlClasses, "w-44")} />
-            </label>
+            <div role="group" aria-labelledby="proforma-mes" className="flex flex-col gap-1 text-sm text-text">
+              <span id="proforma-mes">Mes a facturar</span>
+              <MesAnioInput label="Mes a facturar" name="mes" defaultValue={mes} required className="w-60" />
+            </div>
             <button type="submit" className={buttonClasses("secondary", "md")}>
               Ver
             </button>

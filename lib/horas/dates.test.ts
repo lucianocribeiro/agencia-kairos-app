@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addDays, buildBuckets, displayDate, displayMonth, isIsoDate, isoWeekMonday, mesAFacturarToStorage, shortcutRange, todayInBuenosAires } from "./dates";
+import { addDays, bucketKey, buildBuckets, GROUPINGS, displayDate, displayMonth, isIsoDate, isoWeekMonday, mesAFacturarToStorage, shortcutRange, todayInBuenosAires } from "./dates";
 
 describe("todayInBuenosAires", () => {
   it("usa la fecha de Buenos Aires (UTC−3), no la de UTC", () => {
@@ -69,8 +69,18 @@ describe("buckets del dashboard", () => {
     ]);
   });
 
+  it("anual: años AAAA con bordes recortados al rango", () => {
+    expect(buildBuckets({ desde: "2030-03-15", hasta: "2031-02-10" }, "anual")).toEqual([
+      { key: "2030", label: "2030", desde: "2030-03-15", hasta: "2030-12-31" },
+      { key: "2031", label: "2031", desde: "2031-01-01", hasta: "2031-02-10" },
+    ]);
+    expect(buildBuckets({ desde: "2030-01-01", hasta: "2030-12-31" }, "anual")).toEqual([{ key: "2030", label: "2030", desde: "2030-01-01", hasta: "2030-12-31" }]);
+    expect(bucketKey("2031-12-31", "anual")).toBe("2031");
+    expect(GROUPINGS).toEqual({ diaria: "Diaria", semanal: "Semanal", mensual: "Mensual", anual: "Anual" });
+  });
+
   it("cubren todo el rango sin huecos ni solapes", () => {
-    for (const grouping of ["diaria", "semanal", "mensual"] as const) {
+    for (const grouping of ["diaria", "semanal", "mensual", "anual"] as const) {
       const b = buildBuckets({ desde: "2026-01-01", hasta: "2026-12-31" }, grouping);
       expect(b[0].desde).toBe("2026-01-01");
       expect(b.at(-1)!.hasta).toBe("2026-12-31");

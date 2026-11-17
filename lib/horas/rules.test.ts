@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { HORA_MESSAGES, overlapMessage, overlapping, rangesOverlap, TAREA_MAX, validateHora } from "./rules";
+import { aniosMesAFacturar, HORA_MESSAGES, MESES, mesDeFecha, mesFormAlCambiarFecha, mesFormInicial, overlapMessage, overlapping, partesMes, rangesOverlap, TAREA_MAX, unirMes, validateHora } from "./rules";
 
 const ok = { fecha: "2026-11-12", proyecto: "recPPPPPPPPPPPPPP", tarea: " Diseño ", desde: "09:00", hasta: "10:30" };
 
@@ -37,11 +37,13 @@ describe("validateHora", () => {
     expect(values).not.toHaveProperty("mesAFacturar");
   });
 
-  it("Admin: colaborador obligatorio; facturable y mes a facturar opcionales", () => {
+  it("Admin: colaborador y mes a facturar obligatorios; facturable opcional", () => {
     expect(validateHora(ok, "admin").errors).toEqual({ colaborador: HORA_MESSAGES.colaborador });
     const { values } = validateHora({ ...ok, colaborador: ["recCCCCCCCCCCCCCC"], facturable: false, mesAFacturar: "2026-12" }, "admin");
     expect(values).toMatchObject({ colaborador: "recCCCCCCCCCCCCCC", facturable: false, mesAFacturar: "2026-12-01" });
-    expect(validateHora({ ...ok, colaborador: "recCCCCCCCCCCCCCC", mesAFacturar: "" }, "admin").values!.mesAFacturar).toBeNull();
+    for (const vacio of ["", null]) expect(validateHora({ ...ok, colaborador: "recCCCCCCCCCCCCCC", mesAFacturar: vacio }, "admin").errors).toEqual({ mesAFacturar: "Elegí el mes a facturar." });
+    // Sin la clave (edición que no lo toca): undefined, el servicio decide con el guardado.
+    expect(validateHora({ ...ok, colaborador: "recCCCCCCCCCCCCCC" }, "admin").values).not.toHaveProperty("mesAFacturar");
     expect(validateHora({ ...ok, colaborador: "recCCCCCCCCCCCCCC", mesAFacturar: "12/2026" }, "admin").errors).toEqual({ mesAFacturar: HORA_MESSAGES.mes });
   });
 });
@@ -62,5 +64,58 @@ describe("superposición", () => {
     const found = overlapping(r(9, 12), [r(11, 13), r(8, 9.5), r(12, 14)]);
     expect(found).toEqual([r(8, 9.5), r(11, 13)]);
     expect(overlapMessage(found)).toBe("Ese horario se superpone con otro registro del mismo día (08:00–09:30, 11:00–13:00).");
+  });
+});
+
+describe("Mes a facturar en el formulario de Admin (CC-F4-03)", () => {
+  it("mesDeFecha: el mes de la Fecha, guardado como día 1", () => {
+    expect(mesDeFecha("2030-03-31")).toBe("2030-03-01");
+    expect(mesDeFecha("2031-12-01")).toBe("2031-12-01");
+    expect(mesDeFecha("2030-02-30")).toBeNull();
+  });
+
+  it("alta: precargado con el mes de la Fecha y lo sigue hasta que se cambia a mano", () => {
+    let mes = mesFormInicial(null, "2030-03-15");
+    expect(mes).toBe("2030-03");
+    let sigue = true;
+    mes = mesFormAlCambiarFecha(mes, "2030-05-02", sigue);
+    expect(mes).toBe("2030-05");
+    // Una fecha a medio escribir (inválida) no lo borra.
+    expect(mesFormAlCambiarFecha(mes, "", sigue)).toBe("2030-05");
+    // El Admin lo cambia a mano → deja de seguir a la Fecha.
+    mes = "2030-07";
+    sigue = false;
+    expect(mesFormAlCambiarFecha(mes, "2030-09-10", sigue)).toBe("2030-07");
+    // Vaciarlo a mano también cuenta como cambio: queda vacío y el guardado pide el mes.
+    expect(mesFormAlCambiarFecha("", "2030-09-10", false)).toBe("");
+    expect(validateHora({ ...ok, colaborador: "recCCCCCCCCCCCCCC", mesAFacturar: "" }, "admin").errors.mesAFacturar).toBe(HORA_MESSAGES.mesRequerido);
+  });
+
+  it("edición: muestra el guardado y cambiar la Fecha no lo toca; legacy vacío → el mes de la Fecha", () => {
+    const guardado = mesFormInicial("2030-04-01", "2030-03-20");
+    expect(guardado).toBe("2030-04");
+    expect(mesFormAlCambiarFecha(guardado, "2030-06-01", false)).toBe("2030-04");
+    const legacy = mesFormInicial(null, "2030-03-20");
+    expect(legacy).toBe("2030-03");
+    expect(validateHora({ ...ok, fecha: "2030-03-20", colaborador: "recCCCCCCCCCCCCCC", mesAFacturar: legacy }, "admin").values!.mesAFacturar).toBe("2030-03-01");
+  });
+});
+
+describe("Mes a facturar en dos selects (CC-F4-03-FIX)", () => {
+  it("partesMes / unirMes: ida y vuelta; si falta mes o año, vacío", () => {
+    expect(partesMes("2030-03")).toEqual({ anio: "2030", mes: "03" });
+    expect(partesMes("")).toEqual({ anio: "", mes: "" });
+    expect(unirMes("2030", "03")).toBe("2030-03");
+    expect(unirMes("", "03")).toBe("");
+    expect(unirMes("2030", "")).toBe("");
+  });
+
+  it("meses en castellano y años 2000–2099 (más el guardado si quedó fuera)", () => {
+    expect(MESES).toHaveLength(12);
+    expect([MESES[0], MESES[8], MESES[11]]).toEqual(["Enero", "Septiembre", "Diciembre"]);
+    const a = aniosMesAFacturar("2030");
+    expect([a[0], a.at(-1), a.length]).toEqual(["2000", "2099", 100]);
+    expect(aniosMesAFacturar("1999").slice(0, 2)).toEqual(["1999", "2000"]);
+    expect(aniosMesAFacturar("")).toHaveLength(100);
   });
 });

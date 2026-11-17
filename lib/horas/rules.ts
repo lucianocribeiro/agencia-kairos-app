@@ -18,6 +18,7 @@ export const HORA_MESSAGES = {
   hora: "Ingresá una hora válida (HH:mm, de 00:00 a 23:59).",
   rango: "La hora hasta tiene que ser posterior a la hora desde.",
   mes: "Elegí un mes válido.",
+  mesRequerido: "Elegí el mes a facturar.",
   futura: "No podés cargar horas en una fecha futura.",
   noAsignado: "No tenés asignado ese proyecto.",
   validacion: "Revisá los campos marcados.",
@@ -41,14 +42,58 @@ export interface HoraValues {
   colaborador?: string;
   /** Solo Admin. undefined = no vino (alta: true por defecto). */
   facturable?: boolean;
-  /** Solo Admin. "YYYY-MM-01", null = vacío, undefined = no vino. */
-  mesAFacturar?: string | null;
+  /** Solo Admin. "YYYY-MM-01"; undefined = no vino (edición: queda el guardado). Nunca vacío. */
+  mesAFacturar?: string;
 }
 
 /** Un link de un formulario: "rec…" o ["rec…"] → "rec…". */
 function singleId(value: unknown): string | null {
   const v = Array.isArray(value) ? (value.length === 1 ? value[0] : null) : value;
   return typeof v === "string" && RECORD_ID_RE.test(v.trim()) ? v.trim() : null;
+}
+
+/** Mes a facturar por defecto: el mes de la Fecha, "YYYY-MM-01" (null si la fecha no es válida). */
+export function mesDeFecha(fecha: string): string | null {
+  return isIsoDate(fecha) ? `${fecha.slice(0, 7)}-01` : null;
+}
+
+/** Selects de Mes a facturar (formulario de Admin). */
+export const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"] as const;
+/** Años del select: 2000–2099, el mismo rango que los reportes y la Proforma. */
+export const ANIO_MES_MIN = 2000;
+export const ANIO_MES_MAX = 2099;
+
+/** "YYYY-MM" → { anio: "YYYY", mes: "MM" }; "" → los dos vacíos. */
+export function partesMes(value: string): { anio: string; mes: string } {
+  const m = /^(\d{4})-(\d{2})$/.exec(value);
+  return m ? { anio: m[1], mes: m[2] } : { anio: "", mes: "" };
+}
+
+/** { anio, mes } → "YYYY-MM"; "" si falta alguno (el guardado pide el mes a facturar). */
+export function unirMes(anio: string, mes: string): string {
+  return anio && mes ? `${anio}-${mes}` : "";
+}
+
+/** Opciones del select de Año: 2000–2099, más el año guardado si quedó fuera (legacy). */
+export function aniosMesAFacturar(actual: string): string[] {
+  const out = Array.from({ length: ANIO_MES_MAX - ANIO_MES_MIN + 1 }, (_, i) => String(ANIO_MES_MIN + i));
+  return /^\d{4}$/.test(actual) && !out.includes(actual) ? [actual, ...out].sort() : out;
+}
+
+/**
+ * Formulario de Admin: valor inicial del Mes a facturar ("YYYY-MM"; los selects lo parten con `partesMes`).
+ * Edición: el guardado; si está vacío (legacy), el mes de la Fecha. Alta: el mes de la Fecha.
+ */
+export function mesFormInicial(guardado: string | null, fecha: string): string {
+  return (guardado ?? mesDeFecha(fecha) ?? "").slice(0, 7);
+}
+
+/**
+ * Formulario de Admin: Mes a facturar después de cambiar la Fecha. Solo sigue a la Fecha
+ * en el alta y mientras el Admin no lo cambió a mano (`sigueFecha`); si no, queda igual.
+ */
+export function mesFormAlCambiarFecha(mes: string, fecha: string, sigueFecha: boolean): string {
+  return sigueFecha && isIsoDate(fecha) ? fecha.slice(0, 7) : mes;
 }
 
 /**
@@ -85,11 +130,11 @@ export function validateHora(
     if (typeof raw.facturable === "boolean") values.facturable = raw.facturable;
     if ("mesAFacturar" in raw) {
       const mes = raw.mesAFacturar;
-      if (mes === "" || mes === null || mes === undefined) values.mesAFacturar = null;
+      if (mes === "" || mes === null || mes === undefined) errors.mesAFacturar = HORA_MESSAGES.mesRequerido;
       else {
         const stored = mesAFacturarToStorage(mes);
         if (!stored) errors.mesAFacturar = HORA_MESSAGES.mes;
-        values.mesAFacturar = stored;
+        else values.mesAFacturar = stored;
       }
     }
   }

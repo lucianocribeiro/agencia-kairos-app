@@ -300,7 +300,7 @@ describe("C. Alcance y datos", () => {
   });
 
   it("filtros inválidos → 400 (sin datos)", async () => {
-    expect((await call(VISTA, "GET", { search: { ...NOV, agrupacion: "anual" } })).status).toBe(400);
+    expect((await call(VISTA, "GET", { search: { ...NOV, agrupacion: "trimestral" } })).status).toBe(400);
     expect((await call(VISTA, "GET", { search: { ...NOV, proyectos: "no-es-id" } })).status).toBe(400);
   });
 });
@@ -548,6 +548,38 @@ describe("C.6 Descargar Excel", () => {
     for (const r of fromVista) expect(rows).toContainEqual(r);
     // los números son números
     expect(typeof rows[7][1]).toBe("number");
+  });
+
+  it("Anual: 2 columnas «AAAA» con los mismos totales que Mensual, en pantalla y en el Excel", async () => {
+    seedHora(ids.eva, ids.alfa, "2025-12-30", "09:00", "11:00"); // 2 h en 2025
+    seedHora(ids.otto, ids.beta, "2025-11-30", "09:00", "10:00"); // fuera del rango
+    const search = { desde: "2025-12-01", hasta: "2026-11-30", agrupacion: "anual" };
+    const anual = (await call(VISTA, "GET", { search })).json;
+    const mensual = (await call(VISTA, "GET", { search: { ...search, agrupacion: "mensual" } })).json;
+    expect(anual.grouping).toBe("anual");
+    expect(anual.buckets.map((b: { label: string }) => b.label)).toEqual(["2025", "2026"]);
+    expect(anual.total).toBe(mensual.total);
+    const sum = (xs: number[]) => Math.round(xs.reduce((a, b) => a + b * 100, 0)) / 100;
+    const porAnio = (values: number[]) => ["2025", "2026"].map((y) => sum(values.filter((_, i) => mensual.buckets[i].key.startsWith(y))));
+    expect(anual.columnTotals).toEqual(porAnio(mensual.columnTotals));
+    anual.rows.forEach((r: { total: number; values: number[] }, i: number) => {
+      expect(r.total).toBe(mensual.rows[i].total);
+      expect(r.values).toEqual(porAnio(mensual.rows[i].values));
+    });
+    expect(anual.rows.map((r: { proyecto: { codigo: string }; values: number[] }) => [r.proyecto.codigo, r.values])).toEqual([
+      ["QZ - Alfa", [2, 1.33 + 0.33 + 2.5 + 1]],
+      ["QZ - Beta", [0, 1]],
+    ]);
+    // Importes: los mismos registros que Mensual.
+    expect(anual.importes).toEqual(mensual.importes);
+
+    const xl = await call(EXCEL, "GET", { search });
+    expect(xl.status).toBe(200);
+    const rows = readFirstSheet(xl.bytes);
+    expect(rows[1][0]).toBe("01/12/2025 al 30/11/2026 · Agrupación anual");
+    expect(rows[6].slice(0, 4)).toEqual(["Proyecto", "2025", "2026", "Total"]);
+    expect(rows[7].slice(0, 4)).toEqual(["QZ - Alfa", 2, 5.16, 7.16]);
+    expect(rows[9].slice(0, 4)).toEqual(["Total", ...anual.columnTotals, anual.total]);
   });
 
   it("nombre del archivo: el Código si la vista es de un solo proyecto", async () => {

@@ -107,11 +107,11 @@ export function mesAFacturarToStorage(value: unknown): string | null {
 
 // ── Agrupación del dashboard ─────────────────────────────────────────────────
 
-export const GROUPINGS = { diaria: "Diaria", semanal: "Semanal", mensual: "Mensual" } as const;
+export const GROUPINGS = { diaria: "Diaria", semanal: "Semanal", mensual: "Mensual", anual: "Anual" } as const;
 export type Grouping = keyof typeof GROUPINGS;
 
 export interface Bucket {
-  /** día "YYYY-MM-DD", lunes de la semana ISO, o "YYYY-MM". */
+  /** día "YYYY-MM-DD", lunes de la semana ISO, "YYYY-MM" o "YYYY" (año calendario). */
   key: string;
   label: string;
   /** Parte del período que cubre (los bordes pueden ser parciales). */
@@ -123,13 +123,14 @@ export interface Bucket {
 export function bucketKey(iso: string, grouping: Grouping): string {
   if (grouping === "diaria") return iso;
   if (grouping === "semanal") return isoWeekMonday(iso);
+  if (grouping === "anual") return iso.slice(0, 4);
   return iso.slice(0, 7);
 }
 
 /**
  * Buckets que cubren todo [desde, hasta]. Semanas ISO (lunes), etiqueta
- * "Sem DD/MM" con el lunes; meses "MM/AAAA"; días "DD/MM". Las semanas y
- * meses de los bordes se incluyen aunque queden parciales.
+ * "Sem DD/MM" con el lunes; meses "MM/AAAA"; años "AAAA"; días "DD/MM". Las
+ * semanas, meses y años de los bordes se incluyen aunque queden parciales.
  */
 export function buildBuckets(range: DateRange, grouping: Grouping): Bucket[] {
   const out: Bucket[] = [];
@@ -144,6 +145,9 @@ export function buildBuckets(range: DateRange, grouping: Grouping): Bucket[] {
     } else if (grouping === "semanal") {
       end = addDays(key, 6);
       label = `Sem ${key.slice(8, 10)}/${key.slice(5, 7)}`;
+    } else if (grouping === "anual") {
+      end = `${key}-12-31`;
+      label = key;
     } else {
       end = monthRange(...ym(cursor)).hasta;
       label = `${key.slice(5, 7)}/${key.slice(0, 4)}`;

@@ -32,8 +32,11 @@ import { aniosMesAFacturar, HORA_MESSAGES, MESES, mesFormAlCambiarFecha, mesForm
 import { formatHours, parseTime, recordHours } from "@/lib/horas/time";
 import type { HoraAdminDTO, HorasAdminData, HorasOptions } from "@/lib/horas/types";
 
+import { motivoNoSeleccionable, SELECCION_MESSAGES, type SeleccionData } from "@/lib/horas/seleccion";
+
 import { getApi, query } from "./api";
 import { PeriodFilter } from "./period-filter";
+import { SeleccionPanel } from "./seleccion-panel";
 
 type Editing = { mode: "create" } | { mode: "edit"; record: HoraAdminDTO };
 
@@ -79,14 +82,32 @@ export function HorasManager({ today, options, initial }: { today: string; optio
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // Selección (CC-F4-05): IDs tildados de la lista visible; el resumen lo calcula el servidor.
+  const [selected, setSelected] = useState<string[]>([]);
+  const [resumen, setResumen] = useState<{ data: SeleccionData | null; error: string | null; loading: boolean }>({ data: null, error: null, loading: false });
+  const resumenReq = useRef(0);
+  /** Toda selección pasa por acá: guarda los IDs y pide el resumen al servidor (la última respuesta gana). */
+  const cambiarSeleccion = useCallback((next: string[]) => {
+    setSelected(next);
+    const req = ++resumenReq.current;
+    if (next.length === 0) return setResumen({ data: null, error: null, loading: false });
+    setResumen((r) => ({ ...r, loading: true }));
+    void callApi("POST", "/api/admin/horas/seleccion", { ids: next }).then((res) => {
+      if (req !== resumenReq.current) return; // llegó tarde: ya hay otra selección
+      setResumen(res.ok ? { data: res.data as unknown as SeleccionData, error: null, loading: false } : { data: null, error: res.error ?? "No pudimos calcular la selección.", loading: false });
+    });
+  }, []);
+
   const reload = useCallback(async () => {
+    // Cambiar filtros (o recargar la lista) limpia la selección: nunca incluye filas que no se ven.
+    cambiarSeleccion([]);
     setLoading(true);
     const res = await getApi(`/api/admin/horas${query({ desde: range.desde, hasta: range.hasta, ...filters })}`);
     setLoading(false);
     if (!res.ok) return setListError(res.error ?? "No pudimos cargar las horas.");
     setListError(null);
     setList({ records: res.data.records as HoraAdminDTO[], total: res.data.total as number });
-  }, [range, filters]);
+  }, [range, filters, cambiarSeleccion]);
 
   useEffect(() => {
     if (first.current) {
@@ -95,6 +116,12 @@ export function HorasManager({ today, options, initial }: { today: string; optio
     }
     void reload();
   }, [reload]);
+
+  const proyectoElegido = selected.length > 0 ? (list.records.find((r) => r.id === selected[0])?.proyecto?.id ?? null) : null;
+  const seleccionables = list.records.filter((r) => motivoNoSeleccionable(r, null) === null);
+  const todosHabilitado = !!filters.proyecto && seleccionables.length > 0;
+  const todosTildados = todosHabilitado && seleccionables.every((r) => selected.includes(r.id));
+  const toggle = (id: string) => cambiarSeleccion(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
 
   function open(target: Editing) {
     setEditing(target);
@@ -307,9 +334,27 @@ export function HorasManager({ today, options, initial }: { today: string; optio
       </div>
       {listError && <InlineMessage tone="danger">{listError}</InlineMessage>}
 
+      {selected.length > 0 && (
+        <>
+          <p className="text-sm text-muted">{SELECCION_MESSAGES.unProyecto}</p>
+          <SeleccionPanel ids={selected} data={resumen.data} error={resumen.error} loading={resumen.loading} onClear={() => cambiarSeleccion([])} />
+        </>
+      )}
+
       <Table aria-busy={loading}>
         <TableHead>
           <tr>
+            <TableHeaderCell className="w-10">
+              <input
+                type="checkbox"
+                aria-label="Seleccionar todas las horas facturables de la lista"
+                title={todosHabilitado ? undefined : "Filtrá la lista por un proyecto para seleccionar todo."}
+                checked={todosTildados}
+                disabled={!todosHabilitado}
+                onChange={() => cambiarSeleccion(todosTildados ? [] : seleccionables.map((r) => r.id))}
+                className="size-4 cursor-pointer rounded border-line bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </TableHeaderCell>
             {["Fecha", "Colaborador", "Proyecto", "Cliente", "Tarea", "Desde", "Hasta"].map((h) => (
               <TableHeaderCell key={h}>{h}</TableHeaderCell>
             ))}
@@ -324,10 +369,24 @@ export function HorasManager({ today, options, initial }: { today: string; optio
         </TableHead>
         <TableBody>
           {list.records.length === 0 ? (
-            <TableEmpty colSpan={12}>No hay horas con estos filtros.</TableEmpty>
+            <TableEmpty colSpan={13}>No hay horas con estos filtros.</TableEmpty>
           ) : (
-            list.records.map((r) => (
+            list.records.map((r) => {
+              const motivo = motivoNoSeleccionable(r, proyectoElegido);
+              const tildada = selected.includes(r.id);
+              return (
               <TableRow key={r.id}>
+                <TableCell>
+                  <input
+                    type="checkbox"
+                    aria-label={`Seleccionar registro del ${displayDate(r.fecha)} de ${r.colaborador?.nombre ?? "sin colaborador"}`}
+                    title={motivo && !tildada ? motivo : undefined}
+                    checked={tildada}
+                    disabled={!!motivo && !tildada}
+                    onChange={() => toggle(r.id)}
+                    className="size-4 cursor-pointer rounded border-line bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </TableCell>
                 <TableCell className="whitespace-nowrap">{displayDate(r.fecha)}</TableCell>
                 <TableCell className="whitespace-nowrap">{r.colaborador?.nombre ?? "—"}</TableCell>
                 <TableCell className="whitespace-nowrap">{r.proyecto ? proyectoLabel(r.proyecto) : "—"}</TableCell>
@@ -345,12 +404,13 @@ export function HorasManager({ today, options, initial }: { today: string; optio
                   </Button>
                 </TableCell>
               </TableRow>
-            ))
+              );
+            })
           )}
         </TableBody>
         <tfoot className="bg-surface">
           <tr>
-            <th scope="row" colSpan={7} className="px-4 py-3 text-right font-medium text-muted">
+            <th scope="row" colSpan={8} className="px-4 py-3 text-right font-medium text-muted">
               Total
             </th>
             <td className="px-4 py-3 text-right font-semibold text-white tabular-nums">{formatHours(list.total)}</td>

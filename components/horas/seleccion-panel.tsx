@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 
-import { Button, Card, CardContent, CardHeader, CardTitle, InlineMessage } from "@/components/ui";
+import { callApi } from "@/components/abm/api";
+import { Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, InlineMessage, useToast } from "@/components/ui";
+import { ESTADO_MESSAGES, type EstadoFacturacion } from "@/lib/horas/estado";
 import { formatNumber } from "@/lib/format";
 import { SELECCION_MESSAGES, type SeleccionData } from "@/lib/horas/seleccion";
 import { formatHours } from "@/lib/horas/time";
@@ -38,22 +40,45 @@ async function descargarExcel(ids: readonly string[]): Promise<string | null> {
   }
 }
 
-/** Resumen de las horas seleccionadas (importe como la Proforma) con Excel y «Limpiar selección». */
+/**
+ * Resumen de las horas seleccionadas (importe como la Proforma) con Excel, «Limpiar selección» y
+ * (CC-F4-08) «Marcar como facturadas» / «Marcar como pagadas», con el diálogo de la app.
+ */
 export function SeleccionPanel({
   ids,
   data,
   error,
   loading,
   onClear,
+  onEstadoCambiado,
 }: {
   ids: readonly string[];
   data: SeleccionData | null;
   error: string | null;
   loading: boolean;
   onClear: () => void;
+  /** Después de marcar: la lista se recarga (y la selección se limpia). */
+  onEstadoCambiado?: () => void;
 }) {
+  const toast = useToast();
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [marcar, setMarcar] = useState<EstadoFacturacion | null>(null);
+  const [marcando, setMarcando] = useState(false);
+  const [marcarError, setMarcarError] = useState<string | null>(null);
+
+  async function confirmarMarcar() {
+    if (!marcar) return;
+    const estado = marcar;
+    setMarcando(true);
+    const res = await callApi("POST", "/api/admin/horas/seleccion/estado", { ids, estado });
+    setMarcando(false);
+    setMarcar(null);
+    if (!res.ok) return setMarcarError(res.error ?? "No pudimos cambiar el estado. Probá de nuevo.");
+    setMarcarError(null);
+    toast.success(ESTADO_MESSAGES.hecho(Number(res.data.actualizadas ?? ids.length), estado));
+    onEstadoCambiado?.();
+  }
   const items: [string, string][] = data
     ? [
         ["Proyecto", data.proyecto.codigo],
@@ -75,6 +100,7 @@ export function SeleccionPanel({
       <CardContent className="flex flex-col gap-4">
         {error && <InlineMessage tone="danger">{error}</InlineMessage>}
         {downloadError && <InlineMessage tone="danger">{downloadError}</InlineMessage>}
+        {marcarError && <InlineMessage tone="danger">{marcarError}</InlineMessage>}
         {data && (
           <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
             {items.map(([label, value]) => (
@@ -97,10 +123,28 @@ export function SeleccionPanel({
           >
             {downloading ? "Descargando…" : "Descargar Excel"}
           </Button>
+          <Button variant="secondary" onClick={() => setMarcar("Facturada")} disabled={!data || loading || marcando}>
+            Marcar como facturadas
+          </Button>
+          <Button variant="secondary" onClick={() => setMarcar("Pagada")} disabled={!data || loading || marcando}>
+            Marcar como pagadas
+          </Button>
           <Button variant="secondary" onClick={onClear}>
             Limpiar selección
           </Button>
         </div>
+        <ConfirmDialog
+          open={marcar !== null}
+          title={marcar ? ESTADO_MESSAGES.confirmar(ids.length, marcar) : ""}
+          confirmLabel={marcar === "Pagada" ? "Marcar como pagadas" : "Marcar como facturadas"}
+          confirmVariant="primary"
+          busy={marcando}
+          busyLabel="Guardando…"
+          onConfirm={confirmarMarcar}
+          onCancel={() => setMarcar(null)}
+        >
+          Solo cambia el estado de facturación{data ? ` de las horas de ${data.proyecto.codigo}` : ""}.
+        </ConfirmDialog>
       </CardContent>
     </Card>
   );

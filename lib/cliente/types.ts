@@ -8,6 +8,7 @@
  * Cuentas, reportes ni Parámetros (la alícuota solo llega como importes de IVA).
  */
 import type { DateRange, Grouping } from "@/lib/horas/dates";
+import type { EstadoFacturacion } from "@/lib/horas/estado";
 import type { Moneda } from "@/lib/proforma/proforma";
 
 export interface ClienteProyecto {
@@ -34,6 +35,16 @@ export interface ClienteColaborador {
   neto: number | null;
 }
 
+/** Agregado por Estado de facturación dentro de un proyecto (CC-F4-08). Nunca datos por registro. */
+export interface ClienteEstadoImporte {
+  estado: EstadoFacturacion;
+  horas: number;
+  /** Centavos; null si el proyecto no tiene valor hora o moneda. */
+  neto: number | null;
+  iva: number | null;
+  total: number | null;
+}
+
 export interface ClienteImporteProyecto {
   id: string;
   codigo: string;
@@ -45,6 +56,8 @@ export interface ClienteImporteProyecto {
   iva: number | null;
   total: number | null;
   colaboradores: ClienteColaborador[];
+  /** Desglose por estado (solo los estados con horas), en orden Pendiente, Facturada, Pagada. */
+  estados: ClienteEstadoImporte[];
 }
 
 export interface ClienteTotalMoneda {
@@ -67,6 +80,8 @@ export interface ClienteHorasData {
   proyectos: ClienteProyecto[];
   /** Elegidos en el filtro ([] = todos los asignados). */
   selected: string[];
+  /** Filtro de Estado de facturación (CC-F4-08); null = todos. */
+  estado: EstadoFacturacion | null;
   rows: ClienteFila[];
   columnTotals: number[];
   total: number;
@@ -103,6 +118,9 @@ export const CLIENTE_RESPONSE_KEYS: ReadonlySet<string> = new Set([
   "colaboradores",
   "nombre",
   "totales",
+  // CC-F4-08: solo agregados (filtro elegido y desglose por estado de cada proyecto).
+  "estado",
+  "estados",
 ]);
 
 export const CLIENTE_MESSAGES = {

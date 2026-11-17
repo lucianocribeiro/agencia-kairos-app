@@ -41,6 +41,7 @@ type Handler = (req: NextRequest, ctx: { params: Promise<Record<string, string>>
 const ROUTES = import.meta.glob<Record<string, Handler>>("/app/api/admin/horas/seleccion/**/route.ts", { eager: true });
 const SEL = "/app/api/admin/horas/seleccion/route.ts";
 const XL = "/app/api/admin/horas/seleccion/excel/route.ts";
+const EST = "/app/api/admin/horas/seleccion/estado/route.ts";
 
 const U = TABLES.usuarios.fields;
 const P = TABLES.proyectos;
@@ -273,12 +274,12 @@ describe("Selección de horas · Excel", () => {
 });
 
 describe("Selección de horas · permisos", () => {
-  it("Empleado y Cliente → 403 en las 2 rutas, sin leer Horas; sin sesión → 401", async () => {
-    expect(Object.keys(ROUTES).sort()).toEqual([XL, SEL]);
+  it("Empleado y Cliente → 403 en las 3 rutas (+ estado, CC-F4-08), sin leer Horas; sin sesión → 401", async () => {
+    expect(Object.keys(ROUTES).sort()).toEqual([EST, XL, SEL]);
     for (const who of [ids.eva, ids.cliUser]) {
       await loginAs(who);
-      for (const file of [SEL, XL]) {
-        const res = await call(file, { ids: [ids.h1] });
+      for (const file of [SEL, XL, EST]) {
+        const res = await call(file, { ids: [ids.h1], estado: "Facturada" });
         expect(res.status, `${who} ${file}`).toBe(403);
         expect(res.headers.get("cache-control")).toBe("no-store");
       }
@@ -286,6 +287,7 @@ describe("Selección de horas · permisos", () => {
     expect(fake.calls.some((c) => c.tableId === HT.id)).toBe(false);
     cookieJar.clear();
     expect((await call(SEL, { ids: [ids.h1] })).status).toBe(401);
+    expect((await call(EST, { ids: [ids.h1], estado: "Facturada" })).status).toBe(401);
   });
 });
 

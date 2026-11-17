@@ -58,7 +58,7 @@ describe("schema", () => {
   });
 
   it("campos restringidos", () => {
-    expect([...RESTRICTED_FIELDS].sort()).toEqual([U.passwordHash, P.valorHora, P.monedaValorHora, P.cliente].sort());
+    expect([...RESTRICTED_FIELDS].sort()).toEqual([U.passwordHash, P.valorHora, P.monedaValorHora, P.cliente, H.estadoFacturacion].sort());
   });
 });
 

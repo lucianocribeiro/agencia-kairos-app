@@ -5,6 +5,7 @@ import { TABLES } from "@/lib/airtable/schema";
 import type { RawValues } from "@/lib/abm/fields";
 import type { ServiceResult } from "@/lib/abm/types";
 import { todayInBuenosAires } from "../dates";
+import { ESTADO_PENDIENTE } from "../estado";
 import { HORA_MESSAGES, mesDeFecha, validateHora } from "../rules";
 import { formatTime, sumHours } from "../time";
 import { findOverlaps, horaFields, listHorasInRange, overlapConflict, sortHoras } from "./repo";
@@ -95,7 +96,8 @@ export async function listMisHoras(userId: string, query: MisHorasQuery, now = n
 
 /**
  * Alta por un Empleado. Colaborador = Cargado por = el usuario de la sesión,
- * Facturable = sí, Mes a facturar = el mes de la Fecha: nada de eso se acepta del body.
+ * Facturable = sí, Mes a facturar = el mes de la Fecha, Estado de facturación = Pendiente
+ * (CC-F4-08): nada de eso se acepta del body (HORA_INPUT_KEYS.empleado no lo incluye).
  */
 export async function createMiHora(userId: string, raw: RawValues, now = new Date()): Promise<ServiceResult<{ id: string }>> {
   const { values, errors } = validateHora(raw, "empleado");
@@ -123,6 +125,7 @@ export async function createMiHora(userId: string, raw: RawValues, now = new Dat
     cargadoPor: userId,
     facturable: true,
     mesAFacturar: mesDeFecha(values.fecha)!,
+    estadoFacturacion: ESTADO_PENDIENTE,
   });
   return writeHora({ mode: "create" }, fields, slot);
 }

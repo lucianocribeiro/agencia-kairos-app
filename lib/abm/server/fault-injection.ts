@@ -14,7 +14,8 @@ import { AirtableError } from "@/lib/airtable/errors";
  *    `KAIROS_FAULT_INJECTION=cascade:clientes npm run dev`.
  *
  * Puntos: `cascade:proyectos:<n>` (antes del lote n de proyectos) y
- * `cascade:clientes` (antes de escribir el cliente).
+ * `cascade:clientes` (antes de escribir el cliente); `estado:horas:<n>` (antes del lote n del
+ * Estado de facturación en lote, CC-F4-08).
  */
 export function injectFault(point: string): void {
   if (process.env.NODE_ENV !== "development") return;

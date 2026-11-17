@@ -6,15 +6,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DashboardFilters, HoursChart, HoursTable } from "@/components/horas/dashboard-parts";
 import { getApi, query } from "@/components/horas/api";
 import { Tabla } from "@/components/reportes/vista-tabla";
-import { InlineMessage } from "@/components/ui";
+import { FormField, InlineMessage, Select } from "@/components/ui";
 import { buttonClasses } from "@/components/ui/button";
 import { CLIENTE_MESSAGES, type ClienteHorasData } from "@/lib/cliente/types";
 import { tablasImportes, VISTA_CLIENTE_TITULO } from "@/lib/cliente/vista";
 import { displayDate, type DateRange, type Grouping } from "@/lib/horas/dates";
+import { ESTADOS_FACTURACION, isEstadoFacturacion, type EstadoFacturacion } from "@/lib/horas/estado";
 import { formatHours } from "@/lib/horas/time";
 
-const filtros = (d: Pick<ClienteHorasData, "range" | "grouping" | "selected">) =>
-  query({ desde: d.range.desde, hasta: d.range.hasta, agrupacion: d.grouping, proyectos: d.selected.join(",") });
+const filtros = (d: Pick<ClienteHorasData, "range" | "grouping" | "selected" | "estado">) =>
+  query({ desde: d.range.desde, hasta: d.range.hasta, agrupacion: d.grouping, proyectos: d.selected.join(","), estado: d.estado ?? "" });
 
 /**
  * Vista Cliente («Horas»): el dashboard de horas (mismas piezas que el de Admin) con
@@ -25,6 +26,8 @@ export function ClienteHorasView({ today, initial, aviso }: { today: string; ini
   const [range, setRange] = useState<DateRange>(initial.range);
   const [grouping, setGrouping] = useState<Grouping>(initial.grouping);
   const [selected, setSelected] = useState<string[]>(initial.selected);
+  /** CC-F4-08: filtro de Estado de facturación (null = todos). */
+  const [estado, setEstado] = useState<EstadoFacturacion | null>(initial.estado);
   const [data, setData] = useState<ClienteHorasData>(initial);
   const [error, setError] = useState<string | null>(aviso);
   const [loading, setLoading] = useState(false);
@@ -32,12 +35,12 @@ export function ClienteHorasView({ today, initial, aviso }: { today: string; ini
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await getApi(`/api/cliente/horas${filtros({ range, grouping, selected })}`);
+    const res = await getApi(`/api/cliente/horas${filtros({ range, grouping, selected, estado })}`);
     setLoading(false);
     if (!res.ok) return setError(res.error ?? "No pudimos cargar las horas.");
     setError(null);
     setData(res.data as unknown as ClienteHorasData);
-  }, [range, grouping, selected]);
+  }, [range, grouping, selected, estado]);
 
   useEffect(() => {
     if (first.current) {
@@ -81,8 +84,18 @@ export function ClienteHorasView({ today, initial, aviso }: { today: string; ini
         disabled={loading}
       />
 
+      <FormField label="Estado de facturación" className="sm:w-64">
+        <Select
+          value={estado ?? ""}
+          onChange={(e) => setEstado(isEstadoFacturacion(e.target.value) ? e.target.value : null)}
+          placeholder="Todos"
+          options={ESTADOS_FACTURACION.map((v) => ({ value: v, label: v }))}
+          disabled={loading}
+        />
+      </FormField>
+
       <p className="text-sm text-muted">
-        {displayDate(data.range.desde)} al {displayDate(data.range.hasta)} · Solo horas facturables · Total{" "}
+        {displayDate(data.range.desde)} al {displayDate(data.range.hasta)} · Solo horas facturables · Estado: {data.estado ?? "Todos"} · Total{" "}
         <span className="font-semibold text-white tabular-nums">{formatHours(data.total)}</span> h
       </p>
       {error && <InlineMessage tone={error === CLIENTE_MESSAGES.noAsignado ? "info" : "danger"}>{error}</InlineMessage>}

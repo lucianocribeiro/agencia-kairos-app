@@ -6,9 +6,10 @@ import { isClienteActivo } from "@/lib/abm/cliente-estado";
 import type { RawValues } from "@/lib/abm/fields";
 import type { ServiceResult } from "@/lib/abm/types";
 import { todayInBuenosAires } from "../dates";
+import { ESTADO_PENDIENTE, estadoEfectivo, filtroEstado } from "../estado";
 import { HORA_MESSAGES, validateHora } from "../rules";
 import { formatTime, sumHours } from "../time";
-import { findOverlaps, getHora, H, horaFields, HORAS_TABLE, listHorasInRange, overlapConflict, sortHoras } from "./repo";
+import { findOverlaps, getHora, H, HORAS_ADMIN_READ_FIELDS, horaFields, HORAS_TABLE, listHorasInRange, overlapConflict, sortHoras } from "./repo";
 import { fail, resolveRange, writeHora } from "./write";
 
 import type { HoraAdminDTO, HorasAdminData, HorasOptions, Ref } from "../types";
@@ -68,6 +69,8 @@ export interface HorasAdminQuery {
   colaborador: string | null;
   proyecto: string | null;
   cliente: string | null;
+  /** CC-F4-08: Pendiente / Facturada / Pagada (vacío en la base = Pendiente); null = todos. */
+  estado?: string | null;
 }
 
 
@@ -78,7 +81,9 @@ export async function listHorasAdmin(query: HorasAdminQuery, now = new Date(), o
   for (const id of [query.colaborador, query.proyecto, query.cliente]) {
     if (id && !RECORD_ID_RE.test(id)) return fail(400, HORA_ADMIN_MESSAGES.filtro);
   }
-  const [opts, horas] = await Promise.all([options ?? loadHorasOptions(), listHorasInRange(resolved.range)]);
+  const estado = filtroEstado(query.estado);
+  if ("error" in estado) return fail(400, estado.error);
+  const [opts, horas] = await Promise.all([options ?? loadHorasOptions(), listHorasInRange(resolved.range, HORAS_ADMIN_READ_FIELDS)]);
   const usuarios = new Map(opts.usuarios.map((u) => [u.id, u]));
   const proyectos = new Map(opts.proyectos.map((p) => [p.id, p]));
   const clientes = new Map(opts.clientes.map((c) => [c.id, c]));
@@ -88,7 +93,8 @@ export async function listHorasAdmin(query: HorasAdminQuery, now = new Date(), o
     (h) =>
       (!query.colaborador || h.colaborador === query.colaborador) &&
       (!query.proyecto || h.proyecto === query.proyecto) &&
-      (!query.cliente || clienteOf(h.proyecto) === query.cliente),
+      (!query.cliente || clienteOf(h.proyecto) === query.cliente) &&
+      (!estado.estado || estadoEfectivo(h.estadoFacturacion) === estado.estado),
   );
   const ref = (id: string | null): Ref => (id ? { id, nombre: usuarios.get(id)?.nombre ?? "(sin nombre)" } : null);
   const records: HoraAdminDTO[] = sortHoras(filtered).map((h) => {
@@ -107,6 +113,7 @@ export async function listHorasAdmin(query: HorasAdminQuery, now = new Date(), o
       facturable: h.facturable,
       mesAFacturar: h.mesAFacturar,
       cargadoPor: ref(h.cargadoPor),
+      estadoFacturacion: estadoEfectivo(h.estadoFacturacion),
     };
   });
   return { ok: true, data: { range: resolved.range, records, total: sumHours(records.map((r) => r.horas)) } };
@@ -159,6 +166,8 @@ export async function createHora(actor: Actor, raw: RawValues): Promise<ServiceR
     cargadoPor: actor.id,
     facturable: values.facturable ?? true,
     mesAFacturar: values.mesAFacturar,
+    // CC-F4-08: Pendiente si no vino.
+    estadoFacturacion: values.estadoFacturacion ?? ESTADO_PENDIENTE,
   });
   return writeHora({ mode: "create" }, fields, slot);
 }
@@ -166,7 +175,8 @@ export async function createHora(actor: Actor, raw: RawValues): Promise<ServiceR
 /** Edición. Cargado por no cambia nunca. */
 export async function updateHora(_actor: Actor, id: string, raw: RawValues): Promise<ServiceResult<{ id: string }>> {
   if (!RECORD_ID_RE.test(id)) return fail(404, HORA_MESSAGES.noEncontrado);
-  const existing = await getHora(id);
+  // Con el Estado de facturación: el rollback de la verificación posterior lo restaura si se editó.
+  const existing = await getHora(id, HORAS_ADMIN_READ_FIELDS);
   if (!existing) return fail(404, HORA_MESSAGES.noEncontrado);
 
   const { values, errors } = validateHora(raw, "admin");
@@ -194,6 +204,8 @@ export async function updateHora(_actor: Actor, id: string, raw: RawValues): Pro
     colaborador: values.colaborador,
     facturable: values.facturable,
     mesAFacturar: values.mesAFacturar,
+    // CC-F4-08: cualquier dirección (correcciones); si no vino, queda el guardado.
+    estadoFacturacion: values.estadoFacturacion,
   });
   delete fields[H.cargadoPor];
   return writeHora({ mode: "edit", existing }, fields, slot);

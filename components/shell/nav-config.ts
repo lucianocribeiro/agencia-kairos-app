@@ -19,6 +19,7 @@ import {
   SlidersHorizontal,
   Tags,
   Truck,
+  UserPlus,
   Users,
   Wallet,
   type LucideIcon,
@@ -91,6 +92,8 @@ export const NAV_BY_ROLE: Record<Role, readonly NavItem[]> = {
     { label: "Reportes", href: "/reportes", icon: ChartColumn, children: REPORTES_NAV },
     { label: "Usuarios", href: "/usuarios", icon: Users },
     { label: "Maestros", href: "/maestros", icon: Database, children: MAESTROS },
+    // Después de Maestros (donde está Clientes): un lead convertido pasa a Maestros › Clientes.
+    { label: "Leads", href: "/leads", icon: UserPlus },
   ],
   Empleado: [{ label: "Mis horas", href: "/mis-horas", icon: Clock }],
   Cliente: [{ label: "Horas", href: CLIENTE_HOME, icon: Clock }],

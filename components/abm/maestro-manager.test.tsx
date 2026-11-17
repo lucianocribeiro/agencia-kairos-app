@@ -96,6 +96,9 @@ describe("Clientes · borrado (F2-01)", () => {
     const dialog = document.querySelector('[role="alertdialog"]')!;
     expect(dialog.textContent).toContain("¿Borrar QA Activo?");
     expect(document.activeElement?.textContent).toBe("Cancelar");
+    // Default de ConfirmDialog sin cambios (CC-F4-06-FIX): confirmar secundario en rojo.
+    expect(button("Sí, borrar", dialog).className).toContain("text-danger");
+    expect(button("Sí, borrar", dialog).className).not.toContain("bg-accent");
     await act(async () => button("Cancelar", dialog).click());
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(fetchMock.mock.calls.some((c) => (c[1] as RequestInit | undefined)?.method === "DELETE")).toBe(false);

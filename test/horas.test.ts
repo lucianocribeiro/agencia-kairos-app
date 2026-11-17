@@ -34,7 +34,7 @@ const { SESSION_COOKIE } = await import("@/lib/auth/constants");
 const { signSessionToken } = await import("@/lib/auth/token");
 const { passwordFingerprint } = await import("@/lib/auth/password-hash");
 const { clearUserCache } = await import("@/lib/auth/user-cache");
-const { HORA_MESSAGES } = await import("@/lib/horas/rules");
+const { HORA_MESSAGES, mesFormInicial } = await import("@/lib/horas/rules");
 const { loadMisHorasPageProps, MisHorasPage } = await import("@/components/horas/server/mis-horas-page");
 const { MisHorasManager, SIN_PROYECTOS } = await import("@/components/horas/mis-horas-manager");
 const { ToastProvider } = await import("@/components/ui");
@@ -186,7 +186,15 @@ describe("Mis horas · alta (Empleado)", () => {
       [H.colaborador]: [ids.eva],
       [H.cargadoPor]: [ids.eva],
       [H.facturable]: true,
+      // Mes a facturar = el mes de la Fecha; el "2026-12" del body se ignora.
+      [H.mesAFacturar]: "2026-11-01",
     });
+  });
+
+  it("Mes a facturar = el mes de la Fecha (día 1), también a fin de mes", async () => {
+    const res = await call(ME_HORAS, "POST", { body: nueva({ fecha: "2026-10-31", mesAFacturar: "" }) });
+    expect(res.status).toBe(201);
+    expect(fieldsOf(res.json.id)[H.mesAFacturar]).toBe("2026-10-01");
   });
 
   it("fecha futura → 400; hoy en Buenos Aires sí", async () => {
@@ -253,7 +261,7 @@ describe("Superposición", () => {
       if (c.method === "update" && c.tableId === HT.id && !horaRows().some((r) => r.fields[H.horaDesde] === 36_000)) seedHora(ids.eva, ids.uno, "2026-11-12", "10:00", "11:00");
       return false;
     });
-    const res = await call(AD_HORA, "PATCH", { params: { id }, body: { ...nueva({ desde: "09:30", hasta: "10:30" }), colaborador: ids.eva } });
+    const res = await call(AD_HORA, "PATCH", { params: { id }, body: { ...nueva({ desde: "09:30", hasta: "10:30" }), colaborador: ids.eva, mesAFacturar: "2026-11" } });
     expect(res.status).toBe(409);
     expect(fieldsOf(id)[H.horaDesde]).toBe(8 * 3600);
   });
@@ -291,7 +299,7 @@ describe("Superposición · el registro escrito falta en la relectura (F1-04-01)
     const written = () => fake.calls.some((c) => c.method === "update" && c.tableId === HT.id);
     fake.hide(HT.id, (r) => r.id === id && written());
     if (undoFails) fake.failWhen((c, i) => c.method === "update" && c.tableId === HT.id && i >= 1, new Error("deshacer caído"));
-    const res = await call(AD_HORA, "PATCH", { params: { id }, body: { ...nueva({ desde: "13:00", hasta: "14:00" }), colaborador: ids.eva } });
+    const res = await call(AD_HORA, "PATCH", { params: { id }, body: { ...nueva({ desde: "13:00", hasta: "14:00" }), colaborador: ids.eva, mesAFacturar: "2026-11" } });
     expect(res.status).toBe(status);
     expect(verificationLog()).toEqual({ id, check: "overlap", motivo: "lectura", rollback: undoFails ? "fallido" : "ok" });
     expect(fieldsOf(id)[H.horaDesde]).toBe(undoFails ? 13 * 3600 : 8 * 3600);
@@ -454,7 +462,8 @@ describe("Mis horas · exposición de datos (criterio 7)", () => {
 
 describe("Horas (Admin)", () => {
   beforeEach(() => loginAs(ids.admin));
-  const admin = (over: Record<string, unknown> = {}) => ({ ...nueva(), colaborador: ids.eva, ...over });
+  const admin = (over: Record<string, unknown> = {}) => ({ ...nueva(), colaborador: ids.eva, mesAFacturar: "2026-11", ...over });
+  const sinMesAFacturar = (body: Record<string, unknown>) => Object.fromEntries(Object.entries(body).filter(([k]) => k !== "mesAFacturar"));
 
   it("alta en un proyecto Cerrado, en cualquier fecha (también futura), Cargado por = el admin", async () => {
     const res = await call(AD_HORAS, "POST", { body: admin({ proyecto: ids.tres, fecha: "2027-03-01", cargadoPor: [ids.eva], facturable: false, mesAFacturar: "2027-04" }) });
@@ -467,10 +476,44 @@ describe("Horas (Admin)", () => {
       [H.facturable]: false,
       [H.mesAFacturar]: "2027-04-01",
     });
-    // Facturable por defecto = sí; sin Mes a facturar no se manda el campo.
+    // Facturable por defecto = sí; Mes a facturar se guarda como día 1.
     const def = await call(AD_HORAS, "POST", { body: admin({ desde: "15:00", hasta: "16:00" }) });
     expect(fieldsOf(def.json.id)[H.facturable]).toBe(true);
-    expect(fieldsOf(def.json.id)).not.toHaveProperty(H.mesAFacturar);
+    expect(fieldsOf(def.json.id)[H.mesAFacturar]).toBe("2026-11-01");
+  });
+
+  it("alta sin Mes a facturar (sin la clave, vacío o null) → 400 con «Elegí el mes a facturar.»; nada escrito", async () => {
+    const sinMes = sinMesAFacturar(admin());
+    for (const body of [sinMes, admin({ mesAFacturar: "" }), admin({ mesAFacturar: null })]) {
+      const res = await call(AD_HORAS, "POST", { body });
+      expect(res.status).toBe(400);
+      expect(res.json.fieldErrors).toEqual({ mesAFacturar: "Elegí el mes a facturar." });
+    }
+    // Un día que no es el 1 no se acepta (se guarda siempre el día 1).
+    expect((await call(AD_HORAS, "POST", { body: admin({ mesAFacturar: "2026-11-15" }) })).json.fieldErrors).toEqual({ mesAFacturar: HORA_MESSAGES.mes });
+    expect(horaRows()).toHaveLength(0);
+  });
+
+  it("edición: cambiar la Fecha no cambia el Mes a facturar guardado (con o sin la clave en el body)", async () => {
+    const id = seedHora(ids.eva, ids.uno, "2026-11-05", "09:00", "10:00", { [H.mesAFacturar]: "2026-12-01" });
+    expect((await call(AD_HORA, "PATCH", { params: { id }, body: admin({ fecha: "2026-10-20", mesAFacturar: "2026-12" }) })).status).toBe(200);
+    expect(fieldsOf(id)).toMatchObject({ [H.fecha]: "2026-10-20", [H.mesAFacturar]: "2026-12-01" });
+    const sinMes = sinMesAFacturar(admin({ fecha: "2026-09-01" }));
+    expect((await call(AD_HORA, "PATCH", { params: { id }, body: sinMes })).status).toBe(200);
+    expect(fieldsOf(id)).toMatchObject({ [H.fecha]: "2026-09-01", [H.mesAFacturar]: "2026-12-01" });
+  });
+
+  it("edición de un registro legacy sin Mes a facturar: precargado con el mes de la Fecha, se guarda; sin él → 400", async () => {
+    const id = seedHora(ids.eva, ids.uno, "2026-10-07", "09:00", "10:00");
+    const sinMes = sinMesAFacturar(admin({ fecha: "2026-10-07" }));
+    const rechazo = await call(AD_HORA, "PATCH", { params: { id }, body: sinMes });
+    expect(rechazo.status).toBe(400);
+    expect(rechazo.json.fieldErrors).toEqual({ mesAFacturar: "Elegí el mes a facturar." });
+    expect(fake.calls.some((c) => c.method === "update")).toBe(false);
+    // Lo que manda el formulario: mesFormInicial(null, Fecha).
+    const res = await call(AD_HORA, "PATCH", { params: { id }, body: admin({ fecha: "2026-10-07", mesAFacturar: mesFormInicial(null, "2026-10-07") }) });
+    expect(res.status).toBe(200);
+    expect(fieldsOf(id)[H.mesAFacturar]).toBe("2026-10-01");
   });
 
   it("colaborador: Activo en el alta; inactivo o de otra tabla → 400; al editar se puede mantener el inactivo", async () => {
@@ -482,12 +525,16 @@ describe("Horas (Admin)", () => {
     expect(fieldsOf(id)[H.tarea]).toBe("Editada");
   });
 
-  it("edición: Cargado por no cambia nunca; Mes a facturar se puede vaciar", async () => {
+  it("edición: Cargado por no cambia nunca; Mes a facturar no se puede vaciar", async () => {
     const id = seedHora(ids.eva, ids.uno, "2026-11-05", "09:00", "10:00", { [H.cargadoPor]: [ids.eva], [H.mesAFacturar]: "2026-11-01" });
-    const res = await call(AD_HORA, "PATCH", { params: { id }, body: admin({ fecha: "2026-11-05", cargadoPor: [ids.admin], [H.cargadoPor]: [ids.admin], mesAFacturar: "" }) });
+    const vacio = await call(AD_HORA, "PATCH", { params: { id }, body: admin({ fecha: "2026-11-05", mesAFacturar: "" }) });
+    expect(vacio.status).toBe(400);
+    expect(vacio.json.fieldErrors).toEqual({ mesAFacturar: "Elegí el mes a facturar." });
+    expect(fieldsOf(id)[H.mesAFacturar]).toBe("2026-11-01");
+    const res = await call(AD_HORA, "PATCH", { params: { id }, body: admin({ fecha: "2026-11-05", cargadoPor: [ids.admin], [H.cargadoPor]: [ids.admin] }) });
     expect(res.status).toBe(200);
     expect(fieldsOf(id)[H.cargadoPor]).toEqual([ids.eva]);
-    expect(fieldsOf(id)).not.toHaveProperty(H.mesAFacturar);
+    expect(fieldsOf(id)[H.mesAFacturar]).toBe("2026-11-01");
     const update = fake.calls.find((c) => c.method === "update" && c.tableId === HT.id)!;
     expect(JSON.stringify(update.payload)).not.toContain(H.cargadoPor);
   });
@@ -573,7 +620,7 @@ describe("Dashboard", () => {
 
   const range = { desde: "2025-12-29", hasta: "2026-03-31" };
 
-  it.each(["diaria", "semanal", "mensual"])("%s: total general = total de la lista de Horas para el mismo filtro", async (agrupacion) => {
+  it.each(["diaria", "semanal", "mensual", "anual"])("%s: total general = total de la lista de Horas para el mismo filtro", async (agrupacion) => {
     const dash = await call(AD_DASH, "GET", { search: { ...range, agrupacion } });
     const list = await call(AD_HORAS, "GET", { search: range });
     expect(dash.status).toBe(200);
@@ -592,6 +639,27 @@ describe("Dashboard", () => {
     const d1 = await call(AD_DASH, "GET", { search: { ...range, agrupacion, proyectos: ids.uno } });
     const l1 = await call(AD_HORAS, "GET", { search: { ...range, proyecto: ids.uno } });
     expect(d1.json.total).toBe(l1.json.total);
+  });
+
+  it("anual: un rango que cruza dos años → 2 columnas «AAAA»; filas, columnas y total iguales a Mensual", async () => {
+    const anual = (await call(AD_DASH, "GET", { search: { ...range, agrupacion: "anual" } })).json;
+    const mensual = (await call(AD_DASH, "GET", { search: { ...range, agrupacion: "mensual" } })).json;
+    expect(anual.grouping).toBe("anual");
+    expect(anual.buckets).toEqual([
+      { key: "2025", label: "2025", desde: "2025-12-29", hasta: "2025-12-31" },
+      { key: "2026", label: "2026", desde: "2026-01-01", hasta: "2026-03-31" },
+    ]);
+    expect(anual.total).toBe(mensual.total);
+    const sum = (xs: number[]) => Math.round(xs.reduce((a, b) => a + b * 100, 0)) / 100;
+    // Cada año = la suma de sus meses, por fila y por columna.
+    const porAnio = (m: typeof mensual, values: number[]) =>
+      ["2025", "2026"].map((y) => sum(values.filter((_, i) => m.buckets[i].key.startsWith(y))));
+    expect(anual.columnTotals).toEqual(porAnio(mensual, mensual.columnTotals));
+    expect(anual.rows.map((r: { proyecto: { id: string } }) => r.proyecto.id)).toEqual(mensual.rows.map((r: { proyecto: { id: string } }) => r.proyecto.id));
+    anual.rows.forEach((r: { total: number; values: number[] }, i: number) => {
+      expect(r.total).toBe(mensual.rows[i].total);
+      expect(r.values).toEqual(porAnio(mensual, mensual.rows[i].values));
+    });
   });
 
   it("semanal cruzando el año: la semana del 29/12 junta 2025 y 2026", async () => {
@@ -614,7 +682,7 @@ describe("Dashboard", () => {
   });
 
   it("validaciones: agrupación, proyectos y diaria de más de 400 días → 400", async () => {
-    expect((await call(AD_DASH, "GET", { search: { agrupacion: "anual" } })).status).toBe(400);
+    expect((await call(AD_DASH, "GET", { search: { agrupacion: "trimestral" } })).status).toBe(400);
     expect((await call(AD_DASH, "GET", { search: { proyectos: "recNOEXISTE000001" } })).status).toBe(400);
     expect((await call(AD_DASH, "GET", { search: { desde: "2025-01-01", hasta: "2026-03-01", agrupacion: "diaria" } })).status).toBe(400);
     // Sin parámetros: mes actual y mensual.

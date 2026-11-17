@@ -28,7 +28,7 @@ import { controlClasses } from "@/components/ui/control-classes";
 import type { FieldErrors } from "@/lib/abm/fields";
 import { cn } from "@/lib/cn";
 import { displayDate, displayMonth, type DateRange } from "@/lib/horas/dates";
-import { HORA_MESSAGES, TAREA_MAX, validateHora } from "@/lib/horas/rules";
+import { HORA_MESSAGES, mesFormAlCambiarFecha, mesFormInicial, TAREA_MAX, validateHora } from "@/lib/horas/rules";
 import { formatHours, parseTime, recordHours } from "@/lib/horas/time";
 import type { HoraAdminDTO, HorasAdminData, HorasOptions } from "@/lib/horas/types";
 
@@ -63,6 +63,8 @@ export function HorasManager({ today, options, initial }: { today: string; optio
 
   const [editing, setEditing] = useState<Editing | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
+  /** Alta: Mes a facturar sigue a la Fecha hasta que el Admin lo cambia a mano. */
+  const [mesSigueFecha, setMesSigueFecha] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -91,7 +93,8 @@ export function HorasManager({ today, options, initial }: { today: string; optio
     setFormError(null);
     setConfirmDelete(false);
     if (target.mode === "create") {
-      setForm({ colaborador: "", proyecto: "", fecha: today, tarea: "", desde: "", hasta: "", facturable: true, mesAFacturar: "" });
+      setForm({ colaborador: "", proyecto: "", fecha: today, tarea: "", desde: "", hasta: "", facturable: true, mesAFacturar: mesFormInicial(null, today) });
+      setMesSigueFecha(true);
     } else {
       const r = target.record;
       setForm({
@@ -102,8 +105,9 @@ export function HorasManager({ today, options, initial }: { today: string; optio
         desde: r.desde,
         hasta: r.hasta,
         facturable: r.facturable,
-        mesAFacturar: r.mesAFacturar ? r.mesAFacturar.slice(0, 7) : "",
+        mesAFacturar: mesFormInicial(r.mesAFacturar, r.fecha),
       });
+      setMesSigueFecha(false);
     }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -154,6 +158,11 @@ export function HorasManager({ today, options, initial }: { today: string; optio
     .filter((u) => u.activo || u.id === keepColaborador)
     .map((u) => ({ value: u.id, label: u.activo ? u.nombre : `${u.nombre} · Inactivo` }));
   const set = <K extends keyof FormState>(key: K) => (value: FormState[K]) => setForm((f) => (f ? { ...f, [key]: value } : f));
+  const setFecha = (fecha: string) => setForm((f) => (f ? { ...f, fecha, mesAFacturar: mesFormAlCambiarFecha(f.mesAFacturar, fecha, mesSigueFecha) } : f));
+  const setMes = (mes: string) => {
+    setMesSigueFecha(false);
+    set("mesAFacturar")(mes);
+  };
   const live = form ? recordHours(parseTime(form.desde), parseTime(form.hasta)) : 0;
 
   return (
@@ -195,7 +204,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
                   />
                 </FormField>
                 <FormField label="Fecha" required error={errors.fecha}>
-                  <Input type="date" value={form.fecha} onChange={(e) => set("fecha")(e.target.value)} disabled={saving} />
+                  <Input type="date" value={form.fecha} onChange={(e) => setFecha(e.target.value)} disabled={saving} />
                 </FormField>
                 <div className="grid grid-cols-2 gap-2">
                   <FormField label="Desde" required error={errors.desde}>
@@ -217,8 +226,8 @@ export function HorasManager({ today, options, initial }: { today: string; optio
                     className={cn(controlClasses, "h-auto min-h-16 py-2")}
                   />
                 </FormField>
-                <FormField label="Mes a facturar" error={errors.mesAFacturar} hint="Opcional.">
-                  <Input type="month" value={form.mesAFacturar} onChange={(e) => set("mesAFacturar")(e.target.value)} disabled={saving} placeholder="AAAA-MM" />
+                <FormField label="Mes a facturar" required error={errors.mesAFacturar} hint={editing.mode === "create" ? "Por defecto, el mes de la Fecha." : undefined}>
+                  <Input type="month" value={form.mesAFacturar} onChange={(e) => setMes(e.target.value)} disabled={saving} placeholder="AAAA-MM" />
                 </FormField>
                 <div className="flex items-end pb-2">
                   <Checkbox label="Facturable" checked={form.facturable} onChange={(e) => set("facturable")(e.target.checked)} disabled={saving} />

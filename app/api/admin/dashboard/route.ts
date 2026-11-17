@@ -2,7 +2,7 @@ import { adminRoute } from "@/lib/auth/api";
 import { toResponse } from "@/lib/abm/server/http";
 import { loadDashboard } from "@/lib/horas/server/dashboard-service";
 
-/** GET /api/admin/dashboard?desde&hasta&agrupacion=diaria|semanal|mensual&proyectos=rec1,rec2 · solo horas. */
+/** GET /api/admin/dashboard?desde&hasta&agrupacion=diaria|semanal|mensual|anual&proyectos=rec1,rec2 · solo horas. */
 export const GET = adminRoute(async (request) => {
   const q = request.nextUrl.searchParams;
   const proyectos = (q.get("proyectos") ?? "").split(",").map((s) => s.trim()).filter(Boolean);

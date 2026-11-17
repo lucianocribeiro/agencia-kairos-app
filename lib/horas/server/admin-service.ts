@@ -136,6 +136,8 @@ export async function createHora(actor: Actor, raw: RawValues): Promise<ServiceR
   const { values, errors } = validateHora(raw, "admin");
   if (!values) return fail(400, HORA_MESSAGES.validacion, errors);
   const refErrors: Record<string, string> = {};
+  // Obligatorio en el alta: el formulario lo trae precargado con el mes de la Fecha.
+  if (!values.mesAFacturar) refErrors.mesAFacturar = HORA_MESSAGES.mesRequerido;
   const colaborador = await colaboradorError(values.colaborador!, null);
   if (colaborador) refErrors.colaborador = colaborador;
   if (!(await proyectoOk(values.proyecto))) refErrors.proyecto = HORA_ADMIN_MESSAGES.proyectoInexistente;
@@ -156,7 +158,7 @@ export async function createHora(actor: Actor, raw: RawValues): Promise<ServiceR
     colaborador: values.colaborador,
     cargadoPor: actor.id,
     facturable: values.facturable ?? true,
-    ...(values.mesAFacturar ? { mesAFacturar: values.mesAFacturar } : {}),
+    mesAFacturar: values.mesAFacturar,
   });
   return writeHora({ mode: "create" }, fields, slot);
 }
@@ -170,6 +172,8 @@ export async function updateHora(_actor: Actor, id: string, raw: RawValues): Pro
   const { values, errors } = validateHora(raw, "admin");
   if (!values) return fail(400, HORA_MESSAGES.validacion, errors);
   const refErrors: Record<string, string> = {};
+  // La edición también termina con un Mes a facturar: el que vino o el guardado (legacy vacío → 400).
+  if (!values.mesAFacturar && !existing.mesAFacturar) refErrors.mesAFacturar = HORA_MESSAGES.mesRequerido;
   const colaborador = await colaboradorError(values.colaborador!, existing.colaborador);
   if (colaborador) refErrors.colaborador = colaborador;
   if (values.proyecto !== existing.proyecto && !(await proyectoOk(values.proyecto))) refErrors.proyecto = HORA_ADMIN_MESSAGES.proyectoInexistente;

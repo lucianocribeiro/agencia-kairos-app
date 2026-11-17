@@ -18,7 +18,7 @@ import { recordHours } from "../time";
 export const H = TABLES.horas.fields;
 export const HORAS_TABLE = TABLES.horas.id;
 
-/** Campos que se leen de Horas (para Admin y Empleado). */
+/** Campos que se leen de Horas en el camino del Empleado (y en las verificaciones). Nunca el Estado de facturación. */
 export const HORAS_READ_FIELDS = [
   H.fecha,
   H.colaborador,
@@ -30,6 +30,9 @@ export const HORAS_READ_FIELDS = [
   H.mesAFacturar,
   H.cargadoPor,
 ] as const;
+
+/** Admin y vista Cliente: además, el Estado de facturación (CC-F4-08; RESTRICTED_FIELDS para el Empleado). */
+export const HORAS_ADMIN_READ_FIELDS = [...HORAS_READ_FIELDS, H.estadoFacturacion] as const;
 
 export interface Hora {
   id: string;
@@ -43,6 +46,8 @@ export interface Hora {
   facturable: boolean;
   mesAFacturar: string | null;
   cargadoPor: string | null;
+  /** Valor guardado (null = vacío = Pendiente; ver estadoEfectivo). Solo si se leyó con HORAS_ADMIN_READ_FIELDS. */
+  estadoFacturacion: string | null;
   /** recordHours(desde, hasta): la única cuenta de horas. */
   horas: number;
 }
@@ -67,6 +72,7 @@ export function toHora(record: AirtableRecord): Hora {
     facturable: f[H.facturable] === true,
     mesAFacturar: str(f[H.mesAFacturar]),
     cargadoPor: firstId(f[H.cargadoPor]),
+    estadoFacturacion: str(f[H.estadoFacturacion]),
     horas: recordHours(desde, hasta),
   };
 }
@@ -83,16 +89,18 @@ export function fechaRangeFormula(range: DateRange): Formula {
   return and(f, formula`IS_AFTER(${f}, ${addDays(range.desde, -1)})`, formula`IS_BEFORE(${f}, ${addDays(range.hasta, 1)})`);
 }
 
-/** Registros con Fecha dentro de [desde, hasta] (incluidos). */
-export async function listHorasInRange(range: DateRange): Promise<Hora[]> {
-  const records = await getAirtableClient().list(HORAS_TABLE, { fields: HORAS_READ_FIELDS, filterByFormula: fechaRangeFormula(range) });
+type HorasFields = typeof HORAS_READ_FIELDS | typeof HORAS_ADMIN_READ_FIELDS;
+
+/** Registros con Fecha dentro de [desde, hasta] (incluidos). Admin y Cliente pasan HORAS_ADMIN_READ_FIELDS. */
+export async function listHorasInRange(range: DateRange, fields: HorasFields = HORAS_READ_FIELDS): Promise<Hora[]> {
+  const records = await getAirtableClient().list(HORAS_TABLE, { fields, filterByFormula: fechaRangeFormula(range) });
   return records
     .map(toHora)
     .filter((h) => h.fecha !== null && isIsoDate(h.fecha) && h.fecha >= range.desde && h.fecha <= range.hasta);
 }
 
-export async function getHora(id: string): Promise<Hora | null> {
-  const record = await getAirtableClient().get(HORAS_TABLE, id, { fields: HORAS_READ_FIELDS });
+export async function getHora(id: string, fields: HorasFields = HORAS_READ_FIELDS): Promise<Hora | null> {
+  const record = await getAirtableClient().get(HORAS_TABLE, id, { fields });
   return record ? toHora(record) : null;
 }
 
@@ -167,6 +175,7 @@ export function horaFields(v: {
   cargadoPor?: string;
   facturable?: boolean;
   mesAFacturar?: string | null;
+  estadoFacturacion?: string;
 }): Fields {
   const out: Fields = {};
   if (v.fecha !== undefined) out[H.fecha] = v.fecha;
@@ -178,6 +187,7 @@ export function horaFields(v: {
   if (v.cargadoPor !== undefined) out[H.cargadoPor] = [v.cargadoPor];
   if (v.facturable !== undefined) out[H.facturable] = v.facturable;
   if (v.mesAFacturar !== undefined) out[H.mesAFacturar] = v.mesAFacturar;
+  if (v.estadoFacturacion !== undefined) out[H.estadoFacturacion] = v.estadoFacturacion;
   return out;
 }
 
@@ -193,6 +203,7 @@ export function horaFieldsOf(h: Hora, keys: readonly string[]): Fields {
     [H.cargadoPor]: h.cargadoPor ? [h.cargadoPor] : [],
     [H.facturable]: h.facturable,
     [H.mesAFacturar]: h.mesAFacturar,
+    [H.estadoFacturacion]: h.estadoFacturacion,
   };
   return Object.fromEntries(keys.map((k) => [k, all[k] ?? null]));
 }

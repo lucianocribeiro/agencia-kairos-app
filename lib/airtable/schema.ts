@@ -440,6 +440,14 @@ export const TABLES = {
       creado: "fldJBZYpRBvDMWhdO",
       /** link → Usuarios */
       cargadoPor: "fldM3DuGsdg5ziNFU",
+      /**
+       * singleSelect (CC-F4-08): ver `choices.estadoFacturacion`. Vacío = Pendiente. Solo lo
+       * escribe el Admin; nunca se devuelve a un Empleado (RESTRICTED_FIELDS).
+       */
+      estadoFacturacion: "fld3m3N7B9Jz6JCfu",
+    },
+    choices: {
+      estadoFacturacion: ["Pendiente", "Facturada", "Pagada"],
     },
   },
 
@@ -592,6 +600,8 @@ export const RESTRICTED_FIELDS: ReadonlySet<string> = new Set<FieldId>([
   F.proyectos.monedaValorHora,
   /** Segunda barrera: el camino del Empleado ya no lo lee (criterio 7 de Fase 1). */
   F.proyectos.cliente,
+  /** Estado de facturación de Horas (CC-F4-08): el camino del Empleado no lo lee ni lo devuelve. */
+  F.horas.estadoFacturacion,
 ]);
 
 /** fieldId → tableId, para validar que un campo pertenece a la tabla que se escribe. */

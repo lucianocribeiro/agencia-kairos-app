@@ -35,6 +35,7 @@ const hora = (id: string, fecha: string, proyecto: string, facturable = true): H
   facturable,
   mesAFacturar: `${fecha.slice(0, 7)}-01`,
   cargadoPor: { id: "recUUUUUUUUUUUUU1", nombre: "QA Eva" },
+  estadoFacturacion: "Pendiente",
 });
 const RECORDS = [
   hora("recHHHHHHHHHHHHH1", "2030-03-01", ARS),
@@ -67,7 +68,12 @@ beforeEach(() => {
   root = createRoot(container);
   listFor = () => RECORDS;
   fetchMock = vi.fn((url: string) => {
-    const body = url === "/api/admin/horas/seleccion" ? { ok: true, ...RESUMEN } : { range: INITIAL.range, records: listFor(url), total: 0 };
+    const body =
+      url === "/api/admin/horas/seleccion"
+        ? { ok: true, ...RESUMEN }
+        : url === "/api/admin/horas/seleccion/estado"
+          ? { ok: true, actualizadas: 2, estado: "Facturada" }
+          : { range: INITIAL.range, records: listFor(url), total: 0 };
     return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -152,5 +158,45 @@ describe("Horas (Admin) · selección (CC-F4-05)", () => {
     await filtrarProyecto(USD);
     expect(panel()).toBeNull();
     expect(fila("01/03/2030").checked).toBe(false);
+  });
+});
+
+describe("Horas (Admin) · Estado de facturación (CC-F4-08)", () => {
+  const boton = (t: string, root: ParentNode = container) => [...root.querySelectorAll("button")].find((b) => b.textContent === t)!;
+  const dialog = () => document.querySelector('[role="alertdialog"]');
+
+  it("columna Estado en la lista y filtro Todos / Pendiente / Facturada / Pagada", () => {
+    expect([...container.querySelectorAll("thead th")].map((th) => th.textContent)).toContain("Estado");
+    expect(container.querySelector("tbody tr")!.textContent).toContain("Pendiente");
+    const filtro = [...container.querySelectorAll<HTMLSelectElement>("select")].find((x) => [...x.options].some((o) => o.value === "Pagada") && !x.closest("form"))!;
+    expect([...filtro.options].map((o) => o.textContent)).toEqual(["Todos", "Pendiente", "Facturada", "Pagada"]);
+  });
+
+  it("los dos botones; diálogo con el texto exacto y confirmar en acento; POST { ids, estado }; toast y la lista se recarga", async () => {
+    await click(fila("01/03/2030"));
+    await click(fila("02/03/2030"));
+    const p = panel()!;
+    expect(boton("Marcar como facturadas", p)).toBeDefined();
+    expect(boton("Marcar como pagadas", p)).toBeDefined();
+
+    await click(boton("Marcar como pagadas", p));
+    expect(dialog()!.querySelector("h2")!.textContent).toBe("¿Marcar 2 horas como pagadas?");
+    await click(boton("Cancelar", dialog()!));
+    expect(dialog()).toBeNull();
+
+    await click(boton("Marcar como facturadas", p));
+    expect(dialog()!.querySelector("h2")!.textContent).toBe("¿Marcar 2 horas como facturadas?");
+    const confirmar = boton("Marcar como facturadas", dialog()!);
+    expect(confirmar.className).toContain("bg-accent");
+    expect(confirmar.className).not.toContain("text-danger");
+    const antes = fetchMock.mock.calls.length;
+    await click(confirmar);
+    await act(async () => {});
+    const post = fetchMock.mock.calls.find(([url]) => url === "/api/admin/horas/seleccion/estado")!;
+    expect(JSON.parse(post[1].body)).toEqual({ ids: ["recHHHHHHHHHHHHH1", "recHHHHHHHHHHHHH2"], estado: "Facturada" });
+    expect(document.body.textContent).toContain("2 horas marcadas como facturadas.");
+    // La lista se recarga (GET) y la selección se limpia.
+    expect(fetchMock.mock.calls.slice(antes).some(([url]) => String(url).startsWith("/api/admin/horas?"))).toBe(true);
+    expect(panel()).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 /** DTOs de Horas, Mis horas y Dashboard que viajan al cliente. Client-safe (sin IDs de Airtable). */
 import type { Bucket, DateRange, Grouping } from "./dates";
+import type { EstadoFacturacion } from "./estado";
 
 export type Ref = { id: string; nombre: string } | null;
 
@@ -72,6 +73,8 @@ export interface HoraAdminDTO {
   /** "YYYY-MM-01" o null. */
   mesAFacturar: string | null;
   cargadoPor: Ref;
+  /** CC-F4-08: efectivo (vacío en la base → Pendiente). Solo Admin. */
+  estadoFacturacion: EstadoFacturacion;
 }
 
 export interface HorasAdminData {

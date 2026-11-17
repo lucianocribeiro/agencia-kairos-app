@@ -28,6 +28,7 @@ const hora = (id: string, fecha: string, mesAFacturar: string | null): HoraAdmin
   facturable: true,
   mesAFacturar,
   cargadoPor: { id: "recUUUUUUUUUUUUU1", nombre: "QA Eva" },
+  estadoFacturacion: "Pendiente",
 });
 const INITIAL: HorasAdminData = {
   range: { desde: "2030-03-01", hasta: "2030-03-31" },

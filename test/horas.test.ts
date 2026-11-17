@@ -172,9 +172,9 @@ describe("/api/me/** (estructura)", () => {
 describe("Mis horas · alta (Empleado)", () => {
   beforeEach(() => loginAs(ids.eva));
 
-  it("Colaborador, Cargado por y Facturable los pone el servidor aunque vengan en el body", async () => {
+  it("Colaborador, Cargado por, Facturable y Estado de facturación los pone el servidor aunque vengan en el body", async () => {
     const res = await call(ME_HORAS, "POST", {
-      body: nueva({ colaborador: [ids.otto], cargadoPor: [ids.otto], facturable: false, mesAFacturar: "2026-12", valorHora: 1, [H.colaborador]: [ids.otto] }),
+      body: nueva({ colaborador: [ids.otto], cargadoPor: [ids.otto], facturable: false, mesAFacturar: "2026-12", valorHora: 1, [H.colaborador]: [ids.otto], estadoFacturacion: "Pagada", [H.estadoFacturacion]: "Pagada" }),
     });
     expect(res.status).toBe(201);
     expect(fieldsOf(res.json.id)).toEqual({
@@ -188,6 +188,8 @@ describe("Mis horas · alta (Empleado)", () => {
       [H.facturable]: true,
       // Mes a facturar = el mes de la Fecha; el "2026-12" del body se ignora.
       [H.mesAFacturar]: "2026-11-01",
+      // CC-F4-08: Pendiente siempre; el "Pagada" del body se ignora.
+      [H.estadoFacturacion]: "Pendiente",
     });
   });
 
@@ -580,7 +582,7 @@ describe("Horas (Admin)", () => {
   it("Empleado → 403 en todas las rutas de Horas y Dashboard de Admin", async () => {
     await loginAs(ids.eva);
     const routes = Object.entries(ADMIN_ROUTES).flatMap(([file, mod]) => HTTP.filter((m) => mod[m]).map((m) => [file.replace("/app/api/", ""), m] as const));
-    expect(routes.length).toBe(7); // + POST seleccion y seleccion/excel (CC-F4-05)
+    expect(routes.length).toBe(8); // + POST seleccion y seleccion/excel (CC-F4-05) + seleccion/estado (CC-F4-08)
     for (const [file, m] of routes) {
       expect((await call(file, m, { params: { id: "recXXXXXXXXXXXXXX" }, ...(m === "GET" || m === "DELETE" ? {} : { body: {} }) })).status, `${m} ${file}`).toBe(403);
     }

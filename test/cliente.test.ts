@@ -506,6 +506,7 @@ describe("C.6 Descargar Excel", () => {
       ["01/11/2026 al 14/11/2026 · Agrupación semanal"],
       ["Proyectos: QZ - Alfa, QZ - Beta"],
       ["Solo horas facturables."],
+      ["Estado de facturación: Todos"], // CC-F4-08
       [],
       ["Horas por proyecto"],
       ["Proyecto", ...screen.buckets.map((b: { label: string }) => b.label), "Total"],
@@ -514,15 +515,13 @@ describe("C.6 Descargar Excel", () => {
       [],
       ["Importes por proyecto"],
       ["Proyecto", "Valor hora", "Moneda", "Horas", "Neto", "IVA", "Total"],
-      ...screen.importes.proyectos.map((p: { codigo: string; valorHora: number; moneda: string; horas: number; neto: number; iva: number; total: number }) => [
-        p.codigo,
-        p.valorHora,
-        p.moneda,
-        p.horas,
-        m(p.neto),
-        m(p.iva),
-        m(p.total),
-      ]),
+      ...screen.importes.proyectos.flatMap(
+        (p: { codigo: string; valorHora: number; moneda: string; horas: number; neto: number; iva: number; total: number; estados: { estado: string; horas: number; total: number }[] }) => [
+          [p.codigo, p.valorHora, p.moneda, p.horas, m(p.neto), m(p.iva), m(p.total)],
+          // CC-F4-08: desglose por estado debajo de cada proyecto (Estado, Horas, Total).
+          ...p.estados.map((e) => [`Estado: ${e.estado}`, null, null, e.horas, null, null, m(e.total)]),
+        ],
+      ),
       ...screen.importes.proyectos.flatMap((p: { codigo: string; moneda: string; horas: number; neto: number; colaboradores: { nombre: string; horas: number; neto: number }[] }) => [
         [],
         [`Detalle por colaborador · ${p.codigo}`],
@@ -547,7 +546,7 @@ describe("C.6 Descargar Excel", () => {
     const fromVista = vista.tablas.flatMap((tb) => tb.filas.map((f) => trim(tb.columnas.map((c, i) => valorExcel(kindDe(c, f), f.cells[i] ?? null)))));
     for (const r of fromVista) expect(rows).toContainEqual(r);
     // los números son números
-    expect(typeof rows[7][1]).toBe("number");
+    expect(typeof rows[8][1]).toBe("number");
   });
 
   it("Anual: 2 columnas «AAAA» con los mismos totales que Mensual, en pantalla y en el Excel", async () => {
@@ -577,9 +576,9 @@ describe("C.6 Descargar Excel", () => {
     expect(xl.status).toBe(200);
     const rows = readFirstSheet(xl.bytes);
     expect(rows[1][0]).toBe("01/12/2025 al 30/11/2026 · Agrupación anual");
-    expect(rows[6].slice(0, 4)).toEqual(["Proyecto", "2025", "2026", "Total"]);
-    expect(rows[7].slice(0, 4)).toEqual(["QZ - Alfa", 2, 5.16, 7.16]);
-    expect(rows[9].slice(0, 4)).toEqual(["Total", ...anual.columnTotals, anual.total]);
+    expect(rows[7].slice(0, 4)).toEqual(["Proyecto", "2025", "2026", "Total"]); // +1 línea «Estado de facturación» (CC-F4-08)
+    expect(rows[8].slice(0, 4)).toEqual(["QZ - Alfa", 2, 5.16, 7.16]);
+    expect(rows[10].slice(0, 4)).toEqual(["Total", ...anual.columnTotals, anual.total]);
   });
 
   it("nombre del archivo: el Código si la vista es de un solo proyecto", async () => {

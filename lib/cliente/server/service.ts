@@ -5,7 +5,8 @@ import { TABLES } from "@/lib/airtable/schema";
 import type { ServiceResult } from "@/lib/abm/types";
 import { agregarDashboard } from "@/lib/horas/dashboard";
 import { validarDashboardQuery, type DashboardQuery } from "@/lib/horas/server/dashboard-service";
-import { listHorasInRange } from "@/lib/horas/server/repo";
+import { estadoEfectivo, filtroEstado } from "@/lib/horas/estado";
+import { HORAS_ADMIN_READ_FIELDS, listHorasInRange } from "@/lib/horas/server/repo";
 import { ROL_CLIENTE } from "@/lib/roles";
 import { PARAM_ALICUOTA, parseAlicuota, type Moneda, type ProyectoP } from "@/lib/proforma/proforma";
 import { vistaToSheet } from "@/lib/reportes/excel";
@@ -66,9 +67,16 @@ async function nombresDeUsuarios(): Promise<Map<string, string>> {
  * Datos de la vista para los filtros del pedido. 400 = filtro inválido; 403 = algún
  * proyecto pedido no está asignado al usuario (URL editada, link viejo).
  */
-export async function cargarVistaCliente(userId: string, query: DashboardQuery, now = new Date()): Promise<ServiceResult<ClienteHorasData>> {
+export interface ClienteQuery extends DashboardQuery {
+  /** CC-F4-08: Pendiente / Facturada / Pagada; null = todos. */
+  estado?: string | null;
+}
+
+export async function cargarVistaCliente(userId: string, query: ClienteQuery, now = new Date()): Promise<ServiceResult<ClienteHorasData>> {
   const q = validarDashboardQuery(query, now);
   if (!q.ok) return q;
+  const filtro = filtroEstado(query.estado);
+  if ("error" in filtro) return { ok: false, status: 400, error: filtro.error };
   const { range, grouping, buckets, selected } = q.data;
 
   const asignados = await proyectosAsignados(userId);
@@ -78,9 +86,13 @@ export async function cargarVistaCliente(userId: string, query: DashboardQuery, 
   const ids = new Set(enVista.map((p) => p.id));
 
   const [horas, alicuota, nombres] =
-    enVista.length > 0 ? await Promise.all([listHorasInRange(range), alicuotaActual(), nombresDeUsuarios()]) : [[], null, new Map<string, string>()];
-  // Solo Facturables de los proyectos de la vista: todo lo demás no existe para el Cliente.
-  const propias = horas.filter((h) => h.facturable && h.proyecto !== null && ids.has(h.proyecto));
+    enVista.length > 0
+      ? await Promise.all([listHorasInRange(range, HORAS_ADMIN_READ_FIELDS), alicuotaActual(), nombresDeUsuarios()])
+      : [[], null, new Map<string, string>()];
+  // Solo Facturables de los proyectos de la vista (y del estado elegido): todo lo demás no existe para el Cliente.
+  const propias = horas.filter(
+    (h) => h.facturable && h.proyecto !== null && ids.has(h.proyecto) && (!filtro.estado || estadoEfectivo(h.estadoFacturacion) === filtro.estado),
+  );
 
   const ref = (p: ProyectoP): ClienteProyecto => ({ id: p.id, codigo: p.codigo });
   const agregado = agregarDashboard({
@@ -95,7 +107,7 @@ export async function cargarVistaCliente(userId: string, query: DashboardQuery, 
       ? null
       : calcularImportesCliente({
           proyectos: enVista,
-          horas: propias.map((h) => ({ proyecto: h.proyecto!, colaborador: h.colaborador, horas: h.horas })),
+          horas: propias.map((h) => ({ proyecto: h.proyecto!, colaborador: h.colaborador, horas: h.horas, estado: estadoEfectivo(h.estadoFacturacion) })),
           colaboradores: nombres,
           alicuota: alicuota ?? 0,
         });
@@ -109,6 +121,7 @@ export async function cargarVistaCliente(userId: string, query: DashboardQuery, 
       buckets: buckets.map((b) => ({ key: b.key, label: b.label })),
       proyectos: asignados.map(ref),
       selected,
+      estado: filtro.estado,
       rows: agregado.rows.map((r) => ({ proyecto: { id: r.proyecto!.id, codigo: r.proyecto!.codigo }, values: [...r.values], total: r.total })),
       columnTotals: [...agregado.columnTotals],
       total: agregado.total,
@@ -123,6 +136,7 @@ export async function cargarVistaCliente(userId: string, query: DashboardQuery, 
           iva: p.iva,
           total: p.total,
           colaboradores: p.colaboradores.map((c) => ({ nombre: c.nombre, horas: c.horas, neto: c.neto })),
+          estados: p.estados.map((e) => ({ estado: e.estado, horas: e.horas, neto: e.neto, iva: e.iva, total: e.total })),
         })),
         totales: importes.totales.map((t) => ({ moneda: t.moneda, neto: t.neto, iva: t.iva, total: t.total })),
       },
@@ -136,11 +150,12 @@ export function clienteXlsx(d: ClienteHorasData): { bytes: Buffer; filename: str
 }
 
 /** Query string → filtros (los mismos parámetros que el dashboard de Admin). */
-export function queryCliente(get: (key: string) => string | null): DashboardQuery {
+export function queryCliente(get: (key: string) => string | null): ClienteQuery {
   return {
     desde: get("desde") || null,
     hasta: get("hasta") || null,
     agrupacion: get("agrupacion") || null,
     proyectos: (get("proyectos") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    estado: get("estado") || null,
   };
 }

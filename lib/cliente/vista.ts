@@ -10,6 +10,8 @@ import type { Vista, VistaColumna, VistaFila, VistaTabla } from "@/lib/reportes/
 import { CLIENTE_MESSAGES, type ClienteHorasData } from "./types";
 
 export const VISTA_CLIENTE_TITULO = "Horas";
+/** Primera celda de las filas de desglose por estado dentro de «Importes por proyecto». */
+export const ESTADO_PREFIJO = "Estado: ";
 
 const money = (label: string): VistaColumna => ({ label, kind: "money" });
 
@@ -31,14 +33,16 @@ export function tablasImportes(d: ClienteHorasData): VistaTabla[] {
   const porProyecto: VistaTabla = {
     titulo: "Importes por proyecto",
     columnas: [{ label: "Proyecto", kind: "text" }, money("Valor hora"), { label: "Moneda", kind: "text" }, { label: "Horas", kind: "hours" }, money("Neto"), money("IVA"), money("Total")],
-    filas: d.importes.proyectos.map(
-      (p): VistaFila => ({
+    // Cada proyecto, y debajo su desglose por Estado de facturación (CC-F4-08): Estado, Horas, Total.
+    filas: d.importes.proyectos.flatMap((p): VistaFila[] => [
+      {
         cells:
           p.neto === null
             ? [p.codigo, p.valorHora === null ? null : toCents(p.valorHora), p.moneda, p.horas, nd, null, null]
             : [p.codigo, toCents(p.valorHora!), p.moneda, p.horas, p.neto, p.iva, p.total],
-      }),
-    ),
+      },
+      ...p.estados.map((e): VistaFila => ({ cells: [`${ESTADO_PREFIJO}${e.estado}`, null, null, e.horas, null, null, e.total ?? nd] })),
+    ]),
   };
   const detalle = d.importes.proyectos.map(
     (p): VistaTabla => ({
@@ -67,6 +71,7 @@ export function vistaCliente(d: ClienteHorasData): Vista {
       `${displayDate(d.range.desde)} al ${displayDate(d.range.hasta)} · Agrupación ${GROUPINGS[d.grouping].toLowerCase()}`,
       `Proyectos: ${elegidos.join(", ") || "—"}`,
       "Solo horas facturables.",
+      `Estado de facturación: ${d.estado ?? "Todos"}`,
     ],
     avisos: [],
     error: null,

@@ -4,6 +4,7 @@
  */
 import type { FieldErrors } from "@/lib/abm/fields";
 import { isIsoDate, mesAFacturarToStorage } from "./dates";
+import { ESTADO_MESSAGES, isEstadoFacturacion, type EstadoFacturacion } from "./estado";
 import { formatTime, parseTime } from "./time";
 
 export const TAREA_MAX = 1000;
@@ -29,7 +30,7 @@ export const HORA_MESSAGES = {
 /** Claves que acepta cada API (allowlist de toRawValues). */
 export const HORA_INPUT_KEYS = {
   empleado: ["fecha", "proyecto", "tarea", "desde", "hasta"],
-  admin: ["fecha", "proyecto", "tarea", "desde", "hasta", "colaborador", "facturable", "mesAFacturar"],
+  admin: ["fecha", "proyecto", "tarea", "desde", "hasta", "colaborador", "facturable", "mesAFacturar", "estadoFacturacion"],
 } as const;
 
 export interface HoraValues {
@@ -44,6 +45,8 @@ export interface HoraValues {
   facturable?: boolean;
   /** Solo Admin. "YYYY-MM-01"; undefined = no vino (edición: queda el guardado). Nunca vacío. */
   mesAFacturar?: string;
+  /** Solo Admin (CC-F4-08). undefined = no vino ("" también): alta → Pendiente; edición → queda el guardado. */
+  estadoFacturacion?: EstadoFacturacion;
 }
 
 /** Un link de un formulario: "rec…" o ["rec…"] → "rec…". */
@@ -136,6 +139,11 @@ export function validateHora(
         if (!stored) errors.mesAFacturar = HORA_MESSAGES.mes;
         else values.mesAFacturar = stored;
       }
+    }
+    const estado = raw.estadoFacturacion;
+    if (estado !== undefined && estado !== null && estado !== "") {
+      if (isEstadoFacturacion(estado)) values.estadoFacturacion = estado;
+      else errors.estadoFacturacion = ESTADO_MESSAGES.invalido;
     }
   }
 

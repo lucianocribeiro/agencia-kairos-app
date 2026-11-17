@@ -26,6 +26,7 @@ import {
 } from "@/components/ui";
 import { controlClasses } from "@/components/ui/control-classes";
 import { MesAnioSelect, type MesAnioPartes } from "@/components/ui/mes-anio-select";
+import { ESTADO_PENDIENTE, ESTADOS_FACTURACION, isEstadoFacturacion, type EstadoFacturacion } from "@/lib/horas/estado";
 import type { FieldErrors } from "@/lib/abm/fields";
 import { cn } from "@/lib/cn";
 import { displayDate, displayMonth, type DateRange } from "@/lib/horas/dates";
@@ -52,6 +53,8 @@ interface FormState {
   /** Mes a facturar en dos selects: mes "01".."12" y año "AAAA" (cualquiera puede estar vacío). */
   mesNum: string;
   mesAnio: string;
+  /** CC-F4-08: alta = Pendiente; edición = el guardado (vacío → Pendiente). */
+  estadoFacturacion: EstadoFacturacion;
 }
 
 /** Lo que se manda a la API: el formulario con Mes a facturar "YYYY-MM" ("" si falta mes o año). */
@@ -67,7 +70,7 @@ const proyectoLabel = (p: { codigo: string; estado: string | null }) => (p.estad
 export function HorasManager({ today, options, initial }: { today: string; options: HorasOptions; initial: HorasAdminData }) {
   const toast = useToast();
   const [range, setRange] = useState<DateRange>(initial.range);
-  const [filters, setFilters] = useState({ colaborador: "", proyecto: "", cliente: "" });
+  const [filters, setFilters] = useState({ colaborador: "", proyecto: "", cliente: "", estado: "" });
   const [list, setList] = useState({ records: initial.records, total: initial.total });
   const [listError, setListError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -129,7 +132,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
     setFormError(null);
     setConfirmDelete(false);
     if (target.mode === "create") {
-      setForm({ colaborador: "", proyecto: "", fecha: today, tarea: "", desde: "", hasta: "", facturable: true, ...conMes(mesFormInicial(null, today)) });
+      setForm({ colaborador: "", proyecto: "", fecha: today, tarea: "", desde: "", hasta: "", facturable: true, ...conMes(mesFormInicial(null, today)), estadoFacturacion: ESTADO_PENDIENTE });
       setMesSigueFecha(true);
     } else {
       const r = target.record;
@@ -142,6 +145,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
         hasta: r.hasta,
         facturable: r.facturable,
         ...conMes(mesFormInicial(r.mesAFacturar, r.fecha)),
+        estadoFacturacion: r.estadoFacturacion,
       });
       setMesSigueFecha(false);
     }
@@ -278,6 +282,14 @@ export function HorasManager({ today, options, initial }: { today: string; optio
                 <div className="flex items-end pb-2">
                   <Checkbox label="Facturable" checked={form.facturable} onChange={(e) => set("facturable")(e.target.checked)} disabled={saving} />
                 </div>
+                <FormField label="Estado de facturación" error={errors.estadoFacturacion}>
+                  <Select
+                    value={form.estadoFacturacion}
+                    onChange={(e) => isEstadoFacturacion(e.target.value) && set("estadoFacturacion")(e.target.value)}
+                    options={ESTADOS_FACTURACION.map((v) => ({ value: v, label: v }))}
+                    disabled={saving}
+                  />
+                </FormField>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="submit" disabled={saving}>
@@ -316,7 +328,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <PeriodFilter value={range} onChange={setRange} today={today} shortcuts={["mesActual", "mesAnterior"]} disabled={loading} />
-        <div className="grid gap-2 sm:grid-cols-3 lg:w-[36rem]">
+        <div className="grid gap-2 sm:grid-cols-2 lg:w-[44rem] lg:grid-cols-4">
           <FormField label="Colaborador">
             <Select value={filters.colaborador} onChange={(e) => setFilters({ ...filters, colaborador: e.target.value })} placeholder="Todos" options={options.usuarios.map((u) => ({ value: u.id, label: u.nombre }))} />
           </FormField>
@@ -326,6 +338,9 @@ export function HorasManager({ today, options, initial }: { today: string; optio
           <FormField label="Cliente">
             <Select value={filters.cliente} onChange={(e) => setFilters({ ...filters, cliente: e.target.value })} placeholder="Todos" options={options.clientes.filter((c) => c.activo).map((c) => ({ value: c.id, label: c.nombre }))} />
           </FormField>
+          <FormField label="Estado">
+            <Select value={filters.estado} onChange={(e) => setFilters({ ...filters, estado: e.target.value })} placeholder="Todos" options={ESTADOS_FACTURACION.map((v) => ({ value: v, label: v }))} />
+          </FormField>
         </div>
       </div>
       {listError && <InlineMessage tone="danger">{listError}</InlineMessage>}
@@ -333,7 +348,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
       {selected.length > 0 && (
         <>
           <p className="text-sm text-muted">{SELECCION_MESSAGES.unProyecto}</p>
-          <SeleccionPanel ids={selected} data={resumen.data} error={resumen.error} loading={resumen.loading} onClear={() => cambiarSeleccion([])} />
+          <SeleccionPanel ids={selected} data={resumen.data} error={resumen.error} loading={resumen.loading} onClear={() => cambiarSeleccion([])} onEstadoCambiado={() => void reload()} />
         </>
       )}
 
@@ -356,6 +371,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
             ))}
             <TableHeaderCell className="text-right">Horas</TableHeaderCell>
             <TableHeaderCell>Facturable</TableHeaderCell>
+            <TableHeaderCell>Estado</TableHeaderCell>
             <TableHeaderCell>Mes a facturar</TableHeaderCell>
             <TableHeaderCell>Cargado por</TableHeaderCell>
             <TableHeaderCell>
@@ -365,7 +381,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
         </TableHead>
         <TableBody>
           {list.records.length === 0 ? (
-            <TableEmpty colSpan={13}>No hay horas con estos filtros.</TableEmpty>
+            <TableEmpty colSpan={14}>No hay horas con estos filtros.</TableEmpty>
           ) : (
             list.records.map((r) => {
               const motivo = motivoNoSeleccionable(r, proyectoElegido);
@@ -392,6 +408,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
                 <TableCell className="tabular-nums">{r.hasta}</TableCell>
                 <TableCell numeric>{formatHours(r.horas)}</TableCell>
                 <TableCell>{r.facturable ? "Sí" : "No"}</TableCell>
+                <TableCell className="whitespace-nowrap">{r.estadoFacturacion}</TableCell>
                 <TableCell className="tabular-nums">{displayMonth(r.mesAFacturar) || "—"}</TableCell>
                 <TableCell className="whitespace-nowrap">{r.cargadoPor?.nombre ?? "—"}</TableCell>
                 <TableCell className="text-right">
@@ -410,7 +427,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
               Total
             </th>
             <td className="px-4 py-3 text-right font-semibold text-white tabular-nums">{formatHours(list.total)}</td>
-            <td colSpan={4} />
+            <td colSpan={5} />
           </tr>
         </tfoot>
       </Table>

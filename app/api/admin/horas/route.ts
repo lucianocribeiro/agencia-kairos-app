@@ -3,11 +3,11 @@ import { toRawValues, toResponse } from "@/lib/abm/server/http";
 import { HORA_INPUT_KEYS } from "@/lib/horas/rules";
 import { createHora, listHorasAdmin } from "@/lib/horas/server/admin-service";
 
-/** GET /api/admin/horas?desde&hasta&colaborador&proyecto&cliente · lista filtrada con total. */
+/** GET /api/admin/horas?desde&hasta&colaborador&proyecto&cliente&estado · lista filtrada con total. */
 export const GET = adminRoute(async (request) => {
   const q = request.nextUrl.searchParams;
   return toResponse(
-    await listHorasAdmin({ desde: q.get("desde"), hasta: q.get("hasta"), colaborador: q.get("colaborador"), proyecto: q.get("proyecto"), cliente: q.get("cliente") }),
+    await listHorasAdmin({ desde: q.get("desde"), hasta: q.get("hasta"), colaborador: q.get("colaborador"), proyecto: q.get("proyecto"), cliente: q.get("cliente"), estado: q.get("estado") }),
   );
 });
 

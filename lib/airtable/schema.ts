@@ -164,6 +164,11 @@ export const TABLES = {
       ventas: "fldP7WVJnruka9dt5",
       /** Link inverso (solo lectura): Tesorería.cliente. */
       tesoreria: "fldfq5DMOJLuKAXop",
+      /**
+       * Link inverso "Leads" (Leads.cliente, CC-F4-06). Solo lectura: el ABM de Clientes no
+       * lo lee, no lo muestra ni lo escribe, y no bloquea el borrado (no está en REFERENCE_FIELDS).
+       */
+      leads: "fldVOksrSGDYTcIaw",
     },
     choices: {
       estado: ["Activo", "Inactivo"],
@@ -439,6 +444,47 @@ export const TABLES = {
   },
 
   /**
+   * Leads (CC-F4-06, solo Admin): misma estructura que el CRM de Kairos. Un lead pasa a
+   * Clientes con «Pasar a cliente» (lib/leads/server/service.ts): queda Tipo = Cliente y
+   * Cliente = el cliente creado, y desde ahí solo se puede borrar.
+   */
+  leads: {
+    id: "tblZfsKxIckVSNRlV",
+    name: "Leads",
+    fields: {
+      /** primario */
+      nombre: "fldq8J1WaUiMl8fqI",
+      /** singleSelect: ver `choices.tipo` («Cliente» solo lo escribe la conversión) */
+      tipo: "fld7viUkRfGwaX33E",
+      /** singleSelect: ver `choices.status` */
+      status: "fld5p3RK5G0JJxmqQ",
+      /** multilineText */
+      proyecto: "fldFQ1KhgW7hsA3jn",
+      contacto: "fldMLW6VEoRzUU6wV",
+      /** phoneNumber */
+      telefono: "fldlYSdtbQtmK1HSh",
+      /** email */
+      mail: "fldTbo0itAwTsTtg4",
+      /** singleSelect: ver `choices.origen` */
+      origen: "fldlyIddv6yB5T30F",
+      referidoPor: "fldeX0DEHzLbqvRZ3",
+      /** multilineText */
+      comentarios: "fldfA6NoqDF0xFVnc",
+      ventas: "fldjpJHz4Tr8mKfkw",
+      cobranzas: "fldHdujd5mywXj8Ys",
+      ventasSrl: "flddA1ngmH2SjYLEa",
+      cobranzasSrl: "fld1T55CjnHNX8AAd",
+      /** link → Clientes: el cliente creado por la conversión. Solo lo escribe la conversión. */
+      cliente: "fldqfK9S27C6ZsqXa",
+    },
+    choices: {
+      tipo: ["Cliente", "Lead", "Ex Cliente", "Frío", "Partnership"],
+      status: ["Activo", "Concluido"],
+      origen: ["F&F", "Referidos", "Orgánico"],
+    },
+  },
+
+  /**
    * Registro de intentos de login para bloqueo temporal. Lo escribe sólo el servidor.
    * Nunca se guardan contraseñas ni hashes acá. Creada con scripts/setup-intentos-login.mjs.
    */
@@ -520,10 +566,18 @@ export const REFERENCE_FIELDS = {
   tesoreria: [],
   horas: [],
   intentosLogin: [],
+  // Nadie apunta a Leads.
+  leads: [],
 } as const satisfies Record<TableKey, readonly FieldId[]>;
 
+/**
+ * Links inversos que no bloquean el borrado (no están en REFERENCE_FIELDS): Clientes › Leads.
+ * Un cliente creado desde un lead se sigue borrando como hoy (CC-F4-06).
+ */
+export const INVERSE_ONLY_FIELDS = [TABLES.clientes.fields.leads] as const satisfies readonly FieldId[];
+
 /** Links inversos que se leen pero nunca se escriben desde la app. */
-export const READ_ONLY_FIELDS: ReadonlySet<string> = new Set<FieldId>(Object.values(REFERENCE_FIELDS).flat());
+export const READ_ONLY_FIELDS: ReadonlySet<string> = new Set<FieldId>([...Object.values(REFERENCE_FIELDS).flat(), ...INVERSE_ONLY_FIELDS]);
 
 /** Campos que nunca se devuelven a nadie (ni Admin ni Empleado). */
 export const SECRET_FIELDS: ReadonlySet<string> = new Set<FieldId>([F.usuarios.passwordHash]);

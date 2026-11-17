@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 
 import { Button } from "./button";
 
@@ -15,13 +15,18 @@ export interface ConfirmDialogProps {
   busyLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /** false: el botón de confirmar no va en rojo (una acción que no borra, p. ej. «Pasar a cliente»). */
+  destructive?: boolean;
+  /** Dónde arranca el foco (p. ej. un campo del diálogo). Por defecto, Cancelar. */
+  initialFocus?: RefObject<HTMLElement | null>;
 }
 
 /**
  * Diálogo modal de confirmación (role="alertdialog"). El foco arranca en
- * Cancelar (la opción segura), Escape cancela y el foco no sale del diálogo.
+ * Cancelar (la opción segura) o en `initialFocus`, Escape cancela y el foco no
+ * sale del diálogo (botones y campos).
  */
-export function ConfirmDialog({ open, title, children, confirmLabel, cancelLabel = "Cancelar", busy = false, busyLabel = "Procesando…", onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({ open, title, children, confirmLabel, cancelLabel = "Cancelar", busy = false, busyLabel = "Procesando…", onConfirm, onCancel, destructive = true, initialFocus }: ConfirmDialogProps) {
   const titleId = useId();
   const bodyId = useId();
   const panel = useRef<HTMLDivElement>(null);
@@ -30,9 +35,9 @@ export function ConfirmDialog({ open, title, children, confirmLabel, cancelLabel
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
-    cancel.current?.focus();
+    (initialFocus?.current ?? cancel.current)?.focus();
     return () => previous?.focus?.();
-  }, [open]);
+  }, [open, initialFocus]);
 
   if (!open) return null;
 
@@ -43,7 +48,7 @@ export function ConfirmDialog({ open, title, children, confirmLabel, cancelLabel
       return;
     }
     if (event.key !== "Tab" || !panel.current) return;
-    const focusable = [...panel.current.querySelectorAll<HTMLElement>("button:not([disabled])")];
+    const focusable = [...panel.current.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])")];
     if (focusable.length === 0) return;
     const [firstEl, lastEl] = [focusable[0], focusable[focusable.length - 1]];
     if (event.shiftKey && document.activeElement === firstEl) {
@@ -77,7 +82,7 @@ export function ConfirmDialog({ open, title, children, confirmLabel, cancelLabel
           <Button ref={cancel} variant="secondary" onClick={onCancel} disabled={busy}>
             {cancelLabel}
           </Button>
-          <Button variant="secondary" onClick={onConfirm} disabled={busy} className="text-danger">
+          <Button variant="secondary" onClick={onConfirm} disabled={busy} className={destructive ? "text-danger" : undefined}>
             {busy ? busyLabel : confirmLabel}
           </Button>
         </div>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { canReadField, readableFields, redactFields } from "./access";
-import { COMPUTED_FIELDS, FIELD_TABLE, READ_ONLY_FIELDS, REFERENCE_FIELDS, RESTRICTED_FIELDS, TABLES } from "./schema";
+import { COMPUTED_FIELDS, FIELD_TABLE, INVERSE_ONLY_FIELDS, READ_ONLY_FIELDS, REFERENCE_FIELDS, RESTRICTED_FIELDS, TABLES } from "./schema";
 
 const H = TABLES.horas.fields;
 const U = TABLES.usuarios.fields;
@@ -23,8 +23,9 @@ describe("schema", () => {
     expect(FIELD_TABLE.size).toBe(fieldIds.length);
   });
 
-  it("incluye las 16 tablas", () => {
-    expect(Object.keys(TABLES)).toHaveLength(16);
+  it("incluye las 17 tablas (Leads desde CC-F4-06)", () => {
+    expect(Object.keys(TABLES)).toHaveLength(17);
+    expect(TABLES.leads.id).toBe("tblZfsKxIckVSNRlV");
   });
 
   it("campos que llena Airtable (autoNumber y createdTime): solo N° de Horas y Tesorería y Creado de Horas", () => {
@@ -35,11 +36,19 @@ describe("schema", () => {
     for (const id of [U.horasReverse, U.horas2Reverse, P.usuarios, TABLES.clientes.fields.proyectos, TABLES.categorias.fields.proveedores]) {
       expect(READ_ONLY_FIELDS.has(id)).toBe(true);
     }
-    expect(READ_ONLY_FIELDS.size).toBe(Object.values(REFERENCE_FIELDS).flat().length);
+    expect(READ_ONLY_FIELDS.size).toBe(Object.values(REFERENCE_FIELDS).flat().length + INVERSE_ONLY_FIELDS.length);
     // los links que sí se escriben no son de solo lectura
     for (const id of [P.cliente, TABLES.usuarios.fields.proyectosAsignados, TABLES.proveedores.fields.categoriaPorDefecto]) {
       expect(READ_ONLY_FIELDS.has(id)).toBe(false);
     }
+  });
+
+  it("Clientes › Leads: link inverso de solo lectura que no bloquea el borrado de un cliente; Leads › Cliente sí se escribe", () => {
+    expect([...INVERSE_ONLY_FIELDS]).toEqual([TABLES.clientes.fields.leads]);
+    expect(READ_ONLY_FIELDS.has(TABLES.clientes.fields.leads)).toBe(true);
+    expect((REFERENCE_FIELDS.clientes as readonly string[]).includes(TABLES.clientes.fields.leads)).toBe(false);
+    expect(READ_ONLY_FIELDS.has(TABLES.leads.fields.cliente)).toBe(false);
+    expect(REFERENCE_FIELDS.leads).toEqual([]);
   });
 
   it("cada referencia pertenece a su tabla", () => {

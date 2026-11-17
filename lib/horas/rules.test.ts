@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { HORA_MESSAGES, mesDeFecha, mesFormAlCambiarFecha, mesFormInicial, overlapMessage, overlapping, rangesOverlap, TAREA_MAX, validateHora } from "./rules";
+import { aniosMesAFacturar, HORA_MESSAGES, MESES, mesDeFecha, mesFormAlCambiarFecha, mesFormInicial, overlapMessage, overlapping, partesMes, rangesOverlap, TAREA_MAX, unirMes, validateHora } from "./rules";
 
 const ok = { fecha: "2026-11-12", proyecto: "recPPPPPPPPPPPPPP", tarea: " Diseño ", desde: "09:00", hasta: "10:30" };
 
@@ -98,5 +98,24 @@ describe("Mes a facturar en el formulario de Admin (CC-F4-03)", () => {
     const legacy = mesFormInicial(null, "2030-03-20");
     expect(legacy).toBe("2030-03");
     expect(validateHora({ ...ok, fecha: "2030-03-20", colaborador: "recCCCCCCCCCCCCCC", mesAFacturar: legacy }, "admin").values!.mesAFacturar).toBe("2030-03-01");
+  });
+});
+
+describe("Mes a facturar en dos selects (CC-F4-03-FIX)", () => {
+  it("partesMes / unirMes: ida y vuelta; si falta mes o año, vacío", () => {
+    expect(partesMes("2030-03")).toEqual({ anio: "2030", mes: "03" });
+    expect(partesMes("")).toEqual({ anio: "", mes: "" });
+    expect(unirMes("2030", "03")).toBe("2030-03");
+    expect(unirMes("", "03")).toBe("");
+    expect(unirMes("2030", "")).toBe("");
+  });
+
+  it("meses en castellano y años 2000–2099 (más el guardado si quedó fuera)", () => {
+    expect(MESES).toHaveLength(12);
+    expect([MESES[0], MESES[8], MESES[11]]).toEqual(["Enero", "Septiembre", "Diciembre"]);
+    const a = aniosMesAFacturar("2030");
+    expect([a[0], a.at(-1), a.length]).toEqual(["2000", "2099", 100]);
+    expect(aniosMesAFacturar("1999").slice(0, 2)).toEqual(["1999", "2000"]);
+    expect(aniosMesAFacturar("")).toHaveLength(100);
   });
 });

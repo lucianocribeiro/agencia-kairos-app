@@ -28,7 +28,7 @@ import { controlClasses } from "@/components/ui/control-classes";
 import type { FieldErrors } from "@/lib/abm/fields";
 import { cn } from "@/lib/cn";
 import { displayDate, displayMonth, type DateRange } from "@/lib/horas/dates";
-import { HORA_MESSAGES, mesFormAlCambiarFecha, mesFormInicial, TAREA_MAX, validateHora } from "@/lib/horas/rules";
+import { aniosMesAFacturar, HORA_MESSAGES, MESES, mesFormAlCambiarFecha, mesFormInicial, partesMes, TAREA_MAX, unirMes, validateHora } from "@/lib/horas/rules";
 import { formatHours, parseTime, recordHours } from "@/lib/horas/time";
 import type { HoraAdminDTO, HorasAdminData, HorasOptions } from "@/lib/horas/types";
 
@@ -45,9 +45,18 @@ interface FormState {
   desde: string;
   hasta: string;
   facturable: boolean;
-  /** "YYYY-MM" (input month) o "". */
-  mesAFacturar: string;
+  /** Mes a facturar en dos selects: mes "01".."12" y año "AAAA" (cualquiera puede estar vacío). */
+  mesNum: string;
+  mesAnio: string;
 }
+
+const MES_OPTIONS = MESES.map((label, i) => ({ value: String(i + 1).padStart(2, "0"), label }));
+/** Lo que se manda a la API: el formulario con Mes a facturar "YYYY-MM" ("" si falta mes o año). */
+const payload = ({ mesNum, mesAnio, ...rest }: FormState) => ({ ...rest, mesAFacturar: unirMes(mesAnio, mesNum) });
+const conMes = (mes: string) => {
+  const p = partesMes(mes);
+  return { mesNum: p.mes, mesAnio: p.anio };
+};
 
 const proyectoLabel = (p: { codigo: string; estado: string | null }) => (p.estado === "Cerrado" ? `${p.codigo} · Cerrado` : p.codigo);
 
@@ -93,7 +102,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
     setFormError(null);
     setConfirmDelete(false);
     if (target.mode === "create") {
-      setForm({ colaborador: "", proyecto: "", fecha: today, tarea: "", desde: "", hasta: "", facturable: true, mesAFacturar: mesFormInicial(null, today) });
+      setForm({ colaborador: "", proyecto: "", fecha: today, tarea: "", desde: "", hasta: "", facturable: true, ...conMes(mesFormInicial(null, today)) });
       setMesSigueFecha(true);
     } else {
       const r = target.record;
@@ -105,7 +114,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
         desde: r.desde,
         hasta: r.hasta,
         facturable: r.facturable,
-        mesAFacturar: mesFormInicial(r.mesAFacturar, r.fecha),
+        ...conMes(mesFormInicial(r.mesAFacturar, r.fecha)),
       });
       setMesSigueFecha(false);
     }
@@ -120,7 +129,8 @@ export function HorasManager({ today, options, initial }: { today: string; optio
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!editing || !form) return;
-    const { errors: local } = validateHora({ ...form }, "admin");
+    const body = payload(form);
+    const { errors: local } = validateHora(body, "admin");
     if (Object.keys(local).length > 0) {
       setErrors(local);
       setFormError(HORA_MESSAGES.validacion);
@@ -128,7 +138,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
     }
     setSaving(true);
     const res =
-      editing.mode === "create" ? await callApi("POST", "/api/admin/horas", form) : await callApi("PATCH", `/api/admin/horas/${editing.record.id}`, form);
+      editing.mode === "create" ? await callApi("POST", "/api/admin/horas", body) : await callApi("PATCH", `/api/admin/horas/${editing.record.id}`, body);
     setSaving(false);
     if (!res.ok) {
       setErrors(res.fieldErrors ?? {});
@@ -158,10 +168,12 @@ export function HorasManager({ today, options, initial }: { today: string; optio
     .filter((u) => u.activo || u.id === keepColaborador)
     .map((u) => ({ value: u.id, label: u.activo ? u.nombre : `${u.nombre} · Inactivo` }));
   const set = <K extends keyof FormState>(key: K) => (value: FormState[K]) => setForm((f) => (f ? { ...f, [key]: value } : f));
-  const setFecha = (fecha: string) => setForm((f) => (f ? { ...f, fecha, mesAFacturar: mesFormAlCambiarFecha(f.mesAFacturar, fecha, mesSigueFecha) } : f));
-  const setMes = (mes: string) => {
+  const setFecha = (fecha: string) =>
+    setForm((f) => (f ? { ...f, fecha, ...(mesSigueFecha ? conMes(mesFormAlCambiarFecha(unirMes(f.mesAnio, f.mesNum), fecha, true)) : {}) } : f));
+  /** Cambiar el mes o el año a mano deja de seguir a la Fecha. */
+  const setMesParte = (key: "mesNum" | "mesAnio") => (value: string) => {
     setMesSigueFecha(false);
-    set("mesAFacturar")(mes);
+    set(key)(value);
   };
   const live = form ? recordHours(parseTime(form.desde), parseTime(form.hasta)) : 0;
 
@@ -227,7 +239,18 @@ export function HorasManager({ today, options, initial }: { today: string; optio
                   />
                 </FormField>
                 <FormField label="Mes a facturar" required error={errors.mesAFacturar} hint={editing.mode === "create" ? "Por defecto, el mes de la Fecha." : undefined}>
-                  <Input type="month" value={form.mesAFacturar} onChange={(e) => setMes(e.target.value)} disabled={saving} placeholder="AAAA-MM" />
+                  <div className="grid grid-cols-[3fr_2fr] gap-2">
+                    <Select value={form.mesNum} onChange={(e) => setMesParte("mesNum")(e.target.value)} placeholder="Mes" options={MES_OPTIONS} disabled={saving} aria-label="Mes a facturar: mes" />
+                    <Select
+                      id="horas-mes-a-facturar-anio"
+                      value={form.mesAnio}
+                      onChange={(e) => setMesParte("mesAnio")(e.target.value)}
+                      placeholder="Año"
+                      options={aniosMesAFacturar(form.mesAnio).map((y) => ({ value: y, label: y }))}
+                      disabled={saving}
+                      aria-label="Mes a facturar: año"
+                    />
+                  </div>
                 </FormField>
                 <div className="flex items-end pb-2">
                   <Checkbox label="Facturable" checked={form.facturable} onChange={(e) => set("facturable")(e.target.checked)} disabled={saving} />

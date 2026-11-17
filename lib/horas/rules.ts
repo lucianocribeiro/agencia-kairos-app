@@ -57,8 +57,31 @@ export function mesDeFecha(fecha: string): string | null {
   return isIsoDate(fecha) ? `${fecha.slice(0, 7)}-01` : null;
 }
 
+/** Selects de Mes a facturar (formulario de Admin). */
+export const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"] as const;
+/** Años del select: 2000–2099, el mismo rango que los reportes y la Proforma. */
+export const ANIO_MES_MIN = 2000;
+export const ANIO_MES_MAX = 2099;
+
+/** "YYYY-MM" → { anio: "YYYY", mes: "MM" }; "" → los dos vacíos. */
+export function partesMes(value: string): { anio: string; mes: string } {
+  const m = /^(\d{4})-(\d{2})$/.exec(value);
+  return m ? { anio: m[1], mes: m[2] } : { anio: "", mes: "" };
+}
+
+/** { anio, mes } → "YYYY-MM"; "" si falta alguno (el guardado pide el mes a facturar). */
+export function unirMes(anio: string, mes: string): string {
+  return anio && mes ? `${anio}-${mes}` : "";
+}
+
+/** Opciones del select de Año: 2000–2099, más el año guardado si quedó fuera (legacy). */
+export function aniosMesAFacturar(actual: string): string[] {
+  const out = Array.from({ length: ANIO_MES_MAX - ANIO_MES_MIN + 1 }, (_, i) => String(ANIO_MES_MIN + i));
+  return /^\d{4}$/.test(actual) && !out.includes(actual) ? [actual, ...out].sort() : out;
+}
+
 /**
- * Formulario de Admin: valor inicial del Mes a facturar ("YYYY-MM" del input month).
+ * Formulario de Admin: valor inicial del Mes a facturar ("YYYY-MM"; los selects lo parten con `partesMes`).
  * Edición: el guardado; si está vacío (legacy), el mes de la Fecha. Alta: el mes de la Fecha.
  */
 export function mesFormInicial(guardado: string | null, fecha: string): string {

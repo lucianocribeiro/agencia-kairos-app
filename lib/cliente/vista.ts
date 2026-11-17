@@ -74,15 +74,16 @@ export function vistaCliente(d: ClienteHorasData): Vista {
   };
 }
 
+/** Código de proyecto para un nombre de archivo: sin tildes, solo letras, dígitos y guiones. */
+export const codigoParaArchivo = (codigo: string): string =>
+  codigo
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
 /** «Horas_<Código o Proyectos>_<AAAA-MM-DD>_<AAAA-MM-DD>.xlsx» (Código con letras, dígitos y guiones). */
 export function nombreArchivoCliente(d: ClienteHorasData): string {
-  const codigo =
-    d.rows.length === 1
-      ? d.rows[0].proyecto.codigo
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .replace(/[^A-Za-z0-9]+/g, "-")
-          .replace(/^-+|-+$/g, "")
-      : "";
+  const codigo = d.rows.length === 1 ? codigoParaArchivo(d.rows[0].proyecto.codigo) : "";
   return `Horas_${codigo || "Proyectos"}_${d.range.desde}_${d.range.hasta}.xlsx`;
 }

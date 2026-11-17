@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 
-import { Button } from "./button";
+import { Button, type ButtonVariant } from "./button";
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -17,6 +17,8 @@ export interface ConfirmDialogProps {
   onCancel: () => void;
   /** false: el botón de confirmar no va en rojo (una acción que no borra, p. ej. «Pasar a cliente»). */
   destructive?: boolean;
+  /** Estilo del botón de confirmar (p. ej. "primary" en «Pasar a cliente»). Sin esto: secundario (rojo si `destructive`). */
+  confirmVariant?: ButtonVariant;
   /** Dónde arranca el foco (p. ej. un campo del diálogo). Por defecto, Cancelar. */
   initialFocus?: RefObject<HTMLElement | null>;
 }
@@ -26,7 +28,7 @@ export interface ConfirmDialogProps {
  * Cancelar (la opción segura) o en `initialFocus`, Escape cancela y el foco no
  * sale del diálogo (botones y campos).
  */
-export function ConfirmDialog({ open, title, children, confirmLabel, cancelLabel = "Cancelar", busy = false, busyLabel = "Procesando…", onConfirm, onCancel, destructive = true, initialFocus }: ConfirmDialogProps) {
+export function ConfirmDialog({ open, title, children, confirmLabel, cancelLabel = "Cancelar", busy = false, busyLabel = "Procesando…", onConfirm, onCancel, destructive = true, confirmVariant, initialFocus }: ConfirmDialogProps) {
   const titleId = useId();
   const bodyId = useId();
   const panel = useRef<HTMLDivElement>(null);
@@ -82,7 +84,7 @@ export function ConfirmDialog({ open, title, children, confirmLabel, cancelLabel
           <Button ref={cancel} variant="secondary" onClick={onCancel} disabled={busy}>
             {cancelLabel}
           </Button>
-          <Button variant="secondary" onClick={onConfirm} disabled={busy} className={destructive ? "text-danger" : undefined}>
+          <Button variant={confirmVariant ?? "secondary"} onClick={onConfirm} disabled={busy} className={!confirmVariant && destructive ? "text-danger" : undefined}>
             {busy ? busyLabel : confirmLabel}
           </Button>
         </div>

@@ -125,6 +125,10 @@ describe("Leads · diálogos", () => {
   it("Eliminar: diálogo de la app con el texto exacto; confirma con DELETE", async () => {
     await click(boton("Eliminar QA Convertido")!);
     expect(dialog()!.textContent).toContain("¿Eliminar este lead? No se puede deshacer.");
+    // Sin cambios (CC-F4-06-FIX): «Sí, eliminar» neutro (secundario, sin acento ni rojo) y sin campos.
+    expect(dialogButton("Sí, eliminar").className).toContain("bg-card");
+    expect(dialogButton("Sí, eliminar").className).not.toMatch(/bg-accent|text-danger/);
+    expect(dialog()!.querySelectorAll("input")).toHaveLength(0);
     expect(LEAD_MESSAGES.eliminarConfirmacion).toBe("¿Eliminar este lead? No se puede deshacer.");
     await click(dialogButton("Sí, eliminar"));
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/leads/recLLLLLLLLLLLLL2", expect.objectContaining({ method: "DELETE" }));
@@ -144,8 +148,17 @@ describe("Leads · diálogos", () => {
     const d = dialog()!;
     expect(d.textContent).toContain("Este lead pasa al módulo Clientes y no se puede volver a Lead. ¿Querés continuar?");
     expect(LEAD_MESSAGES.convertirConfirmacion).toBe("Este lead pasa al módulo Clientes y no se puede volver a Lead. ¿Querés continuar?");
-    expect(d.textContent).toContain("QA Abierto");
-    const sigla = d.querySelector<HTMLInputElement>("input")!;
+    // Nombre: copiado del lead, deshabilitado como los campos bloqueados de Maestros (CC-F4-06-FIX).
+    const nombreInput = d.querySelector<HTMLInputElement>("input[disabled]")!;
+    expect(nombreInput.value).toBe("QA Abierto");
+    expect(nombreInput.readOnly).toBe(true);
+    expect(nombreInput.className).toContain("disabled:opacity-50");
+    expect(d.querySelectorAll("input")).toHaveLength(2);
+    // Confirmar con el estilo primario (acento); Cancelar sigue secundario.
+    expect(dialogButton("Pasar a cliente").className).toContain("bg-accent");
+    expect(dialogButton("Pasar a cliente").className).not.toContain("text-danger");
+    expect(dialogButton("Cancelar").className).not.toContain("bg-accent");
+    const sigla = d.querySelector<HTMLInputElement>("input:not([disabled])")!;
     expect(document.activeElement).toBe(sigla);
     await click(dialogButton("Pasar a cliente"));
     expect(d.textContent).toContain("Ingresá la sigla del cliente.");
@@ -163,7 +176,7 @@ describe("Leads · diálogos", () => {
 
   it("Pasar a cliente: los errores del servidor vuelven a los campos del diálogo (Sigla tomada, Nombre tomado)", async () => {
     await click(boton("Pasar a cliente QA Abierto")!);
-    const sigla = dialog()!.querySelector<HTMLInputElement>("input")!;
+    const sigla = dialog()!.querySelector<HTMLInputElement>("input:not([disabled])")!;
     await act(async () => type(sigla, "QX"));
     respond(409, { error: "Revisá los campos marcados.", fieldErrors: { sigla: "Ya existe otro registro con este sigla." } });
     await click(dialogButton("Pasar a cliente"));

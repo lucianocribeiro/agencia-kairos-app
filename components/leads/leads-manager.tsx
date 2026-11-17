@@ -293,6 +293,7 @@ export function LeadsManager({ leads }: { leads: LeadDTO[] }) {
         busy={busy}
         busyLabel="Pasando…"
         destructive={false}
+        confirmVariant="primary"
         initialFocus={siglaRef}
         onConfirm={doConvertir}
         onCancel={() => setConvertir(null)}
@@ -300,16 +301,9 @@ export function LeadsManager({ leads }: { leads: LeadDTO[] }) {
         <p>{LEAD_MESSAGES.convertirConfirmacion}</p>
         <div className="mt-4 flex flex-col gap-3 text-left">
           {dialogErrors.general && <InlineMessage tone="danger">{dialogErrors.general}</InlineMessage>}
-          <div className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium text-text">Nombre</span>
-            <p className="min-h-10 rounded-md border border-line bg-bg px-3 py-2 text-sm text-text">{convertir ? nombre(convertir) : ""}</p>
-            <p className="text-xs text-muted">Se copia del lead, igual que Contacto, Teléfono, Mail y Comentarios.</p>
-            {dialogErrors.nombre && (
-              <p role="alert" className="text-xs text-danger">
-                {dialogErrors.nombre}
-              </p>
-            )}
-          </div>
+          <FormField label="Nombre" error={dialogErrors.nombre} hint="Se copia del lead, igual que Contacto, Teléfono, Mail y Comentarios.">
+            <Input value={convertir ? nombre(convertir) : ""} disabled readOnly />
+          </FormField>
           <FormField label="Sigla" required error={dialogErrors.sigla} hint="2 letras. Única.">
             <Input
               ref={siglaRef}

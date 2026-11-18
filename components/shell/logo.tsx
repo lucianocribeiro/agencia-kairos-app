@@ -22,6 +22,9 @@ export const LOGO_SIZES = {
  * "Kairos" en el mismo espacio (contenedor de tamaño fijo: no hay layout shift).
  * next/image vuelve a disparar `onError` después de hidratar si la imagen falló antes.
  *
+ * Modo claro (CC-F4-09): el PNG es de un solo color (blanco sobre transparente), así que en
+ * claro se muestra negro con `brightness(0)` (solo CSS; el archivo no cambia).
+ *
  * `eager`: para el shell (siempre arriba de todo). En Next 16 `priority` está
  * deprecado; se usa `loading="eager"` + `fetchPriority="high"`, que es lo que
  * recomienda la doc cuando hay más de una instancia (sidebar y header mobile).
@@ -39,7 +42,7 @@ export function Logo({ compact = false, eager = false, className }: { compact?: 
       )}
     >
       {failed ? (
-        <span className={cn("font-semibold tracking-tight text-white", compact ? "text-[15px]" : "text-[28px]")}>
+        <span className={cn("font-semibold tracking-tight text-strong", compact ? "text-[15px]" : "text-[28px]")}>
           Kairos
         </span>
       ) : (
@@ -49,7 +52,7 @@ export function Logo({ compact = false, eager = false, className }: { compact?: 
           width={size.width}
           height={size.height}
           {...(eager ? { loading: "eager" as const, fetchPriority: "high" as const } : {})}
-          className="h-auto max-h-full w-auto max-w-full object-contain"
+          className="h-auto max-h-full w-auto max-w-full object-contain light:brightness-0"
           onError={() => setFailed(true)}
         />
       )}

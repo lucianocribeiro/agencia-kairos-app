@@ -10,6 +10,7 @@ import { cn } from "@/lib/cn";
 import type { Role } from "@/lib/roles";
 import { Logo } from "./logo";
 import { SidebarNav } from "./sidebar-nav";
+import { ThemeToggle } from "./theme-toggle";
 import { useSidebarCollapsed } from "./use-sidebar-collapsed";
 
 const iconButton =
@@ -20,7 +21,7 @@ const iconButton =
  *
  * - md+: sidebar fijo, colapsable (íconos solos) con el botón hamburguesa.
  *   El estado se guarda en localStorage.
- * - Header: nombre del usuario, "Cambiar contraseña" y "Cerrar sesión".
+ * - Header: nombre del usuario, modo claro/oscuro, "Cambiar contraseña" y "Cerrar sesión".
  * - < md: hamburguesa en el header; el menú es un drawer con backdrop
  *   que se cierra al navegar, con Escape o tocando el fondo.
  */
@@ -147,6 +148,7 @@ export function AppShell({ user, children }: { user: ShellUser; children: ReactN
 
           <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
             <span className="hidden max-w-56 truncate text-sm font-medium text-text sm:inline">{user.nombre}</span>
+            <ThemeToggle />
             <Link href="/cambiar-password" aria-label="Cambiar contraseña" className={headerAction}>
               <KeyRound aria-hidden="true" className="size-4" />
               <span className="hidden lg:inline">Cambiar contraseña</span>

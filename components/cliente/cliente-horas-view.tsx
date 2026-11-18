@@ -53,7 +53,7 @@ export function ClienteHorasView({ today, initial, aviso }: { today: string; ini
   if (data.proyectos.length === 0) {
     return (
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">{VISTA_CLIENTE_TITULO}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">{VISTA_CLIENTE_TITULO}</h1>
         {aviso && aviso !== CLIENTE_MESSAGES.sinProyectos && <InlineMessage tone={aviso === CLIENTE_MESSAGES.noAsignado ? "info" : "danger"}>{aviso}</InlineMessage>}
         <InlineMessage tone="info">{CLIENTE_MESSAGES.sinProyectos}</InlineMessage>
       </div>
@@ -63,7 +63,7 @@ export function ClienteHorasView({ today, initial, aviso }: { today: string; ini
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">{VISTA_CLIENTE_TITULO}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">{VISTA_CLIENTE_TITULO}</h1>
         <a href={`/api/cliente/horas/excel${filtros(data)}`} className={buttonClasses("primary", "md", "gap-2")} download aria-disabled={loading}>
           <Download aria-hidden="true" className="size-4" />
           Descargar Excel
@@ -96,7 +96,7 @@ export function ClienteHorasView({ today, initial, aviso }: { today: string; ini
 
       <p className="text-sm text-muted">
         {displayDate(data.range.desde)} al {displayDate(data.range.hasta)} · Solo horas facturables · Estado: {data.estado ?? "Todos"} · Total{" "}
-        <span className="font-semibold text-white tabular-nums">{formatHours(data.total)}</span> h
+        <span className="font-semibold text-strong tabular-nums">{formatHours(data.total)}</span> h
       </p>
       {error && <InlineMessage tone={error === CLIENTE_MESSAGES.noAsignado ? "info" : "danger"}>{error}</InlineMessage>}
 

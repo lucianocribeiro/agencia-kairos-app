@@ -1,9 +1,16 @@
 @import "tailwindcss";
 
+/* Modo claro (CC-F4-09): `light:` aplica cuando <html> tiene la clase `light`. */
+@custom-variant light (&:where(.light, .light *));
+
 /*
  * Design tokens Kairos.
  * Se borra la paleta por defecto de Tailwind (`--color-*: initial`) para que
  * no exista ningún azul (ni ningún otro color fuera de estos tokens).
+ *
+ * Dos sets con los MISMOS nombres (CC-F4-09): este (oscuro, por defecto) y
+ * `html.light` más abajo. Un token nuevo o cambiado va en los dos
+ * (test/theme-tokens.test.ts).
  */
 @theme {
   --color-*: initial;
@@ -13,8 +20,13 @@
   --color-card: #111827;
   --color-line: #1f2937;
   --color-text: #d1d5db;
+  /* Títulos y cifras destacadas (antes `text-white`). */
+  --color-strong: #ffffff;
   --color-muted: #9ca3af;
+  /* Accent para rellenos (botones, ítem activo, foco, barras). */
   --color-accent: #0de8e1;
+  /* Accent cuando es TEXTO (links, totales): en claro, un tono más oscuro con AA. */
+  --color-accent-text: #0de8e1;
   --color-accent-ink: #000000;
   /* Solo para errores de validación y mensajes de éxito. */
   --color-danger: #c27a7a;
@@ -27,6 +39,26 @@
 
 :root {
   color-scheme: dark;
+}
+
+/* Set claro: mismos nombres que @theme. */
+html.light {
+  color-scheme: light;
+
+  --color-bg: #ffffff;
+  --color-surface: #f9fafb;
+  --color-card: #f3f4f6;
+  --color-line: #d1d5db;
+  --color-text: #111827;
+  --color-strong: #030712;
+  --color-muted: #4b5563;
+  --color-accent: #0de8e1;
+  --color-accent-text: #047572;
+  --color-accent-ink: #000000;
+  --color-danger: #a64545;
+  --color-success: #3d7a4c;
+  --color-white: #ffffff;
+  --color-black: #000000;
 }
 
 html,
@@ -46,7 +78,7 @@ a {
 
 ::selection {
   background-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
-  color: var(--color-white);
+  color: var(--color-strong);
 }
 
 input,
@@ -56,7 +88,7 @@ textarea {
 }
 
 /* Fecha y hora nativos (los meses son selects: CC-F4-07): esquema oscuro (el selector del navegador no sale
-   en azul claro) y el ícono del calendario/reloj en gris claro. */
+   en azul claro) y el ícono del calendario/reloj en gris claro. En modo claro, esquema claro e ícono gris oscuro. */
 input[type="date"],
 input[type="time"] {
   color-scheme: dark;
@@ -67,6 +99,16 @@ input[type="date"]::-webkit-calendar-picker-indicator,
 input[type="time"]::-webkit-calendar-picker-indicator {
   filter: invert(0.75);
   cursor: pointer;
+}
+
+html.light input[type="date"],
+html.light input[type="time"] {
+  color-scheme: light;
+}
+
+html.light input[type="date"]::-webkit-calendar-picker-indicator,
+html.light input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.3);
 }
 
 input[type="date"]::-webkit-datetime-edit-fields-wrapper:focus-within,
@@ -80,7 +122,7 @@ input[type="date"]::-webkit-datetime-edit-year-field:focus,
 input[type="time"]::-webkit-datetime-edit-hour-field:focus,
 input[type="time"]::-webkit-datetime-edit-minute-field:focus {
   background-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
-  color: var(--color-white);
+  color: var(--color-strong);
 }
 
 input:-webkit-autofill,

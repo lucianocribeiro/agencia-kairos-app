@@ -53,7 +53,7 @@ const pesos = (cents: number) => formatNumber(cents / 100, { decimals: 2 });
 const importe = (v: unknown) => (typeof v === "number" ? formatNumber(v, { decimals: 2 }) : "");
 
 const ESTADO_CLASS: Record<FilaBase["estado"], string> = {
-  nueva: "text-accent",
+  nueva: "text-accent-text",
   ya_importada: "text-muted",
   duplicada: "text-muted",
   error: "text-danger",
@@ -148,7 +148,7 @@ export function ImportManager({ kind }: { kind: Kind }) {
   return (
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
       <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">Importar {label.titulo.toLowerCase()}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Importar {label.titulo.toLowerCase()}</h1>
         <p className="text-sm text-muted">Subí el .xlsx de «{label.archivo}» descargado de ARCA (hasta 4 MB y 1.000 comprobantes).</p>
       </header>
 
@@ -162,11 +162,11 @@ export function ImportManager({ kind }: { kind: Kind }) {
           <CardContent className="flex flex-col gap-4">
             <ul className="grid gap-2 text-sm sm:grid-cols-2">
               <li>
-                Importadas: <strong className="text-white tabular-nums">{result.importadas}</strong>
+                Importadas: <strong className="text-strong tabular-nums">{result.importadas}</strong>
               </li>
               <li>
                 Omitidas por duplicado:{" "}
-                <strong className="text-white tabular-nums">
+                <strong className="text-strong tabular-nums">
                   {result.omitidas.yaImportadas + result.omitidas.duplicadasEnArchivo + result.omitidas.enParalelo}
                 </strong>{" "}
                 <span className="text-muted">
@@ -175,11 +175,11 @@ export function ImportManager({ kind }: { kind: Kind }) {
                 </span>
               </li>
               <li>
-                Con error: <strong className="text-white tabular-nums">{result.conError.length}</strong>
+                Con error: <strong className="text-strong tabular-nums">{result.conError.length}</strong>
               </li>
               {kind === "compras" && (
                 <li>
-                  Proveedores creados: <strong className="text-white tabular-nums">{result.proveedoresCreados.length}</strong>
+                  Proveedores creados: <strong className="text-strong tabular-nums">{result.proveedoresCreados.length}</strong>
                 </li>
               )}
             </ul>
@@ -233,7 +233,7 @@ export function ImportManager({ kind }: { kind: Kind }) {
       {preview && ctx && (
         <section aria-labelledby="vista-previa" className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 id="vista-previa" className="text-lg font-semibold text-white">
+            <h2 id="vista-previa" className="text-lg font-semibold text-strong">
               Vista previa
             </h2>
             <p className="text-sm text-muted" aria-live="polite">
@@ -317,7 +317,7 @@ export function ImportManager({ kind }: { kind: Kind }) {
                           : f.proveedor && (
                               <>
                                 {f.proveedor.nombre}
-                                {!f.proveedor.id && <span className="block text-xs text-accent">Proveedor nuevo</span>}
+                                {!f.proveedor.id && <span className="block text-xs text-accent-text">Proveedor nuevo</span>}
                               </>
                             )}
                       </TableCell>

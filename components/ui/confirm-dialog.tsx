@@ -72,7 +72,7 @@ export function ConfirmDialog({ open, title, children, confirmLabel, cancelLabel
         aria-describedby={children ? bodyId : undefined}
         className="w-full max-w-md rounded-lg border border-line bg-card p-6 shadow-xl"
       >
-        <h2 id={titleId} className="text-lg font-semibold text-white">
+        <h2 id={titleId} className="text-lg font-semibold text-strong">
           {title}
         </h2>
         {children && (

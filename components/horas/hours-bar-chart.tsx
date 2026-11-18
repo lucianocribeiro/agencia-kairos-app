@@ -74,12 +74,12 @@ export function HoursBarChart({ data, title }: { data: readonly BarDatum[]; titl
                 onMouseLeave={() => setActive(null)}
                 onFocus={() => setActive(d.key)}
                 onBlur={() => setActive(null)}
-                className="outline-none focus-visible:stroke-white focus-visible:[stroke-width:2]"
+                className="outline-none focus-visible:stroke-strong focus-visible:[stroke-width:2]"
               >
                 <title>{name}</title>
               </rect>
               {isActive && (
-                <text x={cx} y={y(d.value) - 6} textAnchor="middle" fontSize="11" fontWeight="600" fill="var(--color-white)" aria-hidden="true">
+                <text x={cx} y={y(d.value) - 6} textAnchor="middle" fontSize="11" fontWeight="600" fill="var(--color-strong)" aria-hidden="true">
                   {formatHours(d.value)}
                 </text>
               )}

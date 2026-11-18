@@ -42,7 +42,7 @@ export function PeriodFilter({
             aria-pressed={active === s}
             disabled={disabled}
             onClick={() => onChange(shortcutRange(s, today))}
-            className={cn(buttonClasses(active === s ? "secondary" : "ghost", "sm"), active === s && "text-accent")}
+            className={cn(buttonClasses(active === s ? "secondary" : "ghost", "sm"), active === s && "text-accent-text")}
           >
             {PERIOD_SHORTCUTS[s]}
           </button>

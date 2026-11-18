@@ -211,7 +211,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">Horas</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Horas</h1>
         {!editing && (
           <Button onClick={() => open({ mode: "create" })}>
             <Plus aria-hidden="true" className="size-4" />
@@ -426,7 +426,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
             <th scope="row" colSpan={8} className="px-4 py-3 text-right font-medium text-muted">
               Total
             </th>
-            <td className="px-4 py-3 text-right font-semibold text-white tabular-nums">{formatHours(list.total)}</td>
+            <td className="px-4 py-3 text-right font-semibold text-strong tabular-nums">{formatHours(list.total)}</td>
             <td colSpan={5} />
           </tr>
         </tfoot>

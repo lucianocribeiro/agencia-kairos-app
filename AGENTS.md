@@ -208,6 +208,12 @@ Es un chequeo no atómico con compensación. Queda una ventana chica en la que u
 - Toggle `ThemeToggle` (`components/shell/theme-toggle.tsx`): header del shell (todos los roles) y layout `(auth)` (login, cambiar contraseña). Nombre accesible «Cambiar a modo claro» / «Cambiar a modo oscuro».
 - PDF de la Proforma y Excel: sin cambios (no dependen del tema).
 
+## Indicador de carga (CC-F4-13)
+
+- `components/shell/cargando.tsx` (`Cargando`): la «K» de Kairos (`public/klogo.png`) girando en el área de contenido mientras carga una página; sidebar y header quedan visibles. Es el fallback del `<Suspense>` de `<Guarded>` (lo que se ve al navegar con cacheComponents/PPR) y de `app/(admin|empleado|cliente)/loading.tsx` (navegaciones antes de que termine el prefetch). No va en (auth): ni login ni cambiar contraseña (que sigue con `PageSkeleton`).
+- Aparece recién 300 ms después de MOSTRARSE, solo con CSS: animación `cargando-aparece` (app/globals.css) con 300 ms de demora y relleno `both`: durante la demora está `visibility: hidden` + opacidad 0 (ni se ve ni lo anuncian los lectores de pantalla), después opacidad 0 → 1 en 150 ms. **No usar un timer de JS**: con cacheComponents, Next monta fallbacks dentro de rutas ocultas con `<Activity>` antes de mostrarlas, y un timer contaría desde ese montaje; la animación CSS se reinicia cada vez que el elemento pasa de display:none a visible (verificado en el smoke). Con 0 s de duración Chrome no aplica el relleno hacia atrás: dejar los 150 ms. Gira una vuelta cada 1,2 s (`animate-[spin_1.2s_linear_infinite]`), 96×90 px, centrado en el área visible (`min-h-[calc(100dvh-7.5rem)]`), y con prefers-reduced-motion queda quieta (`motion-reduce:animate-none`). `role="status"` con «Cargando…» en `sr-only`; la imagen es decorativa.
+- El PNG es una K negra sobre fondo blanco opaco (sin transparencia): se muestra tal cual en los dos modos (no lleva `light:brightness-0` como el logo del header). No editar el archivo.
+
 ## Sincronizar con ARCA (CC-F5-03)
 
 - Segundo origen de la importación de Ventas y Compras: «Mis Comprobantes» vía Afip SDK (automatización `mis-comprobantes`; Ventas → `t = "E"`, Compras → `t = "R"`). El .xlsx sigue igual. Página `/ventas|compras/importar` (`components/importar/server/import-page.tsx`); `?origen=arca` abre el diálogo.

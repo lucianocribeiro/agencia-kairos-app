@@ -34,9 +34,15 @@ export interface Upload {
  * Valida y lee el pedido. Defensa extra contra CSRF (la cookie ya es SameSite=Lax):
  * si viene `Origin`, tiene que ser el mismo host.
  */
-export async function readUpload(request: NextRequest): Promise<Upload | Response> {
+/** Si viene `Origin`, tiene que ser el mismo host (también lo usan las rutas de ARCA). null = OK. */
+export function rejectCrossOrigin(request: NextRequest): Response | null {
   const origin = request.headers.get("origin");
-  if (origin && origin !== request.nextUrl.origin) return err(403, UPLOAD_MESSAGES.origen);
+  return origin && origin !== request.nextUrl.origin ? err(403, UPLOAD_MESSAGES.origen) : null;
+}
+
+export async function readUpload(request: NextRequest): Promise<Upload | Response> {
+  const cross = rejectCrossOrigin(request);
+  if (cross) return cross;
   const type = request.headers.get("content-type")?.toLowerCase() ?? "";
   if (!type.startsWith("multipart/form-data")) return err(415, UPLOAD_MESSAGES.formato);
   const length = Number(request.headers.get("content-length") ?? "0");

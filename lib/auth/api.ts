@@ -4,6 +4,7 @@ import { unstable_rethrow } from "next/navigation";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { AirtableError, summarizeError } from "@/lib/airtable/errors";
+import { AfipSdkError, afipSdkErrorResponse } from "@/lib/arca/server/afipsdk";
 import { runInApiContext } from "./api-context";
 import { AuthError, requireAdmin, requireCliente, requireUser } from "./guards";
 import { clearSessionCookie, type SessionUser } from "./session";
@@ -34,6 +35,8 @@ type GuardedHandler<C> = (request: NextRequest, user: SessionUser, context: C) =
  * - Los guards responden 401/403 en JSON (y borran la cookie si era inválida).
  * - AirtableError: not_found → 404; 429/5xx (después de los reintentos) y
  *   errores de red → 503; el resto (incluido 422) → 500 genérico.
+ * - AfipSdkError (CC-F5-03): 401/403 de Afip SDK → 503 «no está configurada correctamente»;
+ *   400 → 400 con el mensaje (limpio) de Afip SDK; 429/5xx/timeout → 503.
  * - Cualquier otro error → 500 genérico, sin detalles internos.
  * Los logs solo llevan código/status/tipo: nunca bodies, mensajes de la API ni el token.
  * Las rutas públicas de auth lo usan directo; el resto usa adminRoute / userRoute / clienteRoute.
@@ -62,6 +65,12 @@ async function handle<C>(handler: Handler<C>, request: NextRequest, context: C):
       if (err.code === "not_found") return NextResponse.json({ error: API_MESSAGES.noEncontrado }, { status: 404 });
       if (err.retryable) return NextResponse.json({ error: API_MESSAGES.noDisponible }, { status: 503 });
       return NextResponse.json({ error: API_MESSAGES.error }, { status: 500 });
+    }
+    if (err instanceof AfipSdkError) {
+      // Solo tipo y status: nunca bodies ni el mensaje de Afip SDK (CC-F5-03).
+      console.error("[api] Error de Afip SDK", err.toJSON());
+      const { status, error } = afipSdkErrorResponse(err);
+      return NextResponse.json({ error }, { status });
     }
     console.error("[api] Error no controlado", describeError(err));
     return NextResponse.json({ error: API_MESSAGES.error }, { status: 500 });

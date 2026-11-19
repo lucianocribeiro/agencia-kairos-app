@@ -10,7 +10,7 @@ import type { ServiceResult } from "@/lib/abm/types";
 import { readFirstSheet, XlsxError } from "@/lib/xlsx/read";
 import { COLUMNS, type Kind } from "../columns";
 import { evaluar, type Evaluacion } from "../rules";
-import { buildRows, findHeader, proveedoresNuevos, resumir } from "../rows";
+import { buildRows, findHeader, proveedoresNuevos, resumir, type Cell, type Source } from "../rows";
 import { EDICION_KEYS, OBSERVACIONES_MAX, type Contexto, type Ediciones, type FilaBase, type Preview, type ResultadoImportacion } from "../types";
 import { loadImportContext } from "./context";
 
@@ -21,7 +21,8 @@ import { loadImportContext } from "./context";
  */
 
 export const IMPORT_MESSAGES = {
-  edicionInvalida: (fila: number, motivo: string) => `Revisá la fila ${fila}: ${motivo}`,
+  edicionInvalida: (fila: number, motivo: string, source: Source = "excel") =>
+    `Revisá ${source === "arca" ? "el comprobante" : "la fila"} ${fila}: ${motivo}`,
   edicionesFormato: "Las ediciones no tienen el formato esperado.",
   proveedorEnParalelo: (nombre: string) =>
     `Otra importación creó al mismo tiempo el proveedor «${nombre}». No se importó nada; probá de nuevo.`,
@@ -32,26 +33,43 @@ export const IMPORT_MESSAGES = {
 const fail = (status: 400 | 409 | 500 | 503, error: string): ServiceResult<never> => ({ ok: false, status, error });
 
 type Parsed = { filas: FilaBase[]; ctx: Contexto };
+type Sheet = readonly (readonly Cell[])[];
 
-/** Archivo → filas con estado y el contexto de la base. */
-async function parse(kind: Kind, file: Uint8Array): Promise<ServiceResult<Parsed>> {
-  let sheet;
+/** Archivo .xlsx → hoja (Cell[][]). */
+function readFile(file: Uint8Array): ServiceResult<Sheet> {
   try {
-    sheet = readFirstSheet(file);
+    return { ok: true, data: readFirstSheet(file) };
   } catch (err) {
     if (err instanceof XlsxError) return fail(400, err.message);
     throw err;
   }
-  const header = findHeader(kind, sheet);
+}
+
+/** Hoja (del .xlsx o armada desde ARCA) → filas con estado y el contexto de la base. */
+async function parseSheet(kind: Kind, sheet: Sheet, source: Source, invalidas?: ReadonlyMap<number, string>): Promise<ServiceResult<Parsed>> {
+  const header = findHeader(kind, sheet, source);
   if ("error" in header) return fail(400, header.error);
   const { refs, ctx } = await loadImportContext(kind);
-  const filas = buildRows(kind, sheet, header, refs);
+  const filas = buildRows(kind, sheet, header, refs, source, invalidas);
   if ("error" in filas) return fail(400, filas.error);
   return { ok: true, data: { filas, ctx } };
 }
 
+async function parse(kind: Kind, file: Uint8Array): Promise<ServiceResult<Parsed>> {
+  const sheet = readFile(file);
+  return sheet.ok ? parseSheet(kind, sheet.data, "excel") : sheet;
+}
+
 export async function previewImport(kind: Kind, file: Uint8Array): Promise<ServiceResult<Preview>> {
-  const parsed = await parse(kind, file);
+  return previewParsed(kind, await parse(kind, file));
+}
+
+/** Vista previa desde una hoja ya armada (ARCA, CC-F5-03). Mismo resultado que el .xlsx. */
+export async function previewSheet(kind: Kind, sheet: Sheet, source: Source, invalidas?: ReadonlyMap<number, string>): Promise<ServiceResult<Preview>> {
+  return previewParsed(kind, await parseSheet(kind, sheet, source, invalidas));
+}
+
+function previewParsed(kind: Kind, parsed: ServiceResult<Parsed>): ServiceResult<Preview> {
   if (!parsed.ok) return parsed;
   const { filas, ctx } = parsed.data;
   return { ok: true, data: { tipo: kind, filas, contexto: ctx, resumen: resumir(filas), proveedoresNuevos: proveedoresNuevos(filas) } };
@@ -85,7 +103,7 @@ export function validarEdicion(kind: Kind, ed: Ediciones, ctx: Contexto, proyect
 }
 
 /** Valida las ediciones (por Clave ARCA) contra el contexto. Solo cuentan las filas nuevas. */
-export function validarEdiciones(kind: Kind, raw: unknown, filas: readonly FilaBase[], ctx: Contexto): { ediciones: Map<string, Ediciones> } | { error: string } {
+export function validarEdiciones(kind: Kind, raw: unknown, filas: readonly FilaBase[], ctx: Contexto, source: Source = "excel"): { ediciones: Map<string, Ediciones> } | { error: string } {
   const out = new Map<string, Ediciones>();
   if (raw === undefined || raw === null) return { ediciones: out };
   if (typeof raw !== "object" || Array.isArray(raw)) return { error: IMPORT_MESSAGES.edicionesFormato };
@@ -100,7 +118,7 @@ export function validarEdiciones(kind: Kind, raw: unknown, filas: readonly FilaB
       ed[key as keyof Ediciones] = v.trim();
     }
     const motivo = validarEdicion(kind, ed, ctx);
-    if (motivo) return { error: IMPORT_MESSAGES.edicionInvalida(fila.fila, motivo) };
+    if (motivo) return { error: IMPORT_MESSAGES.edicionInvalida(fila.fila, motivo, source) };
     out.set(clave, ed);
   }
   return { ediciones: out };
@@ -136,10 +154,21 @@ export function camposDeFila(kind: Kind, fila: FilaBase, ed: Ediciones, ev: Eval
 }
 
 export async function confirmImport(kind: Kind, file: Uint8Array, edicionesRaw: unknown): Promise<ServiceResult<ResultadoImportacion>> {
-  const parsed = await parse(kind, file);
+  return confirmParsed(kind, await parse(kind, file), edicionesRaw, "excel");
+}
+
+/**
+ * Confirmación desde una hoja ya armada (ARCA, CC-F5-03): la misma validación de ediciones,
+ * compensación, rollback, verificaciones posteriores y puntos de falla que el .xlsx.
+ */
+export async function confirmSheet(kind: Kind, sheet: Sheet, edicionesRaw: unknown, source: Source, invalidas?: ReadonlyMap<number, string>): Promise<ServiceResult<ResultadoImportacion>> {
+  return confirmParsed(kind, await parseSheet(kind, sheet, source, invalidas), edicionesRaw, source);
+}
+
+async function confirmParsed(kind: Kind, parsed: ServiceResult<Parsed>, edicionesRaw: unknown, source: Source): Promise<ServiceResult<ResultadoImportacion>> {
   if (!parsed.ok) return parsed;
   const { filas, ctx } = parsed.data;
-  const validated = validarEdiciones(kind, edicionesRaw, filas, ctx);
+  const validated = validarEdiciones(kind, edicionesRaw, filas, ctx, source);
   if ("error" in validated) return fail(400, validated.error);
 
   const table = TABLES[kind];

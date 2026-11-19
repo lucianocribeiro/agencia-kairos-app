@@ -15,6 +15,7 @@ import { ROOT } from "./source-files";
 export function isForbidden(file: string): boolean {
   if (file.startsWith("lib/airtable/")) return true;
   if (file === "lib/env.ts") return true;
+  if (file.startsWith("lib/arca/server/")) return true;
   if (file.startsWith("lib/auth/") && file !== "lib/auth/password-policy.ts") return true;
   return false;
 }

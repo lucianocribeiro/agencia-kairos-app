@@ -150,9 +150,14 @@ export function ComprobantesManager({ kind, today, initial }: { kind: Kind; toda
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight text-strong">{label.titulo}</h1>
-        <Link href={`/${kind}/importar`} className="text-sm text-accent-text hover:underline">
-          Importar desde ARCA
-        </Link>
+        <nav aria-label={`Importar ${label.titulo.toLowerCase()}`} className="flex flex-wrap items-center gap-4">
+          <Link href={`/${kind}/importar`} className="text-sm text-accent-text hover:underline">
+            Subir Excel de ARCA
+          </Link>
+          <Link href={`/${kind}/importar?origen=arca`} className="text-sm text-accent-text hover:underline">
+            Sincronizar con ARCA
+          </Link>
+        </nav>
       </header>
 
       {editing && form && (

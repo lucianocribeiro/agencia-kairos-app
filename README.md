@@ -33,6 +33,8 @@ Todas son **solo del servidor** (ninguna lleva `NEXT_PUBLIC_`) y son obligatoria
 | `AIRTABLE_BASE_ID` | ID de la base de Airtable (empieza con `app`).                     |
 | `SESSION_SECRET`   | Secreto para firmar sesiones (mínimo 32 caracteres).               |
 | `BOOTSTRAP_ADMIN_PASSWORD` | **Solo local.** Contraseña inicial del primer Admin (`npm run bootstrap:admin`). Nunca se carga en Vercel. |
+| `AFIP_SDK_TOKEN` | **Opcional.** Token de la API de Afip SDK para «Sincronizar con ARCA». Sin él la app funciona igual y el botón queda deshabilitado. |
+| `AFIP_SDK_BASE_URL` | **Solo `next dev`.** Base URL de un stub local de Afip SDK para el smoke test (solo `http://localhost` / `127.0.0.1`). Nunca en Vercel. |
 
 Para generar `SESSION_SECRET`:
 
@@ -40,7 +42,7 @@ Para generar `SESSION_SECRET`:
 openssl rand -base64 32
 ```
 
-**En Vercel, las variables las carga Luciano** en la configuración del proyecto (Production y Preview): `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID` y `SESSION_SECRET`. `BOOTSTRAP_ADMIN_PASSWORD` no va en Vercel.
+**En Vercel, las variables las carga Luciano** en la configuración del proyecto (Production y Preview): `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID` y `SESSION_SECRET`. `BOOTSTRAP_ADMIN_PASSWORD` no va en Vercel. `AFIP_SDK_TOKEN` va solo donde se quiera sincronizar con ARCA (Production).
 
 El token de Airtable necesita `data.records:read` y `data.records:write`; para correr `npm run setup:intentos-login` también `schema.bases:read` y `schema.bases:write`. No se suben al repo: `.env.example` va sin valores y `.env*` está en `.gitignore`.
 
@@ -56,6 +58,7 @@ El token de Airtable necesita `data.records:read` y `data.records:write`; para c
 | `npm test`              | Tests unitarios (Vitest).                                                |
 | `npm run check:bundle`  | Después del build, busca en `.next/static` los nombres y valores de los secretos. Falla si aparece alguno. |
 | `npm run setup:intentos-login` | Verifica la tabla "Intentos de login" contra `lib/airtable/schema.ts` (tipos e IDs); si no existe, la crea, muestra los IDs nuevos y sale con error hasta que actualices `schema.ts`. Con `-- --verify` solo lee. |
+| `npm run setup:sincronizaciones-arca` | Igual, para la tabla "Sincronizaciones ARCA" (y su link a Usuarios). Con `-- --verify` solo lee. |
 | `npm run migrate:clientes-estado` | Migra Clientes Estado a Activo / Inactivo (ver «Migración de Clientes»). Dry-run por defecto; `-- --apply` escribe. |
 | `npm run bootstrap:admin` | **Solo local.** Crea el primer Admin si no existe (ver abajo). |
 
@@ -147,6 +150,15 @@ Reglas (de `Gestion_Kairos_ERP_v4.xlsx`, implementadas solo en `lib/ventas-compr
 **Límites (Vercel)**: el body de una función no puede pasar 4,5 MB y la duración máxima en Hobby es 300 s (https://vercel.com/docs/functions/limitations). Por eso el archivo se limita a 4 MB (se avisa en el navegador antes de subir y el servidor responde 413) y a 1.000 comprobantes por importación; con el throttle de Airtable (5 pedidos/s, lotes de 10) 1.000 filas tardan unos 30 s.
 
 **Escritura**: lotes de 10, los create nunca se reintentan, con compensación: si algo falla a mitad de camino se borra todo lo que escribió esta importación (también los proveedores creados) → 503 (500 si el rollback falla). Después se verifica (fail-closed) que ningún proveedor creado choque con otro creado en paralelo (si choca, se deshace todo → 409) y que cada Clave ARCA esté una sola vez: si otra importación en paralelo guardó la misma clave primero, se borran las filas propias repetidas y se informan como «importadas en paralelo».
+
+## Sincronizar con ARCA (Ventas y Compras)
+
+En **Ventas › Importar** y **Compras › Importar** (o con «Sincronizar con ARCA» en la lista), el Admin elige el período (Desde y Hasta, hasta hoy y como máximo 366 días) y escribe su usuario de ARCA (CUIT) y su clave fiscal. La app trae «Mis Comprobantes» (emitidos en Ventas, recibidos en Compras) por Afip SDK y muestra **la misma vista previa** que el Excel: estados, ediciones, Control e «Importar N comprobantes». La CUIT de la empresa es la de Parámetros «CUIT».
+
+- **La clave fiscal no se guarda nunca**: ni en Airtable, ni en logs, ni en el navegador. Se usa solo para esta sincronización.
+- Mientras ARCA responde: «Consultando ARCA…» (se consulta cada 5 s; «Dejar de consultar» corta la espera). Más de 15 minutos → vence.
+- Cada sincronización queda en la tabla **Sincronizaciones ARCA** (estado, período, quién, contadores, mensaje). Una sola en curso por tabla; 5 fallidas en 15 minutos bloquean 15 minutos para no bloquear la clave fiscal en ARCA.
+- El Excel sigue funcionando igual (es la alternativa si ARCA no responde).
 
 ## Ventas y Compras: listas, edición y borrado
 

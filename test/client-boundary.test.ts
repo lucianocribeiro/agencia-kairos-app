@@ -23,6 +23,9 @@ describe("frontera cliente/servidor", () => {
   it("qué cuenta como prohibido", () => {
     expect(isForbidden("lib/airtable/client.ts")).toBe(true);
     expect(isForbidden("lib/env.ts")).toBe(true);
+    expect(isForbidden("lib/arca/server/afipsdk.ts")).toBe(true);
+    expect(isForbidden("lib/arca/server/payload.ts")).toBe(true);
+    expect(isForbidden("lib/arca/adapter.ts")).toBe(false);
     expect(isForbidden("lib/auth/password-hash.ts")).toBe(true);
     expect(isForbidden("lib/auth/constants.ts")).toBe(true);
     expect(isForbidden("lib/auth/password-policy.ts")).toBe(false);

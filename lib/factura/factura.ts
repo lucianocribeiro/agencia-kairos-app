@@ -106,6 +106,8 @@ export const FACTURA_MESSAGES = {
   revisarManual: "Revisar manualmente en ARCA.",
   datosIncompletos: "Revisar manualmente: datos del comprobante incompletos.",
   horasCambiaron: "Cambiaron las horas mientras se emitía; volvé a intentar.",
+  noLiberada: "No pudimos liberar la proforma. Usá \"Verificar en ARCA\" en unos minutos para destrabarla.",
+  noLlegoArca: "La emisión no llegó a ARCA; podés volver a intentar.",
   horasNoVerificadas: "No pudimos verificar las horas antes de emitir; volvé a intentar.",
   horasFaltantes: (ids: readonly string[]) => `Horas que ya no existen (no se marcaron Facturada): ${ids.slice(0, 20).join(", ")}${ids.length > 20 ? ` y ${ids.length - 20} más` : ""}.`,
   rechazada: "ARCA rechazó la factura.",

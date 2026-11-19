@@ -942,3 +942,148 @@ describe("CC-F5-13 · F-11 (guarda de Ventas siempre lee) y F-12 (horas que camb
     expect(F.claveArca in final).toBe(false);
   });
 });
+
+describe("CC-F5-14 · F-13: la clave se libera de verdad tras un rechazo previo a WSFE", () => {
+  beforeEach(login);
+
+  function alCrearElRegistro(cambio: () => void) {
+    const original = fake.client.create;
+    fake.client.create = (async (tableId: string, records: Record<string, unknown>[]) => {
+      const out = await original(tableId, records);
+      if (tableId === CE.id) cambio();
+      return out;
+    }) as typeof original;
+    return () => void (fake.client.create = original);
+  }
+  const hacerFacturada = () => void (fake.rows(T.horas.id).find((h) => h.id === ids.h2)!.fields[Hf.estadoFacturacion] = "Facturada");
+  let relecturaFalla = false;
+  const fallaRelectura = () => {
+    relecturaFalla = true;
+    fake.failWhen((c) => relecturaFalla && c.method === "list" && c.tableId === T.horas.id);
+  };
+  const casos: [string, () => void, number, string][] = [
+    ["horas que cambiaron", hacerFacturada, 200, FACTURA_MESSAGES.horasCambiaron],
+    ["relectura de horas fallida", fallaRelectura, 503, FACTURA_MESSAGES.horasNoVerificadas],
+  ];
+
+  it.each(casos)("%s: si el update a Rechazada falla, se borra el registro (clave libre, cero WSFE)", async (_l, cambio, status) => {
+    let fallar = true;
+    fake.failWhen((c) => fallar && c.method === "update" && c.tableId === CE.id && (c.payload as { fields: Record<string, unknown> }[])[0].fields[F.estado] === "Rechazada");
+    const restore = alCrearElRegistro(cambio);
+    try {
+      const r = await emitir();
+      expect(r.status).toBe(status);
+      expect(rows()).toHaveLength(0);
+      expect(fake.calls.some((c) => c.method === "delete" && c.tableId === CE.id)).toBe(true);
+      expect(wsfe.requests).toHaveLength(0);
+    } finally {
+      restore();
+      fallar = false;
+      relecturaFalla = false;
+    }
+    // Clave libre: si las horas siguen pendientes, se puede volver a emitir.
+    if (status === 503) expect((await emitir()).json.estado).toBe("Autorizada");
+  });
+
+  it.each(casos)("%s: si fallan el update y el borrado → 503 «No pudimos liberar…», cero WSFE; «Verificar en ARCA» a los 5 min (sin Número) → Rechazada sin WSFE; después se puede emitir", async (_l, cambio) => {
+    let fallar = true;
+    fake.failWhen((c) => fallar && c.tableId === CE.id && (c.method === "delete" || (c.method === "update" && (c.payload as { fields: Record<string, unknown> }[])[0].fields[F.estado] === "Rechazada")));
+    const restore = alCrearElRegistro(cambio);
+    let id: string;
+    try {
+      const r = await emitir();
+      expect(r).toMatchObject({ status: 503, json: { error: FACTURA_MESSAGES.noLiberada } });
+      expect(wsfe.requests).toHaveLength(0);
+      expect(rows()).toHaveLength(1);
+      id = rows()[0].id;
+      expect(rows()[0].fields[F.estado]).toBe("En proceso");
+      expect(rows()[0].fields[F.numero]).toBeUndefined();
+      expect(consoleLines.join("\n")).toContain(id);
+    } finally {
+      restore();
+      fallar = false;
+      relecturaFalla = false;
+    }
+    // La clave sigue ocupada mientras tanto.
+    expect((await estado()).json.motivos).toContain(FACTURA_MESSAGES.yaEmitida("Homologación", "En proceso"));
+    expect((await verificar(id)).status).toBe(409); // todavía no está colgado
+    vi.setSystemTime(new Date("2026-11-19T15:06:00Z"));
+    const v = await verificar(id);
+    expect(v.json).toMatchObject({ estado: "Rechazada", mensaje: FACTURA_MESSAGES.noLlegoArca });
+    expect(wsfe.requests).toHaveLength(0);
+    if (cambio === hacerFacturada) fake.rows(T.horas.id).find((h) => h.id === ids.h2)!.fields[Hf.estadoFacturacion] = "Pendiente";
+    expect((await emitir()).json.estado).toBe("Autorizada");
+  });
+
+  it("un colgado SIN Número se rechaza aunque la factura no esté configurada (sin WSFE); con Número sigue la verificación de siempre", async () => {
+    const sin = fake.seed(CE.id, { [F.tipo]: "Factura A", [F.ambiente]: "Homologación", [F.estado]: "En proceso", [F.cliente]: [ids.cliente], [F.mes]: "2026-10-01", [F.iniciado]: "2026-11-19T14:00:00.000Z" });
+    vi.stubEnv("AFIP_SDK_TOKEN", "");
+    expect((await verificar(sin)).json).toMatchObject({ estado: "Rechazada", mensaje: FACTURA_MESSAGES.noLlegoArca });
+    vi.stubEnv("AFIP_SDK_TOKEN", TOKEN);
+    const con = fake.seed(CE.id, {
+      [F.tipo]: "Factura A", [F.ambiente]: "Homologación", [F.estado]: "En proceso", [F.cliente]: [ids.cliente], [F.mes]: "2026-09-01", [F.iniciado]: "2026-11-19T14:00:00.000Z", [F.numero]: 4,
+      [F.datos]: JSON.stringify({ version: 1, ambiente: "Homologación", tipo: "Factura A", cbteTipo: 1, emisor: { cuit: "20409378472" }, receptor: { cuit: CUIT_CLIENTE }, importes: { total: TOTAL }, detalle: {}, puntoVenta: 1, horas: [], fechaEmision: "2026-11-19" }),
+    });
+    wsfe.setUltimo(2);
+    expect((await verificar(con)).json).toMatchObject({ estado: "Rechazada", mensaje: FACTURA_MESSAGES.noEmitida });
+    expect(wsfe.calls("FECompUltimoAutorizado")).toHaveLength(1);
+  });
+
+  describe("nota de horas faltantes (Producción)", () => {
+    beforeEach(usarProduccion);
+    const updateOriginal = fake.client.update;
+    afterEach(() => void (fake.client.update = updateOriginal));
+    /** Agrega `n` horas Pendiente al cliente/mes y las borra justo después de autorizar (se restaura en afterEach). */
+    function horasQueDesaparecen(n: number): string[] {
+      const extra = Array.from({ length: n }, (_, i) =>
+        fake.seed(T.horas.id, { [Hf.fecha]: "2026-10-20", [Hf.proyecto]: [ids.web], [Hf.colaborador]: [ids.admin], [Hf.tarea]: `x${i}`, [Hf.horaDesde]: t("09:00"), [Hf.horaHasta]: t("09:06"), [Hf.facturable]: true }),
+      );
+      const original = fake.client.update;
+      fake.client.update = (async (tableId: string, records: { id: string; fields: Record<string, unknown> }[]) => {
+        const out = await original(tableId, records);
+        if (tableId === CE.id && records[0].fields[F.estado] === "Autorizada")
+          for (const h of extra) {
+            const i = fake.rows(T.horas.id).findIndex((x) => x.id === h);
+            if (i >= 0) fake.rows(T.horas.id).splice(i, 1);
+          }
+        return out;
+      }) as typeof original;
+      return extra;
+    }
+
+    it("más de 20 horas faltantes → la nota lista 20 IDs y «y N más», una sola vez", async () => {
+      const extra = horasQueDesaparecen(23);
+      const r = await emitir();
+      expect(r.json.estado).toBe("Autorizada");
+      const m = String(rows()[0].fields[F.mensaje]);
+      expect(m).toBe(FACTURA_MESSAGES.horasFaltantes(extra));
+      expect(m).toContain("y 3 más.");
+      expect(m.split("\n")).toHaveLength(1);
+      expect(extra.slice(0, 20).every((id) => m.includes(id))).toBe(true);
+      expect(m.includes(extra[20])).toBe(false);
+      expect(rows()[0].fields[F.venta]).toHaveLength(1);
+    });
+
+    it("«Completar registro» que falla después de anotar la nota → el reintento completa sin duplicar la nota ni la Venta", async () => {
+      const extra = horasQueDesaparecen(2);
+      vi.stubEnv("NODE_ENV", "development");
+      vi.stubEnv("KAIROS_FAULT_INJECTION", "factura:links");
+      const r = await emitir();
+      expect(r.json.estado).toBe("Autorizada");
+      const nota = FACTURA_MESSAGES.horasFaltantes(extra);
+      expect(rows()[0].fields[F.mensaje]).toBe(nota);
+      expect(rows()[0].fields[F.venta]).toBeUndefined();
+      // Primer «Completar registro»: vuelve a fallar en los links (la nota ya estaba).
+      expect((await completar(r.json.id)).status).toBe(503);
+      expect(rows()[0].fields[F.mensaje]).toBe(nota);
+      vi.stubEnv("KAIROS_FAULT_INJECTION", "");
+      const ok = await completar(r.json.id);
+      expect(ok.json).toMatchObject({ estado: "Autorizada", mensaje: nota });
+      expect(rows()[0].fields[F.mensaje]).toBe(nota);
+      expect(String(rows()[0].fields[F.mensaje]).split(nota)).toHaveLength(2);
+      expect(fake.rows(T.ventas.id)).toHaveLength(1);
+      expect(rows()[0].fields[F.venta]).toEqual([fake.rows(T.ventas.id)[0].id]);
+      expect((await completar(r.json.id)).status).toBe(409);
+    });
+  });
+});

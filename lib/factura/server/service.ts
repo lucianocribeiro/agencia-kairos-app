@@ -362,6 +362,27 @@ async function updateRowQuiet(id: string, fields: CeFields): Promise<boolean> {
 
 const nowIso = (now: Date) => now.toISOString();
 
+/**
+ * Rechazo ANTES de cualquier pedido a WSFE (CC-F5-14 · F-13): la clave solo queda libre si el
+ * registro queda Rechazada o se borra. Update verificado; si falla, se borra (seguro: no se mandó
+ * nada a ARCA por este registro). true = clave libre; false = el registro sigue «En proceso» (se
+ * destraba con «Verificar en ARCA» después de 5 minutos). Se loguea solo el ID.
+ */
+async function liberarSinWsfe(id: string, mensaje: string): Promise<boolean> {
+  try {
+    await updateRow(id, { [F.estado]: "Rechazada", [F.mensaje]: mensaje, [F.finalizado]: nowIso(new Date()) });
+    return true;
+  } catch {
+    try {
+      await getAirtableClient().delete(CE.id, [id]);
+      return true;
+    } catch {
+      console.error("[factura] No se pudo liberar la clave (ni Rechazada ni borrado)", { id });
+      return false;
+    }
+  }
+}
+
 /** ¿Gana este registro la clave? Gana el más viejo (createdTime; empate: ID más bajo) entre los activos. */
 async function ganaLaClave(own: string, cliente: string, mes: string, ambiente: Ambiente): Promise<boolean> {
   const rows = (await comprobantesDe(cliente, mes)).filter((r) => esActivo(r, ambiente));
@@ -526,13 +547,14 @@ export async function emitirFactura(user: SessionUser, body: Record<string, unkn
   // registro. Desde que el registro existe, la guarda de borrado las protege; se releen ahora, ANTES de
   // hablar con WSFE: si falta alguna, ya no es facturable o ya no está Pendiente → Rechazada, sin WSFE.
   try {
-    if (!(await horasSiguenPendientes(datos.horas))) {
-      await updateRowQuiet(id, { [F.estado]: "Rechazada", [F.mensaje]: FACTURA_MESSAGES.horasCambiaron, [F.finalizado]: nowIso(new Date()) });
+    const siguen = await horasSiguenPendientes(datos.horas);
+    if (!siguen) {
+      if (!(await liberarSinWsfe(id, FACTURA_MESSAGES.horasCambiaron))) return fail(503, FACTURA_MESSAGES.noLiberada);
       return { ok: true, data: { id, estado: "Rechazada", mensaje: FACTURA_MESSAGES.horasCambiaron } };
     }
   } catch {
     console.error("[factura] No se pudieron releer las horas antes de emitir", { id });
-    await updateRowQuiet(id, { [F.estado]: "Rechazada", [F.mensaje]: FACTURA_MESSAGES.horasNoVerificadas, [F.finalizado]: nowIso(new Date()) });
+    if (!(await liberarSinWsfe(id, FACTURA_MESSAGES.horasNoVerificadas))) return fail(503, FACTURA_MESSAGES.noLiberada);
     return fail(503, FACTURA_MESSAGES.horasNoVerificadas);
   }
 
@@ -547,7 +569,7 @@ export async function emitirFactura(user: SessionUser, body: Record<string, unkn
     // Nada se pidió todavía: Rechazada (la clave queda libre).
     console.error("[factura] No se pudo preparar el pedido a ARCA", { id, ...(err instanceof AfipSdkError ? err.toJSON() : {}) });
     const mensaje = mensajePrevio(err);
-    await updateRowQuiet(id, { [F.estado]: "Rechazada", [F.mensaje]: mensaje, [F.finalizado]: nowIso(new Date()) });
+    if (!(await liberarSinWsfe(id, mensaje))) return fail(503, FACTURA_MESSAGES.noLiberada);
     return { ok: true, data: { id, estado: "Rechazada", mensaje } };
   }
   datos.numero = numero;
@@ -555,7 +577,7 @@ export async function emitirFactura(user: SessionUser, body: Record<string, unkn
     await updateRow(id, { [F.numero]: numero, [F.comprobante]: label(numero), [F.datos]: JSON.stringify(datos) });
   } catch {
     console.error("[factura] No se pudo guardar el número antes de pedir el CAE", { id });
-    await updateRowQuiet(id, { [F.estado]: "Rechazada", [F.mensaje]: "No pudimos guardar el número antes de pedir el CAE. Probá de nuevo.", [F.finalizado]: nowIso(new Date()) });
+    if (!(await liberarSinWsfe(id, "No pudimos guardar el número antes de pedir el CAE. Probá de nuevo."))) return fail(503, FACTURA_MESSAGES.noLiberada);
     return fail(503, "No pudimos guardar el comprobante. Probá de nuevo en unos minutos.");
   }
 
@@ -750,10 +772,12 @@ async function registrar(id: string, d: FacturaDatos, mensaje: string | null = n
     const faltantes = d.horas.filter((h) => !existentes.has(h));
     // Venta y horas en el mismo update: es la marca de «registro completo» (ver pendienteDeRegistro).
     // Mensaje solo cambia para anotar horas que ya no existen (se conservan las Observaciones).
+    // La nota de horas faltantes va en su propio update ANTES de los links (queda registrada aunque el
+    // link falle) y solo si todavía no está: un reintento de «Completar registro» no la duplica.
     const nota = faltantes.length > 0 ? FACTURA_MESSAGES.horasFaltantes(faltantes) : null;
-    const nuevoMensaje = nota && !(mensaje ?? "").includes(nota) ? [mensaje, nota].filter(Boolean).join("\n") : undefined;
+    if (nota && !(mensaje ?? "").includes(nota)) await updateRow(id, { [F.mensaje]: [mensaje, nota].filter(Boolean).join("\n") });
     injectFault("factura:links");
-    await updateRow(id, { [F.venta]: [ventaId], [F.horas]: d.horas.filter((h) => existentes.has(h)), ...(nuevoMensaje !== undefined ? { [F.mensaje]: nuevoMensaje } : {}) });
+    await updateRow(id, { [F.venta]: [ventaId], [F.horas]: d.horas.filter((h) => existentes.has(h)) });
     if (faltantes.length > 0) console.error("[factura] Horas del snapshot que ya no existen", { id, horas: faltantes });
     return true;
   } catch {
@@ -776,10 +800,21 @@ export async function completarRegistro(id: string): Promise<ServiceResult<Emisi
 // ── Verificar en ARCA (Incierta) ─────────────────────────────────────────────
 
 export async function verificarComprobante(id: string, now = new Date(), deps: WsfeDeps = {}): Promise<ServiceResult<EmisionResultado>> {
-  const cfg = getFacturaConfig();
-  if (!cfg.ok) return fail(503, cfg.error);
   const row = await leerComprobante(id);
   if (!row) return fail(404, FACTURA_MESSAGES.noEncontrado);
+  // CC-F5-14 · F-13: un «En proceso» colgado SIN Número nunca llegó a ARCA (el número se guarda siempre
+  // antes de FECAESolicitar): Rechazada sin WSFE, sin depender de la configuración ni del ambiente.
+  if (row.estado === "En proceso" && colgado(row, now.getTime()) && row.numero === null) {
+    try {
+      await updateRow(id, { [F.estado]: "Rechazada", [F.mensaje]: FACTURA_MESSAGES.noLlegoArca, [F.finalizado]: nowIso(now) });
+    } catch {
+      console.error("[factura] No se pudo marcar Rechazada un registro colgado", { id });
+      return fail(503, FACTURA_MESSAGES.noLiberada);
+    }
+    return { ok: true, data: { id, estado: "Rechazada", mensaje: FACTURA_MESSAGES.noLlegoArca } };
+  }
+  const cfg = getFacturaConfig();
+  if (!cfg.ok) return fail(503, cfg.error);
   if (!(row.estado === "Incierta" || colgado(row, now.getTime())) || !row.datos) return fail(409, FACTURA_MESSAGES.noIncierta);
   if (row.ambiente !== cfg.config.ambiente) return fail(409, `Esta factura es de ${row.ambiente}; la app está en ${cfg.config.ambiente}.`);
   const datos = row.datos;

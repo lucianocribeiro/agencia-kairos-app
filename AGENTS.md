@@ -191,6 +191,13 @@ Es un chequeo no atómico con compensación. Queda una ventana chica en la que u
 - Vista Cliente: filtro `?estado=` (hora, gráfico, tabla, importes y Excel); en «Importes por proyecto», debajo de cada proyecto, filas «Estado: X» con Horas y Total. Cada estado se calcula con las reglas de la Proforma sobre su subconjunto (neto = Σ importes por registro, IVA = `ivaDe(neto del estado)`): los netos suman exacto el del proyecto; los totales pueden diferir ±0,01 por el redondeo del IVA. Claves nuevas en `CLIENTE_RESPONSE_KEYS`: `estado` y `estados` (solo agregados).
 - Proforma, reportes y dashboard de Admin: sin cambios.
 
+## Importes en el Dashboard Admin (CC-F4-11)
+
+- `/dashboard` (Admin) muestra, debajo de la tabla de horas, los MISMOS bloques que ve el Cliente: «Importes por proyecto» (con las filas por estado), «Detalle por colaborador» y «Totales por moneda», con la nota «Sólo horas facturables.». Un solo camino de cálculo: `calcularImportesCliente` (lib/cliente/importes.ts, reglas de la Proforma) y `tablasImportes` (lib/cliente/vista.ts). No duplicar ese cálculo.
+- Servidor: `lib/horas/server/dashboard-admin-service.ts` (`cargarDashboardAdmin`, `dashboardAdminXlsx`, `queryDashboardAdmin`); vista y textos client-safe en `lib/horas/dashboard-admin.ts` (`vistaDashboardAdmin`, `nombreArchivoDashboard` → `Dashboard_<Sigla o Todos>_<desde>_<hasta>.xlsx`). Rutas `GET /api/admin/dashboard/vista` y `/api/admin/dashboard/excel` (`adminRoute`, `noStore`). `GET /api/admin/dashboard` sigue igual (solo horas, sin importes).
+- Horas: todas (facturables o no), como siempre. Importes: solo Facturables. Filtros nuevos para toda la pantalla y el Excel: Cliente (clientes con al menos un proyecto; limita el filtro de proyectos y los datos) y Estado de facturación (vacío = Pendiente).
+- Proyectos de los importes: los elegidos; si no, todos los del cliente elegido (como la vista Cliente con todos sus proyectos asignados); con «Todos», los que tienen horas facturables en el período. Fallbacks iguales al Cliente («Importe no disponible», alícuota inválida → aviso neutro y horas igual). Test de igualdad Admin = Cliente en `test/dashboard-admin.test.ts`.
+
 ## Modo claro/oscuro (CC-F4-09)
 
 - Dos sets de tokens con los **mismos nombres** en `app/globals.css`: `@theme` (oscuro, el default; valores de siempre) y `html.light` (claro). **Todo token nuevo o cambiado se actualiza en los dos sets juntos**; `test/theme-tokens.test.ts` falla si los nombres no coinciden, si cambia un valor oscuro o si aparece un color hex fuera de esos dos bloques.

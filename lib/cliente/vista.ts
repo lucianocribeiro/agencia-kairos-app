@@ -26,8 +26,11 @@ export function tablaHoras(d: ClienteHorasData): VistaTabla {
   };
 }
 
-/** Bloque de importes: por proyecto, detalle por colaborador de cada uno y totales por moneda. */
-export function tablasImportes(d: ClienteHorasData): VistaTabla[] {
+/**
+ * Bloque de importes: por proyecto, detalle por colaborador de cada uno y totales por moneda.
+ * Lo usan la vista Cliente y el Dashboard del Admin (CC-F4-11): mismas tablas, mismo cálculo.
+ */
+export function tablasImportes(d: Pick<ClienteHorasData, "importes">): VistaTabla[] {
   if (!d.importes) return [{ titulo: "Importes", columnas: [], filas: [], error: CLIENTE_MESSAGES.importe }];
   const nd = CLIENTE_MESSAGES.noDisponible;
   const porProyecto: VistaTabla = {

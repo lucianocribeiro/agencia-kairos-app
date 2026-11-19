@@ -53,12 +53,14 @@ async function proyectosAsignados(userId: string): Promise<ProyectoP[]> {
     .sort((a, b) => collator.compare(a.codigo, b.codigo));
 }
 
-async function alicuotaActual(): Promise<number | null> {
+/** Alícuota de la Proforma (Parámetros). null = inválida. También la usa el Dashboard del Admin (CC-F4-11). */
+export async function alicuotaActual(): Promise<number | null> {
   const rows = await getAirtableClient().list(TABLES.parametros.id, { fields: [PA.concepto, PA.valor] });
   return parseAlicuota(rows.find((r) => text(r.fields[PA.concepto]) === PARAM_ALICUOTA)?.fields[PA.valor]);
 }
 
-async function nombresDeUsuarios(): Promise<Map<string, string>> {
+/** ID de usuario → Nombre (Detalle por colaborador). También lo usa el Dashboard del Admin. */
+export async function nombresDeUsuarios(): Promise<Map<string, string>> {
   const rows = await getAirtableClient().list(TABLES.usuarios.id, { fields: [U.nombre] });
   return new Map(rows.map((r) => [r.id, text(r.fields[U.nombre])]));
 }

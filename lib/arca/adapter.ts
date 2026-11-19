@@ -16,14 +16,25 @@
 import { COLUMNS, normalizeHeader, type Column, type Kind } from "@/lib/ventas-compras/columns";
 import { columnasObligatorias, MAX_FILAS, type Cell } from "@/lib/ventas-compras/rows";
 
-/** Nombre documentado por Afip SDK, cuando difiere del encabezado del parser. */
-export const NOMBRES_ARCA: Readonly<Record<string, string>> = {
-  fecha: "Fecha de Emisión",
-  tipo: "Tipo de Comprobante",
-  netoGravadoTotal: "Imp. Neto Gravado",
-  netoNoGravado: "Imp. Neto No Gravado",
-  opExentas: "Imp. Op. Exentas",
-  totalIva: "IVA",
+/**
+ * Otros nombres aceptados por columna, además del encabezado del parser (que siempre se acepta).
+ * Primero el nombre REAL de la respuesta de Afip SDK (Ventas, t=E, verificado en la primera
+ * sincronización real, CC-F5-07); después los nombres documentados que ya se aceptaban.
+ * Las columnas «IVA X%» y «Total IVA» llegan con el mismo nombre que el parser.
+ */
+export const NOMBRES_ARCA: Readonly<Record<string, readonly string[]>> = {
+  fecha: ["Fecha de Emisión"],
+  tipo: ["Tipo de Comprobante"],
+  netoGravIva0: ["Imp. Neto Gravado IVA 0%"],
+  netoGravIva25: ["Imp. Neto Gravado IVA 2,5%"],
+  netoGravIva5: ["Imp. Neto Gravado IVA 5%"],
+  netoGravIva105: ["Imp. Neto Gravado IVA 10,5%"],
+  netoGravIva21: ["Imp. Neto Gravado IVA 21%"],
+  netoGravIva27: ["Imp. Neto Gravado IVA 27%"],
+  netoGravadoTotal: ["Imp. Neto Gravado Total", "Imp. Neto Gravado"],
+  netoNoGravado: ["Imp. Neto No Gravado"],
+  opExentas: ["Imp. Op. Exentas"],
+  totalIva: ["IVA"],
 };
 
 export const ARCA_ADAPTER_MESSAGES = {
@@ -35,8 +46,11 @@ export const ARCA_ADAPTER_MESSAGES = {
     `Faltan columnas en la respuesta de ARCA: ${faltan.join(", ")} · Columnas recibidas: ${recibidas.length > 0 ? recibidas.join(", ") : "(ninguna)"}`,
 } as const;
 
-/** Nombre que se muestra de una columna (el de Afip SDK si difiere). */
-export const nombreArca = (col: Column) => NOMBRES_ARCA[col.key] ?? col.header;
+/** Todos los nombres aceptados de una columna, en orden de preferencia (sin repetidos). */
+export const nombresAceptados = (col: Column): string[] => [...new Set([...(NOMBRES_ARCA[col.key] ?? []), col.header])];
+
+/** Nombre que se muestra de una columna (el real de Afip SDK si difiere). */
+export const nombreArca = (col: Column) => nombresAceptados(col)[0];
 
 /** Columnas que la respuesta de ARCA tiene que traer (las mismas que exige findHeader con source "arca"). */
 export const obligatoriasArca = (kind: Kind): readonly Column[] => columnasObligatorias(kind, "arca");
@@ -111,11 +125,12 @@ export function adaptArcaRows(kind: Kind, data: unknown): AdaptResult {
   // Columna del parser → clave recibida (nombre de Afip SDK o del parser).
   const keyFor = new Map<string, string>();
   for (const col of COLUMNS[kind]) {
-    const aliases = [NOMBRES_ARCA[col.key], col.header].filter((x): x is string => !!x).map(normalizeHeader);
+    const aliases = nombresAceptados(col).map(normalizeHeader);
     const found = aliases.map((a) => byNormalized.get(a)).find((k) => k !== undefined);
     if (found !== undefined) keyFor.set(col.key, found);
   }
-  const faltan = obligatoriasArca(kind).filter((c) => !keyFor.has(c.key)).map((c) => `«${nombreArca(c)}»`);
+  // Cada columna faltante con todos sus nombres aceptados: «Imp. Neto Gravado Total» / «Imp. Neto Gravado» / «Neto Gravado Total».
+  const faltan = obligatoriasArca(kind).filter((c) => !keyFor.has(c.key)).map((c) => nombresAceptados(c).map((n) => `«${n}»`).join(" / "));
   if (faltan.length > 0) {
     const nombres = recibidas.slice(0, MAX_NOMBRES).map(safeName);
     if (recibidas.length > MAX_NOMBRES) nombres.push(`(y ${recibidas.length - MAX_NOMBRES} más)`);

@@ -224,7 +224,7 @@ export async function pollSync(id: string, user: SessionUser, config: ArcaConfig
   }
   if (job.status === "in_process") return { ok: true, data: { estado: "en_proceso" } };
   // Error del job: siempre el mensaje fijo (no tenemos las credenciales para limpiar el del proveedor).
-  if (job.status === "error") return terminarConError(id, SYNC_MESSAGES.errorArca);
+  if (job.status === "error") return terminarConError(id, job.mensaje ?? SYNC_MESSAGES.errorArca);
 
   const adapted = adaptArcaRows(kind, job.data);
   if (!adapted.ok) {

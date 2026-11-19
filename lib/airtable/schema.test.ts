@@ -23,9 +23,10 @@ describe("schema", () => {
     expect(FIELD_TABLE.size).toBe(fieldIds.length);
   });
 
-  it("incluye las 17 tablas (Leads desde CC-F4-06)", () => {
-    expect(Object.keys(TABLES)).toHaveLength(17);
+  it("incluye las 18 tablas (Leads desde CC-F4-06, Sincronizaciones ARCA desde CC-F5-03)", () => {
+    expect(Object.keys(TABLES)).toHaveLength(18);
     expect(TABLES.leads.id).toBe("tblZfsKxIckVSNRlV");
+    expect(TABLES.sincronizacionesArca.id).toBe("tblxWFfPyzwSgggpc");
   });
 
   it("campos que llena Airtable (autoNumber y createdTime): solo N° de Horas y Tesorería y Creado de Horas", () => {
@@ -58,7 +59,8 @@ describe("schema", () => {
   });
 
   it("campos restringidos", () => {
-    expect([...RESTRICTED_FIELDS].sort()).toEqual([U.passwordHash, P.valorHora, P.monedaValorHora, P.cliente, H.estadoFacturacion].sort());
+    const sync = Object.values(TABLES.sincronizacionesArca.fields);
+    expect([...RESTRICTED_FIELDS].sort()).toEqual([U.passwordHash, P.valorHora, P.monedaValorHora, P.cliente, H.estadoFacturacion, U.sincronizacionesArca, ...sync].sort());
   });
 });
 

@@ -39,6 +39,43 @@ export const ARCHIVO_MENSAJES = {
 
 export type Cell = string | number | boolean | null;
 
+/**
+ * Origen de las filas: el .xlsx que sube el Admin ("excel") o la respuesta de ARCA vía
+ * Afip SDK ("arca", CC-F5-03). Solo cambia qué columnas son obligatorias y cómo se
+ * numeran las filas; las reglas, la Clave ARCA y el estado son los mismos.
+ */
+export type Source = "excel" | "arca";
+
+/**
+ * Columnas de detalle por alícuota: obligatorias en el .xlsx (como siempre) y opcionales
+ * en la respuesta de ARCA, que no las trae. Ningún cálculo las usa.
+ */
+export const COLUMNAS_POR_ALICUOTA: ReadonlySet<string> = new Set([
+  "netoGravIva0",
+  "iva25",
+  "netoGravIva25",
+  "iva5",
+  "netoGravIva5",
+  "iva105",
+  "netoGravIva105",
+  "iva21",
+  "netoGravIva21",
+  "iva27",
+  "netoGravIva27",
+]);
+
+/** Compras: el receptor de un comprobante recibido es la empresa; ninguna regla lo usa. */
+const RECEPTOR_EN_COMPRAS: ReadonlySet<string> = new Set(["tipoDocReceptor", "nroDocReceptor"]);
+
+/**
+ * Columnas que tiene que traer cada origen. Excel: todas (como siempre). ARCA: sin el
+ * detalle por alícuota y, en Compras, sin los datos del receptor.
+ */
+export function columnasObligatorias(kind: Kind, source: Source): readonly Column[] {
+  if (source === "excel") return COLUMNS[kind];
+  return COLUMNS[kind].filter((c) => !COLUMNAS_POR_ALICUOTA.has(c.key) && !(kind === "compras" && RECEPTOR_EN_COMPRAS.has(c.key)));
+}
+
 export interface HeaderMatch {
   /** Índice (0) de la fila de encabezados en la hoja. */
   row: number;
@@ -50,7 +87,7 @@ export interface HeaderMatch {
  * Busca la fila de encabezados por nombre de columna (no por posición; puede haber un
  * título arriba). Detecta el archivo equivocado (Emitidos en Compras o al revés).
  */
-export function findHeader(kind: Kind, rows: readonly (readonly Cell[])[]): HeaderMatch | { error: string } {
+export function findHeader(kind: Kind, rows: readonly (readonly Cell[])[], source: Source = "excel"): HeaderMatch | { error: string } {
   const all = new Set([...COLUMNS.ventas, ...COLUMNS.compras].map((c) => normalizeHeader(c.header)));
   let best = -1;
   let bestScore = 0;
@@ -70,10 +107,11 @@ export function findHeader(kind: Kind, rows: readonly (readonly Cell[])[]): Head
 
   const index: Record<string, number> = {};
   const missing: string[] = [];
+  const required = new Set(columnasObligatorias(kind, source).map((c) => c.key));
   for (const col of COLUMNS[kind]) {
     const i = names.indexOf(normalizeHeader(col.header));
-    if (i < 0) missing.push(col.header);
-    else index[col.key] = i;
+    if (i >= 0) index[col.key] = i;
+    else if (required.has(col.key)) missing.push(col.header);
   }
   if (missing.length > 0) return { error: ARCHIVO_MENSAJES.faltanColumnas(missing) };
   return { row: best, index };
@@ -121,9 +159,10 @@ const isEmptyRow = (row: readonly Cell[]) => row.every((c) => c === null || c ==
  * Filas de datos → FilaBase. Estado: error (no se importa) → ya importada (Clave
  * ARCA en la tabla) → duplicada en el archivo (2.ª aparición) → nueva.
  */
-export function buildRows(kind: Kind, rows: readonly (readonly Cell[])[], header: HeaderMatch, refs: Referencias): FilaBase[] | { error: string } {
+export function buildRows(kind: Kind, rows: readonly (readonly Cell[])[], header: HeaderMatch, refs: Referencias, source: Source = "excel"): FilaBase[] | { error: string } {
   const data: { fila: number; cells: readonly Cell[] }[] = [];
-  for (let r = header.row + 1; r < rows.length; r++) if (!isEmptyRow(rows[r])) data.push({ fila: r + 1, cells: rows[r] });
+  // Excel: n.º de fila de la hoja. ARCA: n.º de comprobante 1..N (no hay hoja).
+  for (let r = header.row + 1; r < rows.length; r++) if (!isEmptyRow(rows[r])) data.push({ fila: source === "arca" ? data.length + 1 : r + 1, cells: rows[r] });
   if (data.length === 0) return { error: ARCHIVO_MENSAJES.sinFilas };
   if (data.length > MAX_FILAS) return { error: ARCHIVO_MENSAJES.demasiadasFilas(data.length) };
 
@@ -133,7 +172,8 @@ export function buildRows(kind: Kind, rows: readonly (readonly Cell[])[], header
     const datos: Record<string, Dato> = {};
     let error: string | null = null;
     for (const col of COLUMNS[kind]) {
-      const read = readCell(col, cells[header.index[col.key]] ?? null);
+      // Columna opcional ausente (solo "arca"): vacía.
+      const read = readCell(col, col.key in header.index ? (cells[header.index[col.key]] ?? null) : null);
       if ("error" in read) {
         error ??= read.error;
         datos[col.key] = null;

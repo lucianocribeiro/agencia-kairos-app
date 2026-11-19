@@ -632,7 +632,7 @@ describe("Links inválidos → 400 (N-06)", () => {
 
 // ── N-06 · Páginas Admin con sesión de Empleado ───────────────────────────────
 
-const PAGES = import.meta.glob<{ default: () => unknown }>("/app/\\(admin\\)/**/page.tsx", { eager: true });
+const PAGES = import.meta.glob<{ default: (props: unknown) => unknown }>("/app/\\(admin\\)/**/page.tsx", { eager: true });
 
 /**
  * "Render" de servidor mínimo: evalúa el árbol de elementos llamando a cada
@@ -672,9 +672,11 @@ describe("Páginas Admin con sesión de Empleado (N-06)", () => {
   it.each(pages)("$file → redirige a /mis-horas sin llamar a Airtable", async ({ Page }) => {
     await loginAs(empleadoId);
     // El guard lee el usuario de la sesión (caché de 30 s): se calienta antes y se mide solo la página.
-    await redirectOf(() => renderServerTree(Page()));
+    // Next les pasa params y searchParams (Promises) a toda página.
+    const props = { params: Promise.resolve({}), searchParams: Promise.resolve({}) };
+    await redirectOf(() => renderServerTree(Page(props)));
     fake.calls.length = 0;
-    expect(await redirectOf(() => renderServerTree(Page()))).toBe("/mis-horas");
+    expect(await redirectOf(() => renderServerTree(Page(props)))).toBe("/mis-horas");
     expect(fake.calls).toEqual([]);
   });
 });

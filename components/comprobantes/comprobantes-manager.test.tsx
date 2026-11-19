@@ -69,6 +69,15 @@ afterEach(() => {
 const json = (status: number, body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
 
 describe("ComprobantesManager", () => {
+  it("encabezado: «Subir Excel de ARCA» y «Sincronizar con ARCA» (CC-F5-03)", () => {
+    const links = [...container.querySelectorAll("header a")].map((a) => [a.textContent, a.getAttribute("href")]);
+    expect(links).toEqual([
+      ["Subir Excel de ARCA", "/ventas/importar"],
+      ["Sincronizar con ARCA", "/ventas/importar?origen=arca"],
+    ]);
+    expect(container.textContent).not.toContain("Importar desde ARCA");
+  });
+
   it("totales del conjunto filtrado; filas con observaciones atenuadas (no en rojo)", () => {
     expect(container.textContent).toContain("2.420,00");
     expect(container.textContent).toContain("2.000,00");

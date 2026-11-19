@@ -48,6 +48,8 @@ export const TABLES = {
       horasReverse: "fld1nrDsbGZcps9My",
       /** Link inverso "Horas 2" (Horas.cargadoPor). Solo lectura: nunca se escribe. */
       horas2Reverse: "fldF1Kkuo2a3Y3mtp",
+      /** Link inverso "Sincronizaciones ARCA" (Sincronizaciones ARCA.usuario). Solo lectura: nunca se escribe. */
+      sincronizacionesArca: "fldwwjuqd2KHiql2y",
     },
     choices: {
       rol: ["Admin", "Empleado", "Cliente"],
@@ -512,6 +514,48 @@ export const TABLES = {
       resultado: ["Fallido", "Exitoso", "Bloqueado"],
     },
   },
+
+  /**
+   * Registro de sincronizaciones con ARCA vía Afip SDK (CC-F5-03). Lo escribe sólo el servidor
+   * (lib/arca/server/sync-log.ts). Nunca guarda la CUIT de la empresa, el usuario de ARCA ni la
+   * clave fiscal. Creada con scripts/setup-sincronizaciones-arca.mjs.
+   */
+  sincronizacionesArca: {
+    id: "tblxWFfPyzwSgggpc",
+    name: "Sincronizaciones ARCA",
+    fields: {
+      /** primario; «Ventas · 01/10/2026–31/10/2026 · <inicio>» (lo arma el servidor) */
+      sincronizacion: "fld9mO1hWVwyHA8N2",
+      /** singleSelect: ver `choices.tipo` */
+      tipo: "fldu3O9rDTSJjkNep",
+      /** date */
+      desde: "fldOZhYxHpUPtjefk",
+      /** date */
+      hasta: "fldAIo7WRk42WG6RQ",
+      /** link → Usuarios (el Admin que sincronizó) */
+      usuario: "fldpOLrAbBbfJwBDA",
+      /** ID del job de Afip SDK */
+      jobId: "fldqSZ0M7ZRFqyeEj",
+      /** singleSelect: ver `choices.estado` */
+      estado: "fldOfCI7wvRG8A85K",
+      leidas: "fldeurrkAcZ0g6ATv",
+      nuevas: "fld7f7OHAx6VLx347",
+      yaImportadas: "fldwpqzmGIBp1AJBP",
+      duplicadas: "fldxTdmGWIzjelyxb",
+      conError: "fldS79L1m1ZqWZmMp",
+      importadas: "fldAgINFf3t2N4QiX",
+      /** multilineText: motivo del error o diagnóstico (nunca credenciales) */
+      mensaje: "fldV9KnsDxQK8PS6H",
+      /** dateTime ISO, tz America/Argentina/Buenos_Aires; la setea el servidor */
+      iniciada: "fldARG2tt9Aw17dzz",
+      /** dateTime ISO; la setea el servidor */
+      finalizada: "fldATZOp7UrEstxl2",
+    },
+    choices: {
+      tipo: ["Ventas", "Compras"],
+      estado: ["En proceso", "Lista para revisar", "Importada", "Error", "Vencida"],
+    },
+  },
 } as const;
 
 type Tables = typeof TABLES;
@@ -546,7 +590,8 @@ export const COMPUTED_FIELDS: ReadonlySet<string> = new Set<FieldId>([
  * Es también la lista de referencias que bloquean un borrado.
  */
 export const REFERENCE_FIELDS = {
-  usuarios: [F.usuarios.horasReverse, F.usuarios.horas2Reverse],
+  // Como Horas › «Cargado por»: un usuario con sincronizaciones ARCA no se borra (se desactiva).
+  usuarios: [F.usuarios.horasReverse, F.usuarios.horas2Reverse, F.usuarios.sincronizacionesArca],
   socios: [TABLES.socios.fields.usuarios, TABLES.socios.fields.compras, TABLES.socios.fields.tesoreria],
   unidadesNegocio: [
     TABLES.unidadesNegocio.fields.proyectos,
@@ -576,6 +621,8 @@ export const REFERENCE_FIELDS = {
   intentosLogin: [],
   // Nadie apunta a Leads.
   leads: [],
+  // Nadie apunta a Sincronizaciones ARCA.
+  sincronizacionesArca: [],
 } as const satisfies Record<TableKey, readonly FieldId[]>;
 
 /**
@@ -602,6 +649,9 @@ export const RESTRICTED_FIELDS: ReadonlySet<string> = new Set<FieldId>([
   F.proyectos.cliente,
   /** Estado de facturación de Horas (CC-F4-08): el camino del Empleado no lo lee ni lo devuelve. */
   F.horas.estadoFacturacion,
+  /** Sincronizaciones ARCA (CC-F5-03): solo Admin; segunda barrera si algún camino de Empleado leyera Usuarios. */
+  F.usuarios.sincronizacionesArca,
+  ...(Object.values(TABLES.sincronizacionesArca.fields) as FieldId[]),
 ]);
 
 /** fieldId → tableId, para validar que un campo pertenece a la tabla que se escribe. */

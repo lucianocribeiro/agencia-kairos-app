@@ -3,12 +3,14 @@
  * Verifica que ningún secreto llegue al bundle del navegador.
  *
  * Después de `next build`, recorre `.next/static` y busca:
- * - los nombres AIRTABLE_TOKEN, AIRTABLE_BASE_ID, SESSION_SECRET y BOOTSTRAP_ADMIN_PASSWORD;
+ * - los nombres AIRTABLE_TOKEN, AIRTABLE_BASE_ID, SESSION_SECRET, BOOTSTRAP_ADMIN_PASSWORD y
+ *   AFIP_SDK_TOKEN (CC-F5-03);
  * - sus valores, si están definidos en el entorno (incluye .env* que carga Next).
  *
  * Además recorre el código compilado de `.next/server` (sin los .map) y falla si
- * encuentra KAIROS_FAULT_INJECTION: la inyección de fallas del smoke test tiene
- * que quedar fuera del build de producción.
+ * encuentra KAIROS_FAULT_INJECTION o AFIP_SDK_BASE_URL: la inyección de fallas y la base
+ * URL alternativa de Afip SDK (stub del smoke test) son solo de `next dev` y tienen que
+ * quedar fuera del build de producción (código muerto que el compilador elimina).
  *
  * Sale con código 1 si encuentra algo. Nunca imprime los valores.
  */
@@ -21,8 +23,11 @@ import nextEnv from "@next/env";
 const ROOT = process.cwd();
 const STATIC_DIR = join(ROOT, ".next", "static");
 const SERVER_DIR = join(ROOT, ".next", "server");
-const DEV_ONLY_MARKER = Buffer.from("KAIROS_FAULT_INJECTION");
-const NAMES = ["AIRTABLE_TOKEN", "AIRTABLE_BASE_ID", "SESSION_SECRET", "BOOTSTRAP_ADMIN_PASSWORD"];
+const DEV_ONLY_MARKERS = [
+  { label: "inyección de fallas (solo dev)", bytes: Buffer.from("KAIROS_FAULT_INJECTION") },
+  { label: "base URL alternativa de Afip SDK (solo dev)", bytes: Buffer.from("AFIP_SDK_BASE_URL") },
+];
+const NAMES = ["AIRTABLE_TOKEN", "AIRTABLE_BASE_ID", "SESSION_SECRET", "BOOTSTRAP_ADMIN_PASSWORD", "AFIP_SDK_TOKEN"];
 // Valores muy cortos darían falsos positivos; ningún valor real es tan corto.
 const MIN_VALUE_LENGTH = 8;
 
@@ -69,7 +74,8 @@ async function main() {
       // Los .map llevan el fuente original (no se ejecutan): solo se revisa el código compilado.
       if (file.endsWith(".map")) continue;
       serverFiles++;
-      if ((await readFile(file)).includes(DEV_ONLY_MARKER)) findings.push(`${relative(ROOT, file)}: inyección de fallas (solo dev)`);
+      const content = await readFile(file);
+      for (const marker of DEV_ONLY_MARKERS) if (content.includes(marker.bytes)) findings.push(`${relative(ROOT, file)}: ${marker.label}`);
     }
   } catch {
     findings.push(".next/server: no existe (corré `npm run build`)");
@@ -82,7 +88,7 @@ async function main() {
   }
 
   console.log(
-    `✔ check:bundle OK · ${files} archivos en .next/static · ${NAMES.length} nombres y ${checkedValues} valores verificados · ${serverFiles} archivos de .next/server sin inyección de fallas.`,
+    `✔ check:bundle OK · ${files} archivos en .next/static · ${NAMES.length} nombres y ${checkedValues} valores verificados · ${serverFiles} archivos de .next/server sin código solo de dev (inyección de fallas, base URL de Afip SDK).`,
   );
   if (checkedValues === 0) {
     console.log("  (No hay variables definidas en el entorno: solo se verificaron los nombres.)");

@@ -24,6 +24,7 @@ import {
   type Totales,
 } from "../listado";
 import { evaluar } from "../rules";
+import { GUARD_MESSAGES, ventaDeFacturaEmitida } from "@/lib/factura/server/guards";
 import { EDICION_KEYS, type Contexto, type Dato, type Ediciones, type Ref } from "../types";
 import { loadImportContext } from "./context";
 import { validarEdicion } from "./service";
@@ -41,6 +42,7 @@ const MES_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 export const COMPROBANTE_MESSAGES = {
   noEncontrado: "No encontramos el comprobante. Puede que lo hayan borrado.",
+  facturaEmitida: "Esta venta es de una factura emitida desde la app: no se puede borrar.",
   demasiados: "El período tiene más de 5.000 comprobantes. Elegí un rango de fechas más corto.",
   filtro: "El filtro no es válido.",
   validacion: (motivo: string) => `Revisá los datos: ${motivo}`,
@@ -54,7 +56,7 @@ export const COMPROBANTE_INPUT_KEYS: Record<Kind, readonly string[]> = {
   compras: EDICION_KEYS,
 };
 
-const fail = (status: 400 | 404 | 500, error: string): ServiceResult<never> => ({ ok: false, status, error });
+const fail = (status: 400 | 404 | 409 | 500 | 503, error: string): ServiceResult<never> => ({ ok: false, status, error });
 const first = (v: unknown): string | null => (Array.isArray(v) && typeof v[0] === "string" ? v[0] : null);
 
 function readFieldIds(kind: Kind): string[] {
@@ -250,8 +252,23 @@ export async function updateComprobante(kind: Kind, id: string, raw: RawValues):
 /** Borra un comprobante. Un proveedor creado por una importación queda. */
 export async function deleteComprobante(kind: Kind, id: string): Promise<ServiceResult<{ id: string }>> {
   if (!RECORD_ID_RE.test(id)) return fail(404, COMPROBANTE_MESSAGES.noEncontrado);
-  const record = await getAirtableClient().get(TABLES[kind].id, id, { fields: [TABLES[kind].fields.claveArca] });
+  const fields = kind === "ventas" ? [TABLES.ventas.fields.claveArca, TABLES.ventas.fields.comprobantesEmitidos] : [TABLES[kind].fields.claveArca];
+  const record = await getAirtableClient().get(TABLES[kind].id, id, { fields });
   if (!record) return fail(404, COMPROBANTE_MESSAGES.noEncontrado);
+  // CC-F5-10: una venta registrada desde una factura emitida no se borra.
+  const emitidos = kind === "ventas" ? record.fields[TABLES.ventas.fields.comprobantesEmitidos] : undefined;
+  if (Array.isArray(emitidos) && emitidos.length > 0) return fail(409, COMPROBANTE_MESSAGES.facturaEmitida);
+  // CC-F5-12: también si un comprobante Producción + Autorizada tiene su Clave ARCA (el link puede no
+  // existir todavía). Fail-closed: sin poder leer, no se borra.
+  if (kind === "ventas") {
+    const clave = typeof record.fields[TABLES.ventas.fields.claveArca] === "string" ? (record.fields[TABLES.ventas.fields.claveArca] as string) : "";
+    try {
+      if (await ventaDeFacturaEmitida(clave)) return fail(409, COMPROBANTE_MESSAGES.facturaEmitida);
+    } catch {
+      console.error("[comprobantes] No se pudo verificar Comprobantes emitidos antes de borrar", { id });
+      return fail(503, GUARD_MESSAGES.noVerificado);
+    }
+  }
   await getAirtableClient().delete(TABLES[kind].id, [id]);
   return { ok: true, data: { id } };
 }

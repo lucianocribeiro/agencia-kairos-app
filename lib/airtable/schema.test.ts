@@ -23,8 +23,9 @@ describe("schema", () => {
     expect(FIELD_TABLE.size).toBe(fieldIds.length);
   });
 
-  it("incluye las 18 tablas (Leads desde CC-F4-06, Sincronizaciones ARCA desde CC-F5-03)", () => {
-    expect(Object.keys(TABLES)).toHaveLength(18);
+  it("incluye las 19 tablas (Leads desde CC-F4-06, Sincronizaciones ARCA desde CC-F5-03, Comprobantes emitidos desde CC-F5-10)", () => {
+    expect(Object.keys(TABLES)).toHaveLength(19);
+    expect(TABLES.comprobantesEmitidos.id).toBe("tbllqb380hkGEuJTc");
     expect(TABLES.leads.id).toBe("tblZfsKxIckVSNRlV");
     expect(TABLES.sincronizacionesArca.id).toBe("tblxWFfPyzwSgggpc");
   });
@@ -60,7 +61,19 @@ describe("schema", () => {
 
   it("campos restringidos", () => {
     const sync = Object.values(TABLES.sincronizacionesArca.fields);
-    expect([...RESTRICTED_FIELDS].sort()).toEqual([U.passwordHash, P.valorHora, P.monedaValorHora, P.cliente, H.estadoFacturacion, U.sincronizacionesArca, ...sync].sort());
+    const emitidos = Object.values(TABLES.comprobantesEmitidos.fields);
+    expect([...RESTRICTED_FIELDS].sort()).toEqual([U.passwordHash, P.valorHora, P.monedaValorHora, P.cliente, H.estadoFacturacion, U.sincronizacionesArca, ...sync, U.comprobantesEmitidos, H.comprobantesEmitidos, ...emitidos].sort());
+  });
+
+  it("CC-F5-10: los inversos de Comprobantes emitidos bloquean borrados (Clientes, Ventas, Horas, Usuarios) y son de solo lectura", () => {
+    expect(REFERENCE_FIELDS.clientes).toContain(TABLES.clientes.fields.comprobantesEmitidos);
+    expect(REFERENCE_FIELDS.ventas).toEqual([TABLES.ventas.fields.comprobantesEmitidos]);
+    expect(REFERENCE_FIELDS.horas).toEqual([H.comprobantesEmitidos]);
+    expect(REFERENCE_FIELDS.usuarios).toContain(U.comprobantesEmitidos);
+    expect(REFERENCE_FIELDS.comprobantesEmitidos).toEqual([TABLES.comprobantesEmitidos.fields.corregidoPor]);
+    for (const id of [TABLES.clientes.fields.comprobantesEmitidos, TABLES.ventas.fields.comprobantesEmitidos, H.comprobantesEmitidos, U.comprobantesEmitidos, TABLES.comprobantesEmitidos.fields.corregidoPor]) expect(READ_ONLY_FIELDS.has(id)).toBe(true);
+    // Los links de Comprobantes emitidos sí se escriben (los escribe el servidor).
+    for (const id of [TABLES.comprobantesEmitidos.fields.cliente, TABLES.comprobantesEmitidos.fields.horas, TABLES.comprobantesEmitidos.fields.venta]) expect(READ_ONLY_FIELDS.has(id)).toBe(false);
   });
 });
 

@@ -34,6 +34,9 @@ Todas son **solo del servidor** (ninguna lleva `NEXT_PUBLIC_`) y son obligatoria
 | `SESSION_SECRET`   | Secreto para firmar sesiones (mínimo 32 caracteres).               |
 | `BOOTSTRAP_ADMIN_PASSWORD` | **Solo local.** Contraseña inicial del primer Admin (`npm run bootstrap:admin`). Nunca se carga en Vercel. |
 | `AFIP_SDK_TOKEN` | **Opcional.** Token de la API de Afip SDK para «Sincronizar con ARCA». Sin él la app funciona igual y el botón queda deshabilitado. |
+| `AFIP_WSFE_ENV` | **Opcional.** Factura electrónica (CC-F5-10): `prod` = Producción (ARCA real); vacío o cualquier otra cosa = `dev` (Homologación, CUIT de prueba de Afip SDK, sin certificado). Usa el mismo `AFIP_SDK_TOKEN`. |
+| `AFIP_CERT_B64` | **Solo con `AFIP_WSFE_ENV=prod`.** Certificado PEM de ARCA en base64, en una línea (`base64 -i cert.crt \| tr -d '\n'`). Si falta o es inválido, la factura en Producción no está configurada (nunca cae a Homologación). |
+| `AFIP_KEY_B64` | **Solo con `AFIP_WSFE_ENV=prod`.** Clave privada PEM del certificado, en base64 en una línea. Nunca se loguea ni se devuelve. |
 | `AFIP_SDK_BASE_URL` | **Solo `next dev`.** Base URL de un stub local de Afip SDK para el smoke test (solo `http://localhost` / `127.0.0.1`). Nunca en Vercel. |
 
 Para generar `SESSION_SECRET`:
@@ -42,7 +45,7 @@ Para generar `SESSION_SECRET`:
 openssl rand -base64 32
 ```
 
-**En Vercel, las variables las carga Luciano** en la configuración del proyecto (Production y Preview): `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID` y `SESSION_SECRET`. `BOOTSTRAP_ADMIN_PASSWORD` no va en Vercel. `AFIP_SDK_TOKEN` va solo donde se quiera sincronizar con ARCA (Production).
+**En Vercel, las variables las carga Luciano** en la configuración del proyecto (Production y Preview): `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID` y `SESSION_SECRET`. `BOOTSTRAP_ADMIN_PASSWORD` no va en Vercel. `AFIP_SDK_TOKEN` va solo donde se quiera sincronizar con ARCA (Production). La factura electrónica queda en Homologación hasta que se carguen `AFIP_WSFE_ENV=prod`, `AFIP_CERT_B64` y `AFIP_KEY_B64` (solo Production).
 
 El token de Airtable necesita `data.records:read` y `data.records:write`; para correr `npm run setup:intentos-login` también `schema.bases:read` y `schema.bases:write`. No se suben al repo: `.env.example` va sin valores y `.env*` está en `.gitignore`.
 

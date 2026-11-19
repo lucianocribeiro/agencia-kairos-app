@@ -50,6 +50,8 @@ export const TABLES = {
       horas2Reverse: "fldF1Kkuo2a3Y3mtp",
       /** Link inverso "Sincronizaciones ARCA" (Sincronizaciones ARCA.usuario). Solo lectura: nunca se escribe. */
       sincronizacionesArca: "fldwwjuqd2KHiql2y",
+      /** Link inverso "Comprobantes emitidos" (Comprobantes emitidos.usuario, CC-F5-10). Solo lectura. */
+      comprobantesEmitidos: "fldDTuXZGNhrVEiKa",
     },
     choices: {
       rol: ["Admin", "Empleado", "Cliente"],
@@ -171,6 +173,12 @@ export const TABLES = {
        * lo lee, no lo muestra ni lo escribe, y no bloquea el borrado (no está en REFERENCE_FIELDS).
        */
       leads: "fldVOksrSGDYTcIaw",
+      /** Razón social para la factura electrónica (CC-F5-10). */
+      razonSocial: "fldbwBOyoKq5tzKf0",
+      /** Domicilio comercial para la factura electrónica (CC-F5-10). */
+      domicilioComercial: "fldocW1udVBgSf8v3",
+      /** Link inverso "Comprobantes emitidos" (Comprobantes emitidos.cliente, CC-F5-10). Solo lectura; bloquea el borrado. */
+      comprobantesEmitidos: "fldrPkv9FS40Vwlqt",
     },
     choices: {
       estado: ["Activo", "Inactivo"],
@@ -318,6 +326,8 @@ export const TABLES = {
       /** link → Clientes; del proyecto o por CUIT (lo setea la app) */
       cliente: "fldqeqrBsP8fG7erx",
       observaciones: "fld0RYRhVnGh7Ss9l",
+      /** Link inverso "Comprobantes emitidos" (Comprobantes emitidos.venta, CC-F5-10). Solo lectura; bloquea el borrado. */
+      comprobantesEmitidos: "fldbdsNyDkkGYUCuh",
     },
   },
 
@@ -447,6 +457,11 @@ export const TABLES = {
        * escribe el Admin; nunca se devuelve a un Empleado (RESTRICTED_FIELDS).
        */
       estadoFacturacion: "fld3m3N7B9Jz6JCfu",
+      /**
+       * Link inverso "Comprobantes emitidos" (Comprobantes emitidos.horas, CC-F5-10; solo Producción).
+       * Solo lectura; una hora facturada no se borra.
+       */
+      comprobantesEmitidos: "fldqym1HPF6P77lhe",
     },
     choices: {
       estadoFacturacion: ["Pendiente", "Facturada", "Pagada"],
@@ -556,6 +571,73 @@ export const TABLES = {
       estado: ["En proceso", "Lista para revisar", "Importada", "Error", "Vencida"],
     },
   },
+
+  /**
+   * Comprobantes emitidos (CC-F5-10): facturas electrónicas emitidas desde la app (WSFE vía
+   * Afip SDK). Lo escribe solo el servidor; nunca guarda certificados, claves ni tokens. El PDF
+   * se arma siempre desde `datos` (snapshot JSON de lo enviado), nunca de Clientes/Parámetros.
+   * Crea: scripts/setup-comprobantes-emitidos.mjs (`--verify`).
+   */
+  comprobantesEmitidos: {
+    id: "tbllqb380hkGEuJTc",
+    name: "Comprobantes emitidos",
+    fields: {
+      /** primario; «FA 00001-00000003 · <cliente> · 10/2026 · Homologación» (lo arma el servidor) */
+      comprobante: "fldqyxxx8MOu7TprO",
+      /** singleSelect: ver `choices.tipo` */
+      tipo: "fldHQrKQMRD6CO1yL",
+      /** singleSelect: ver `choices.ambiente` */
+      ambiente: "fldbnVSnqtV1KNKUy",
+      /** singleSelect: ver `choices.estado` */
+      estado: "fldxmmCRvEjGboEAj",
+      /** link → Clientes */
+      cliente: "flde5XCgz4Z9ouGqA",
+      /** date: primer día del mes facturado */
+      mes: "fld73zZyxshCcixKX",
+      /** link → Usuarios (el Admin que emitió) */
+      usuario: "fldvZXrtqrnvjBW5m",
+      puntoVenta: "fldL3L9PNf7UOTuTB",
+      numero: "fldtFqTuNQ3GOxgQH",
+      cae: "fldOw8ByIUg1VVNqJ",
+      /** date */
+      vencimientoCae: "fldmbxigXgoJvSxlf",
+      /** date */
+      fechaEmision: "fldgQPcn3u4g87EhC",
+      /** date */
+      vencimientoPago: "fld6mV8S8zmBxwzjV",
+      neto: "fldEqJvgTq8pk5rjA",
+      iva: "fldhORaNrc7mGi1Ph",
+      total: "fldB2wweScW1Jntfe",
+      /** tasa (0,21) */
+      alicuota: "fldC4iWc1YAymxxvR",
+      /** link → Horas (solo Producción) */
+      horas: "fldVg1FkawaqAgJib",
+      /** link → Ventas (solo Producción) */
+      venta: "flduYTNuGjWktalxx",
+      /** link → Comprobantes emitidos (la factura que corrige una Nota de Crédito) */
+      comprobanteAsociado: "fldE5r0BTL4I2HfFl",
+      /** Link inverso de comprobanteAsociado ("Corregido por"). Solo lectura. */
+      corregidoPor: "fldiOSxeJGHCLN7MJ",
+      /** multilineText: snapshot JSON (emisor y receptor enviados, detalle, importes, fechas, IDs de horas, CAE) */
+      datos: "fldAonZC8nOiaV2JW",
+      /**
+       * Solo Producción (CC-F5-12): claveArca(1, PV, Número, CUIT), la misma de la Venta. Se escribe al
+       * autorizar; bloquea borrar esa Venta aunque el link todavía no exista. Homologación: vacía.
+       */
+      claveArca: "fldzRsZE8m0pggdQk",
+      /** multilineText: motivo de un rechazo o estado (nunca bodies ni secretos) */
+      mensaje: "fldeFpwGJnL3PuAcR",
+      /** dateTime ISO, tz America/Argentina/Buenos_Aires */
+      iniciado: "fldAAO1RZT7oNFjhe",
+      /** dateTime ISO */
+      finalizado: "fld2vzudQAiQSh4qq",
+    },
+    choices: {
+      tipo: ["Factura A", "Nota de Crédito A"],
+      ambiente: ["Homologación", "Producción"],
+      estado: ["En proceso", "Autorizada", "Rechazada", "Incierta", "Anulada"],
+    },
+  },
 } as const;
 
 type Tables = typeof TABLES;
@@ -591,7 +673,7 @@ export const COMPUTED_FIELDS: ReadonlySet<string> = new Set<FieldId>([
  */
 export const REFERENCE_FIELDS = {
   // Como Horas › «Cargado por»: un usuario con sincronizaciones ARCA no se borra (se desactiva).
-  usuarios: [F.usuarios.horasReverse, F.usuarios.horas2Reverse, F.usuarios.sincronizacionesArca],
+  usuarios: [F.usuarios.horasReverse, F.usuarios.horas2Reverse, F.usuarios.sincronizacionesArca, F.usuarios.comprobantesEmitidos],
   socios: [TABLES.socios.fields.usuarios, TABLES.socios.fields.compras, TABLES.socios.fields.tesoreria],
   unidadesNegocio: [
     TABLES.unidadesNegocio.fields.proyectos,
@@ -607,22 +689,26 @@ export const REFERENCE_FIELDS = {
   ],
   cuentas: [TABLES.cuentas.fields.tesoreria],
   tiposComprobante: [TABLES.tiposComprobante.fields.ventas, TABLES.tiposComprobante.fields.compras],
-  clientes: [TABLES.clientes.fields.proyectos, TABLES.clientes.fields.ventas, TABLES.clientes.fields.tesoreria],
+  // CC-F5-10: un cliente con comprobantes emitidos no se borra (se pasa a Inactivo).
+  clientes: [TABLES.clientes.fields.proyectos, TABLES.clientes.fields.ventas, TABLES.clientes.fields.tesoreria, TABLES.clientes.fields.comprobantesEmitidos],
   tiposOperacion: [TABLES.tiposOperacion.fields.tesoreria],
   proyectos: [F.proyectos.usuarios, TABLES.proyectos.fields.ventas, TABLES.proyectos.fields.compras, TABLES.proyectos.fields.horas],
   proveedores: [TABLES.proveedores.fields.compras, TABLES.proveedores.fields.tesoreria],
   parametros: [],
-  // Ventas y Compras no tienen links inversos (nadie apunta a ellas).
-  ventas: [],
+  // CC-F5-10: una Venta registrada desde una factura emitida no se borra. Nadie apunta a Compras.
+  ventas: [TABLES.ventas.fields.comprobantesEmitidos],
   compras: [],
   // Nadie apunta a Tesorería.
   tesoreria: [],
-  horas: [],
+  // CC-F5-10: una hora facturada (Producción) no se borra.
+  horas: [F.horas.comprobantesEmitidos],
   intentosLogin: [],
   // Nadie apunta a Leads.
   leads: [],
   // Nadie apunta a Sincronizaciones ARCA.
   sincronizacionesArca: [],
+  // Una factura corregida por una Nota de Crédito no se borra (la app no borra facturas autorizadas).
+  comprobantesEmitidos: [TABLES.comprobantesEmitidos.fields.corregidoPor],
 } as const satisfies Record<TableKey, readonly FieldId[]>;
 
 /**
@@ -652,6 +738,10 @@ export const RESTRICTED_FIELDS: ReadonlySet<string> = new Set<FieldId>([
   /** Sincronizaciones ARCA (CC-F5-03): solo Admin; segunda barrera si algún camino de Empleado leyera Usuarios. */
   F.usuarios.sincronizacionesArca,
   ...(Object.values(TABLES.sincronizacionesArca.fields) as FieldId[]),
+  /** Comprobantes emitidos (CC-F5-10): solo Admin. */
+  F.usuarios.comprobantesEmitidos,
+  F.horas.comprobantesEmitidos,
+  ...(Object.values(TABLES.comprobantesEmitidos.fields) as FieldId[]),
 ]);
 
 /** fieldId → tableId, para validar que un campo pertenece a la tabla que se escribe. */

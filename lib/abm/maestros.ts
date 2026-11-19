@@ -125,6 +125,8 @@ export const MAESTRO_SPECS: Record<MaestroSlug, MaestroSpec> = {
       { key: "sigla", label: "Sigla", kind: "text", uppercase: true, required: true, hint: "2 letras. Única." },
       { key: "cuit", label: "CUIT", kind: "cuit", placeholder: "XX-XXXXXXXX-X" },
       { key: "condicionIva", label: "Condición IVA", kind: "select", options: CONDICION_IVA_CLIENTE },
+      { key: "razonSocial", label: "Razón social", kind: "text", hint: "Para la factura electrónica." },
+      { key: "domicilioComercial", label: "Domicilio comercial", kind: "text", hint: "Para la factura electrónica." },
       { key: "contacto", label: "Contacto", kind: "text" },
       { key: "telefono", label: "Teléfono", kind: "phone" },
       { key: "mail", label: "Mail", kind: "email" },

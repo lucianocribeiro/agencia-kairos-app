@@ -27,7 +27,8 @@ const DEV_ONLY_MARKERS = [
   { label: "inyección de fallas (solo dev)", bytes: Buffer.from("KAIROS_FAULT_INJECTION") },
   { label: "base URL alternativa de Afip SDK (solo dev)", bytes: Buffer.from("AFIP_SDK_BASE_URL") },
 ];
-const NAMES = ["AIRTABLE_TOKEN", "AIRTABLE_BASE_ID", "SESSION_SECRET", "BOOTSTRAP_ADMIN_PASSWORD", "AFIP_SDK_TOKEN"];
+// CC-F5-10: AFIP_WSFE_ENV, AFIP_CERT_B64 y AFIP_KEY_B64 (factura electrónica) tampoco pueden llegar al navegador.
+const NAMES = ["AIRTABLE_TOKEN", "AIRTABLE_BASE_ID", "SESSION_SECRET", "BOOTSTRAP_ADMIN_PASSWORD", "AFIP_SDK_TOKEN", "AFIP_WSFE_ENV", "AFIP_CERT_B64", "AFIP_KEY_B64"];
 // Valores muy cortos darían falsos positivos; ningún valor real es tan corto.
 const MIN_VALUE_LENGTH = 8;
 

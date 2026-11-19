@@ -11,6 +11,7 @@ const RECORD_ID_RE = /^rec[A-Za-z0-9]{14}$/;
 
 export const HORA_MESSAGES = {
   fecha: "Ingresá una fecha válida.",
+  facturada: "Esta hora está en una factura emitida: no se puede borrar.",
   proyecto: "Elegí un proyecto.",
   colaborador: "Elegí un colaborador.",
   tarea: "Contá en qué trabajaste.",

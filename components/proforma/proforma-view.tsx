@@ -18,7 +18,7 @@ const num = "text-right tabular-nums whitespace-nowrap";
 function Tabla({ titulo, head, children }: { titulo: string; head: { label: string; numeric?: boolean }[]; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="text-lg font-semibold text-white">{titulo}</h2>
+      <h2 className="text-lg font-semibold text-strong">{titulo}</h2>
       <div className="w-full overflow-x-auto rounded-lg border border-line">
         <table className="w-full border-collapse text-left text-sm">
           <thead className="bg-surface text-xs uppercase tracking-wide text-muted">
@@ -51,7 +51,7 @@ export function ProformaView({ clientes, cliente, mes, data, error }: ProformaVi
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">Proforma de horas</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Proforma de horas</h1>
         <div className="flex flex-wrap items-end gap-3">
           <form method="get" action="/reportes/proforma" className="flex flex-wrap items-end gap-2">
             <label className="flex flex-col gap-1 text-sm text-text">
@@ -97,7 +97,7 @@ export function ProformaView({ clientes, cliente, mes, data, error }: ProformaVi
             ].map(([k, v]) => (
               <div key={k} className="flex flex-col gap-1">
                 <dt className="text-xs uppercase tracking-wide text-muted">{k}</dt>
-                <dd className="font-medium text-white">{v}</dd>
+                <dd className="font-medium text-strong">{v}</dd>
               </div>
             ))}
           </dl>
@@ -124,7 +124,7 @@ export function ProformaView({ clientes, cliente, mes, data, error }: ProformaVi
               </Tabla>
               <Tabla titulo={`Totales por moneda (${data.alicuotaLabel})`} head={[{ label: "Moneda" }, { label: "Subtotal", numeric: true }, { label: data.alicuotaLabel, numeric: true }, { label: "Total", numeric: true }]}>
                 {data.totales.map((t) => (
-                  <tr key={t.moneda} className="bg-surface font-semibold text-white">
+                  <tr key={t.moneda} className="bg-surface font-semibold text-strong">
                     <td className={cn(td, "sticky left-0 z-10 bg-surface")}>{t.moneda}</td>
                     <td className={cn(td, num)}>{money(t.subtotal)}</td>
                     <td className={cn(td, num)}>{money(t.iva)}</td>

@@ -108,7 +108,7 @@ export function MisHorasManager({ today, proyectos, filtros, initial }: Props) {
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-      <h1 className="text-2xl font-semibold tracking-tight text-white">Mis horas</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-strong">Mis horas</h1>
 
       {proyectos.length === 0 ? (
         <InlineMessage tone="info">{SIN_PROYECTOS}</InlineMessage>
@@ -166,7 +166,7 @@ export function MisHorasManager({ today, proyectos, filtros, initial }: Props) {
       )}
 
       <section aria-labelledby="mis-horas-lista" className="flex flex-col gap-3">
-        <h2 id="mis-horas-lista" className="text-lg font-semibold text-white">
+        <h2 id="mis-horas-lista" className="text-lg font-semibold text-strong">
           Registros
         </h2>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -208,7 +208,7 @@ export function MisHorasManager({ today, proyectos, filtros, initial }: Props) {
               <th scope="row" colSpan={5} className="px-4 py-3 text-right font-medium text-muted">
                 Total
               </th>
-              <td className="px-4 py-3 text-right font-semibold text-white tabular-nums">{formatHours(list.total)}</td>
+              <td className="px-4 py-3 text-right font-semibold text-strong tabular-nums">{formatHours(list.total)}</td>
             </tr>
           </tfoot>
         </Table>

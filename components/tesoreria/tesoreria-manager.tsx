@@ -240,7 +240,7 @@ export function TesoreriaManager({ today, initial }: { today: string; initial: T
   return (
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">Tesorería</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Tesorería</h1>
         {!editing && (
           <div className="flex flex-wrap gap-2">
             <Button onClick={nuevoMovimiento}>
@@ -400,7 +400,7 @@ export function TesoreriaManager({ today, initial }: { today: string; initial: T
         ].map(([name, value]) => (
           <div key={name as string} className="rounded-lg border border-line bg-card px-4 py-3">
             <dt className="text-xs text-muted">{name}</dt>
-            <dd className="text-lg font-semibold text-white tabular-nums">{money(value as number)}</dd>
+            <dd className="text-lg font-semibold text-strong tabular-nums">{money(value as number)}</dd>
           </div>
         ))}
       </dl>
@@ -446,7 +446,7 @@ export function TesoreriaManager({ today, initial }: { today: string; initial: T
                   <TableCell numeric>{money(r.importePesos)}</TableCell>
                   <TableCell className="min-w-40">
                     {r.tipo?.nombre ?? "—"}
-                    {r.transferencia && <span className="block text-xs text-accent">{r.movimiento === "Pago" ? "→" : "←"} {r.otraCuenta?.nombre ?? "(otra cuenta)"}</span>}
+                    {r.transferencia && <span className="block text-xs text-accent-text">{r.movimiento === "Pago" ? "→" : "←"} {r.otraCuenta?.nombre ?? "(otra cuenta)"}</span>}
                   </TableCell>
                   <TableCell>{r.tercero?.nombre ?? "—"}</TableCell>
                   <TableCell>{r.suma}</TableCell>

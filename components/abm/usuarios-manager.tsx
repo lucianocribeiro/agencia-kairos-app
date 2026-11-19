@@ -148,7 +148,7 @@ export function UsuariosManager({ data, currentUserId }: { data: AbmData; curren
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">Usuarios</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Usuarios</h1>
         {!editing && (
           <Button onClick={() => open({ mode: "create" })}>
             <Plus aria-hidden="true" className="size-4" />

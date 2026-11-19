@@ -149,8 +149,8 @@ export function ComprobantesManager({ kind, today, initial }: { kind: Kind; toda
   return (
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">{label.titulo}</h1>
-        <Link href={`/${kind}/importar`} className="text-sm text-accent hover:underline">
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">{label.titulo}</h1>
+        <Link href={`/${kind}/importar`} className="text-sm text-accent-text hover:underline">
           Importar desde ARCA
         </Link>
       </header>
@@ -262,7 +262,7 @@ export function ComprobantesManager({ kind, today, initial }: { kind: Kind; toda
         ].map(([name, value]) => (
           <div key={name} className="rounded-lg border border-line bg-card px-4 py-3">
             <dt className="text-xs text-muted">{name}</dt>
-            <dd className="text-lg font-semibold text-white tabular-nums">{pesos(value as number)}</dd>
+            <dd className="text-lg font-semibold text-strong tabular-nums">{pesos(value as number)}</dd>
           </div>
         ))}
       </dl>

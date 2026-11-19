@@ -21,7 +21,7 @@ export async function ReportePage({ slug, searchParams }: { slug: ReporteSlug; s
     if (res.status !== 400) throw new Error(res.error);
     return (
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">{REPORTES[slug].titulo}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">{REPORTES[slug].titulo}</h1>
         <InlineMessage tone="danger">{res.error}</InlineMessage>
         <a href={REPORTES[slug].ruta} className="text-sm text-text underline">
           Volver al período por defecto

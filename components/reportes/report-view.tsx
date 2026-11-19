@@ -17,7 +17,7 @@ export function ReportView({ slug, vista, desde }: { slug: ReporteSlug; vista: V
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-white">{vista.titulo}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-strong">{vista.titulo}</h1>
           {vista.lineas.map((l) => (
             <p key={l} className="text-sm text-muted">
               {l}

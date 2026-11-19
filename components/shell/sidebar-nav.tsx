@@ -25,7 +25,7 @@ interface SidebarNavProps {
 const itemBase =
   "group relative flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors";
 const itemIdle = "text-muted hover:bg-card hover:text-text";
-const itemActive = "bg-card text-accent";
+const itemActive = "bg-card text-accent-text";
 
 function ActiveBar() {
   return <span aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-accent" />;

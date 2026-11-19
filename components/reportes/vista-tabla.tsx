@@ -18,7 +18,7 @@ export function mostrar(kind: ColumnKind, v: string | number | null): string {
 export function Tabla({ tabla }: { tabla: VistaTabla }) {
   return (
     <section className="flex flex-col gap-2">
-      {tabla.titulo && <h2 className="text-lg font-semibold text-white">{tabla.titulo}</h2>}
+      {tabla.titulo && <h2 className="text-lg font-semibold text-strong">{tabla.titulo}</h2>}
       {tabla.error ? (
         <InlineMessage tone="danger">{tabla.error}</InlineMessage>
       ) : (
@@ -35,7 +35,7 @@ export function Tabla({ tabla }: { tabla: VistaTabla }) {
             </thead>
             <tbody className="divide-y divide-line bg-card">
               {tabla.filas.map((f, r) => (
-                <tr key={r} className={cn(f.total && "bg-surface font-semibold text-white", f.seccion && "text-xs uppercase tracking-wide text-muted")}>
+                <tr key={r} className={cn(f.total && "bg-surface font-semibold text-strong", f.seccion && "text-xs uppercase tracking-wide text-muted")}>
                   {tabla.columnas.map((c, i) => {
                     const kind = kindDe(c, f);
                     const first = i === 0;

@@ -41,7 +41,7 @@ export function DashboardView({ today, initial }: { today: string; initial: Dash
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
-      <h1 className="text-2xl font-semibold tracking-tight text-white">Dashboard</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-strong">Dashboard</h1>
 
       <DashboardFilters
         today={today}
@@ -59,7 +59,7 @@ export function DashboardView({ today, initial }: { today: string; initial: Dash
 
       <p className="text-sm text-muted">
         {displayDate(data.range.desde)} al {displayDate(data.range.hasta)} · Total{" "}
-        <span className="font-semibold text-white tabular-nums">{formatHours(data.total)}</span> h
+        <span className="font-semibold text-strong tabular-nums">{formatHours(data.total)}</span> h
       </p>
       {error && <InlineMessage tone="danger">{error}</InlineMessage>}
 

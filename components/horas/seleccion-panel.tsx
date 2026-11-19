@@ -106,7 +106,7 @@ export function SeleccionPanel({
             {items.map(([label, value]) => (
               <div key={label} className="flex flex-col gap-0.5">
                 <dt className="text-xs uppercase tracking-wide text-muted">{label}</dt>
-                <dd className={label === "Total" ? "font-semibold text-white tabular-nums" : "text-text tabular-nums"}>{value}</dd>
+                <dd className={label === "Total" ? "font-semibold text-strong tabular-nums" : "text-text tabular-nums"}>{value}</dd>
               </div>
             ))}
           </dl>

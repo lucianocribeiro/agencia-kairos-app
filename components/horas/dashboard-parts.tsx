@@ -138,7 +138,7 @@ export function HoursTable({
                     {v > 0 ? <span className="text-text">{formatHours(v)}</span> : formatHours(0)}
                   </td>
                 ))}
-                <td className="px-4 py-2 text-right font-semibold tabular-nums text-white">{formatHours(r.total)}</td>
+                <td className="px-4 py-2 text-right font-semibold tabular-nums text-strong">{formatHours(r.total)}</td>
               </tr>
             ))
           )}
@@ -153,7 +153,7 @@ export function HoursTable({
                 {formatHours(v)}
               </td>
             ))}
-            <td className="px-4 py-3 text-right font-semibold tabular-nums text-accent">{formatHours(total)}</td>
+            <td className="px-4 py-3 text-right font-semibold tabular-nums text-accent-text">{formatHours(total)}</td>
           </tr>
         </tfoot>
       </table>

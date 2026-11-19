@@ -42,7 +42,8 @@ async function descargarExcel(ids: readonly string[]): Promise<string | null> {
 
 /**
  * Resumen de las horas seleccionadas (importe como la Proforma) con Excel, «Limpiar selección» y
- * (CC-F4-08) «Marcar como facturadas» / «Marcar como pagadas», con el diálogo de la app.
+ * (CC-F4-08) «Marcar como facturadas» / «Marcar como pagadas» y (CC-F4-10) «Volver a pendiente»,
+ * con el diálogo de la app. Es el único lugar donde cambia el Estado de facturación.
  */
 export function SeleccionPanel({
   ids,
@@ -123,12 +124,11 @@ export function SeleccionPanel({
           >
             {downloading ? "Descargando…" : "Descargar Excel"}
           </Button>
-          <Button variant="secondary" onClick={() => setMarcar("Facturada")} disabled={!data || loading || marcando}>
-            Marcar como facturadas
-          </Button>
-          <Button variant="secondary" onClick={() => setMarcar("Pagada")} disabled={!data || loading || marcando}>
-            Marcar como pagadas
-          </Button>
+          {(["Facturada", "Pagada", "Pendiente"] as const).map((estado) => (
+            <Button key={estado} variant="secondary" onClick={() => setMarcar(estado)} disabled={!data || loading || marcando}>
+              {ESTADO_MESSAGES.accion[estado]}
+            </Button>
+          ))}
           <Button variant="secondary" onClick={onClear}>
             Limpiar selección
           </Button>
@@ -136,7 +136,7 @@ export function SeleccionPanel({
         <ConfirmDialog
           open={marcar !== null}
           title={marcar ? ESTADO_MESSAGES.confirmar(ids.length, marcar) : ""}
-          confirmLabel={marcar === "Pagada" ? "Marcar como pagadas" : "Marcar como facturadas"}
+          confirmLabel={ESTADO_MESSAGES.accion[marcar ?? "Facturada"]}
           confirmVariant="primary"
           busy={marcando}
           busyLabel="Guardando…"

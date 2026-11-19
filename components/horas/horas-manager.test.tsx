@@ -86,6 +86,20 @@ function type(input: HTMLInputElement, value: string) {
 }
 const editar = (fechaLabel: string) => act(() => container.querySelector<HTMLButtonElement>(`button[aria-label^="Editar registro del ${fechaLabel}"]`)!.click());
 
+describe("Horas (Admin) · formulario sin Estado de facturación (CC-F4-10 / F4-12)", () => {
+  it("alta y edición: no hay campo «Estado de facturación»", () => {
+    act(() => button("Nuevo registro").click());
+    const form = container.querySelector("form")!;
+    expect(form.textContent).not.toMatch(/Estado de facturación/i);
+    expect([...form.querySelectorAll("select option")].some((o) => ["Facturada", "Pagada"].includes(o.textContent ?? ""))).toBe(false);
+    act(() => button("Cancelar").click());
+    editar("20/03/2030");
+    const edit = container.querySelector("form")!;
+    expect(edit.textContent).not.toMatch(/Estado de facturación/i);
+    expect([...edit.querySelectorAll("select option")].some((o) => ["Facturada", "Pagada"].includes(o.textContent ?? ""))).toBe(false);
+  });
+});
+
 describe("Horas (Admin) · Mes a facturar en el formulario (CC-F4-03)", () => {
   it("alta: precargado con el mes de la Fecha, obligatorio, y sigue a la Fecha mientras no se cambie a mano", () => {
     act(() => button("Nuevo registro").click());
@@ -140,6 +154,8 @@ describe("Horas (Admin) · Mes a facturar en el formulario (CC-F4-03)", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/admin/horas");
     expect(JSON.parse(init.body)).toMatchObject({ fecha: "2030-06-30", mesAFacturar: "2030-06" });
+    // CC-F4-10 (F4-12): el alta no manda Estado de facturación.
+    expect(JSON.parse(init.body)).not.toHaveProperty("estadoFacturacion");
   });
 
   it.each([

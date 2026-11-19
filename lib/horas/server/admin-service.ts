@@ -166,8 +166,8 @@ export async function createHora(actor: Actor, raw: RawValues): Promise<ServiceR
     cargadoPor: actor.id,
     facturable: values.facturable ?? true,
     mesAFacturar: values.mesAFacturar,
-    // CC-F4-08: Pendiente si no vino.
-    estadoFacturacion: values.estadoFacturacion ?? ESTADO_PENDIENTE,
+    // CC-F4-10 (F4-12): una hora cargada es siempre Pendiente (el body no lo puede cambiar).
+    estadoFacturacion: ESTADO_PENDIENTE,
   });
   return writeHora({ mode: "create" }, fields, slot);
 }
@@ -175,7 +175,7 @@ export async function createHora(actor: Actor, raw: RawValues): Promise<ServiceR
 /** Edición. Cargado por no cambia nunca. */
 export async function updateHora(_actor: Actor, id: string, raw: RawValues): Promise<ServiceResult<{ id: string }>> {
   if (!RECORD_ID_RE.test(id)) return fail(404, HORA_MESSAGES.noEncontrado);
-  // Con el Estado de facturación: el rollback de la verificación posterior lo restaura si se editó.
+  // Se lee con el Estado de facturación (no se escribe; ver abajo).
   const existing = await getHora(id, HORAS_ADMIN_READ_FIELDS);
   if (!existing) return fail(404, HORA_MESSAGES.noEncontrado);
 
@@ -204,8 +204,8 @@ export async function updateHora(_actor: Actor, id: string, raw: RawValues): Pro
     colaborador: values.colaborador,
     facturable: values.facturable,
     mesAFacturar: values.mesAFacturar,
-    // CC-F4-08: cualquier dirección (correcciones); si no vino, queda el guardado.
-    estadoFacturacion: values.estadoFacturacion,
+    // CC-F4-10 (F4-12): la edición nunca toca el Estado de facturación (queda el guardado); solo
+    // cambia desde la selección. Como no se escribe, el rollback tampoco lo modifica.
   });
   delete fields[H.cargadoPor];
   return writeHora({ mode: "edit", existing }, fields, slot);

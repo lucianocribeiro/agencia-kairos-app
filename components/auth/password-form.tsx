@@ -3,6 +3,8 @@
 import { useState, type FormEvent } from "react";
 
 import { Button, FormField, InlineMessage, Input } from "@/components/ui";
+import { useHydrated } from "@/components/ui/use-hydrated";
+import { NO_JS_MESSAGE, noJsAction } from "@/lib/no-js-form";
 import { checkNewPassword, PASSWORD_MAX_BYTES, PASSWORD_MIN_LENGTH } from "@/lib/auth/password-policy";
 
 import { useJsonPost } from "./use-json-post";
@@ -11,6 +13,7 @@ import { useJsonPost } from "./use-json-post";
 export function PasswordForm() {
   const { submit, pending, error } = useJsonPost("/api/auth/password");
   const [local, setLocal] = useState<{ field: string; message: string } | null>(null);
+  const hydrated = useHydrated();
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -33,7 +36,11 @@ export function PasswordForm() {
   const generalError = error && !error.field ? error.message : null;
 
   return (
-    <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
+    // POST y action segura: un envío nativo (antes de hidratar) nunca pone las contraseñas en la URL (CC-F4-10).
+    <form method="post" action={noJsAction("cambiar-password")} onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
+      <noscript>
+        <InlineMessage tone="info">{NO_JS_MESSAGE}</InlineMessage>
+      </noscript>
       {generalError && <InlineMessage tone="danger">{generalError}</InlineMessage>}
       <FormField label="Contraseña actual" required error={fieldError("actual")}>
         <Input type="password" name="actual" autoComplete="current-password" autoFocus />
@@ -44,7 +51,7 @@ export function PasswordForm() {
       <FormField label="Repetí la contraseña nueva" required error={fieldError("repetir")}>
         <Input type="password" name="repetir" autoComplete="new-password" />
       </FormField>
-      <Button type="submit" disabled={pending} className="mt-2 w-full">
+      <Button type="submit" disabled={!hydrated || pending} className="mt-2 w-full">
         {pending ? "Guardando…" : "Cambiar contraseña"}
       </Button>
     </form>

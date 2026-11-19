@@ -153,7 +153,8 @@ describe("schema y reglas", () => {
     expect([...HT.choices.estadoFacturacion]).toEqual(["Pendiente", "Facturada", "Pagada"]);
     expect(RESTRICTED_FIELDS.has(H.estadoFacturacion)).toBe(true);
     expect(HORA_INPUT_KEYS.empleado).not.toContain("estadoFacturacion");
-    expect(HORA_INPUT_KEYS.admin).toContain("estadoFacturacion");
+    // CC-F4-10 (F4-12): tampoco el Admin lo manda desde el formulario de horas.
+    expect(HORA_INPUT_KEYS.admin).not.toContain("estadoFacturacion");
   });
 
   it("vacío o desconocido = Pendiente; textos con plural y singular", () => {
@@ -163,33 +164,59 @@ describe("schema y reglas", () => {
     expect(ESTADO_MESSAGES.confirmar(1, "Pagada")).toBe("¿Marcar 1 hora como pagada?");
     expect(ESTADO_MESSAGES.hecho(2, "Facturada")).toBe("2 horas marcadas como facturadas.");
     expect(ESTADO_MESSAGES.hecho(1, "Facturada")).toBe("1 hora marcada como facturada.");
+    // CC-F4-10: «Volver a pendiente».
+    expect(ESTADO_MESSAGES.confirmar(3, "Pendiente")).toBe("¿Volver 3 horas a pendiente?");
+    expect(ESTADO_MESSAGES.confirmar(1, "Pendiente")).toBe("¿Volver 1 hora a pendiente?");
+    expect(ESTADO_MESSAGES.hecho(3, "Pendiente")).toBe("3 horas vueltas a pendiente.");
+    expect(ESTADO_MESSAGES.hecho(1, "Pendiente")).toBe("1 hora vuelta a pendiente.");
+    expect(ESTADO_MESSAGES.accion).toEqual({ Pendiente: "Volver a pendiente", Facturada: "Marcar como facturadas", Pagada: "Marcar como pagadas" });
   });
 });
 
 describe("Admin › Horas", () => {
   beforeEach(() => loginAs(ids.admin));
 
-  it("alta: Pendiente por defecto; con un estado válido, ese; inválido → 400 sin escribir", async () => {
+  it("alta: siempre Pendiente, aunque mande otro estado (válido, inválido o por ID de campo) (CC-F4-10)", async () => {
     const a = await call(AD_HORAS, "POST", { body: adminBody() });
     expect(a.status).toBe(201);
     expect(row(a.json.id)[H.estadoFacturacion]).toBe("Pendiente");
-    const b = await call(AD_HORAS, "POST", { body: adminBody({ desde: "11:00", hasta: "12:00", estadoFacturacion: "Facturada" }) });
-    expect(row(b.json.id)[H.estadoFacturacion]).toBe("Facturada");
-    const n = writes().length;
+    const b = await call(AD_HORAS, "POST", { body: adminBody({ desde: "11:00", hasta: "12:00", estadoFacturacion: "Facturada", [H.estadoFacturacion]: "Pagada" }) });
+    expect(b.status).toBe(201);
+    expect(row(b.json.id)[H.estadoFacturacion]).toBe("Pendiente");
     const c = await call(AD_HORAS, "POST", { body: adminBody({ desde: "13:00", hasta: "14:00", estadoFacturacion: "Cobrada" }) });
-    expect(c.status).toBe(400);
-    expect(c.json.fieldErrors.estadoFacturacion).toBe(ESTADO_MESSAGES.invalido);
-    expect(writes().length).toBe(n);
+    expect(c.status).toBe(201);
+    expect(row(c.json.id)[H.estadoFacturacion]).toBe("Pendiente");
   });
 
-  it("edición: cualquier dirección (Pagada → Pendiente); sin estado en el body queda el guardado", async () => {
+  it("edición: un estado en el body se ignora y el guardado no cambia; el PATCH no escribe el campo (CC-F4-10)", async () => {
     const body = (over: Record<string, unknown>) => adminBody({ fecha: "2026-11-05", desde: "09:00", hasta: "09:40", ...over });
-    expect((await call(AD_HORA, "PATCH", { params: { id: ids.h4 }, body: body({ estadoFacturacion: "Pendiente" }) })).status).toBe(200);
-    expect(row(ids.h4)[H.estadoFacturacion]).toBe("Pendiente");
-    expect((await call(AD_HORA, "PATCH", { params: { id: ids.h4 }, body: body({ estadoFacturacion: "Pagada" }) })).status).toBe(200);
     expect(row(ids.h4)[H.estadoFacturacion]).toBe("Pagada");
-    expect((await call(AD_HORA, "PATCH", { params: { id: ids.h4 }, body: body({ tarea: "Otra" }) })).status).toBe(200);
+    fake.calls.length = 0;
+    for (const estadoFacturacion of ["Pendiente", "Facturada", "Cobrada"]) {
+      expect((await call(AD_HORA, "PATCH", { params: { id: ids.h4 }, body: body({ estadoFacturacion, [H.estadoFacturacion]: estadoFacturacion }) })).status).toBe(200);
+      expect(row(ids.h4)[H.estadoFacturacion]).toBe("Pagada");
+    }
+    const updates = fake.calls.filter((c) => c.method === "update" && c.tableId === TABLES.horas.id);
+    expect(updates.length).toBeGreaterThan(0);
+    for (const u of updates) for (const r of u.payload as { fields: Record<string, unknown> }[]) expect(r.fields).not.toHaveProperty(H.estadoFacturacion);
+  });
+
+  it("edición deshecha por la verificación posterior → el estado guardado sigue igual (nunca se escribe)", async () => {
+    const body = adminBody({ fecha: "2026-11-05", desde: "09:00", hasta: "09:40", tarea: "Cambio" });
+    // La verificación posterior (superposición) no se puede leer → se deshace la edición → 503.
+    let escrito = false;
+    fake.failWhen((call) => {
+      if (call.method === "update" && call.tableId === TABLES.horas.id) escrito = true;
+      return escrito && call.method === "list" && call.tableId === TABLES.horas.id;
+    }, new Error("relectura caída"));
+    fake.calls.length = 0;
+    const res = await call(AD_HORA, "PATCH", { params: { id: ids.h4 }, body: { ...body, estadoFacturacion: "Pendiente" } });
+    expect(res.status).toBe(503);
     expect(row(ids.h4)[H.estadoFacturacion]).toBe("Pagada");
+    expect(row(ids.h4)[H.tarea]).not.toBe("Cambio");
+    const updates = fake.calls.filter((c) => c.method === "update" && c.tableId === TABLES.horas.id);
+    expect(updates).toHaveLength(2); // la edición y su rollback
+    for (const u of updates) for (const r of u.payload as { fields: Record<string, unknown> }[]) expect(r.fields).not.toHaveProperty(H.estadoFacturacion);
   });
 
   it("lista: columna con el estado efectivo (vacío → Pendiente) y filtro por estado", async () => {

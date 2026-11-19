@@ -4,7 +4,7 @@ import { Activity, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const { Cargando, CARGANDO_APARECE, CARGANDO_DELAY_MS, CARGANDO_GIRO, CARGANDO_SIZE, CARGANDO_TEXTO } = await import("./cargando");
+const { Cargando, CARGANDO_APARECE, CARGANDO_DELAY_MS, CARGANDO_GIRO, CARGANDO_SIZE, CARGANDO_SRC, CARGANDO_TEMA, CARGANDO_TEXTO } = await import("./cargando");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,16 +22,16 @@ afterEach(() => {
 
 const img = () => container.querySelector("img");
 const status = () => container.querySelector('[role="status"]');
-/** next/image sirve el PNG por el optimizador: /_next/image?url=%2Fklogo.png&w=…&q=… */
+/** next/image sirve el PNG por el optimizador: /_next/image?url=%2Fklogo-transparente.png&w=…&q=… */
 const servesK = (el: Element | null) => {
   const url = new URL(el?.getAttribute("src") ?? "", "http://x");
-  return url.pathname === "/_next/image" && url.searchParams.get("url") === "/klogo.png";
+  return url.pathname === "/_next/image" && url.searchParams.get("url") === "/klogo-transparente.png";
 };
 const css = readFileSync("app/globals.css", "utf8");
 const keyframes = /@keyframes cargando-aparece \{\s*from \{\s*opacity: 0;\s*visibility: hidden;\s*\}\s*to \{\s*opacity: 1;\s*visibility: visible;\s*\}\s*\}/;
 
 describe("Indicador de carga (CC-F4-13)", () => {
-  it("muestra la K (/klogo.png, 96×90), role=status y «Cargando…» para lectores de pantalla; la imagen es decorativa", () => {
+  it("muestra la K (/klogo-transparente.png, 96×90), role=status y «Cargando…» para lectores de pantalla; la imagen es decorativa", () => {
     act(() => root.render(<Cargando />));
     expect(servesK(img())).toBe(true);
     expect(img()!.getAttribute("alt")).toBe("");
@@ -63,13 +63,19 @@ describe("Indicador de carga (CC-F4-13)", () => {
 
   it("gira una vuelta cada 1,2 s, lineal; con prefers-reduced-motion queda quieta", () => {
     act(() => root.render(<Cargando />));
-    expect(img()!.getAttribute("class")).toBe(CARGANDO_GIRO);
+    expect(img()!.getAttribute("class")).toContain(CARGANDO_GIRO);
     expect(CARGANDO_GIRO).toBe("animate-[spin_1.2s_linear_infinite] motion-reduce:animate-none");
   });
 
-  it("modo claro: el PNG es K negra sobre blanco opaco → se muestra tal cual (sin light:brightness-0)", () => {
+  it("color por tema (CC-F4-13-FIX): PNG transparente con la K negra → blanca en oscuro (invert), negra en claro (light:invert-0)", () => {
     act(() => root.render(<Cargando />));
-    expect(container.innerHTML).not.toMatch(/light:|brightness/);
+    expect(CARGANDO_SRC).toBe("/klogo-transparente.png");
+    expect(CARGANDO_TEMA).toBe("invert light:invert-0");
+    expect(img()!.getAttribute("class")).toBe(`${CARGANDO_GIRO} ${CARGANDO_TEMA}`);
+    expect(container.innerHTML).not.toMatch(/brightness/);
+    // public/klogo.png sigue en el repo como fuente, pero la app no lo usa.
+    expect(readFileSync("public/klogo.png").length).toBeGreaterThan(0);
+    expect(readFileSync("components/shell/cargando.tsx", "utf8").replace(/\/\*[\s\S]*?\*\//g, "")).not.toMatch(/["/]klogo\.png/);
   });
 
   it("se usa en el fallback de <Guarded> y en los loading.tsx de (admin), (empleado) y (cliente); no en (auth)", () => {

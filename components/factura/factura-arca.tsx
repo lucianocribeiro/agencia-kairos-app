@@ -7,7 +7,7 @@ import { Checkbox, ConfirmDialog, InlineMessage, Input } from "@/components/ui";
 import { buttonClasses } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { formatNumber, isoToDisplayDate } from "@/lib/format";
-import { DETALLE_MAX, moneyAr, n8, pv5, type ComprobanteVista, type FacturaEstado } from "@/lib/factura/factura";
+import { DETALLE_MAX, FACTURA_MESSAGES, moneyAr, n8, pv5, type ComprobanteVista, type FacturaEstado } from "@/lib/factura/factura";
 
 export const FACTURA_UI_MESSAGES = {
   titulo: "Factura ARCA",
@@ -214,6 +214,7 @@ export function FacturaArca({ cliente, mes, mesLabel, initial }: FacturaArcaProp
                   <tr key={c.id} className="align-top">
                     <td className="px-4 py-2">
                       <div className="font-medium text-strong">{c.label}</div>
+                      {c.pendienteRegistro && <div className="text-xs font-medium text-danger">{FACTURA_MESSAGES.faltaRegistro}</div>}
                       {c.mensaje && <div className="whitespace-pre-line text-xs text-muted">{c.mensaje}</div>}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2">{c.estado ?? ""}</td>

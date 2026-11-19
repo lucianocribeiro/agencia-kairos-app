@@ -55,7 +55,11 @@ describe("WSFE vía Afip SDK (CC-F5-10)", () => {
       { FECAESolicitarResult: { FeCabResp: { Resultado: "A" }, FeDetResp: { FECAEDetResponse: det } } },
       { FeCabResp: { Resultado: "A" }, FeDetResp: { FECAEDetResponse: [det] } },
       { data: { FECAESolicitarResult: { FeDetResp: { FECAEDetResponse: det } } } },
-    ]) expect(parseCae(body)).toEqual({ resultado: "A", cae: "70000000000001", caeFchVto: "20261129", observaciones: [] });
+    ]) expect(parseCae(body)).toEqual({ resultado: "A", cae: "70000000000001", caeFchVto: "2026-11-29", observaciones: [] });
+    // CC-F5-11: un "A" incompleto (sin vencimiento, vencimiento inválido, CAE de 13 dígitos o sin CAE) es inesperado.
+    for (const d of [{ ...det, CAEFchVto: undefined }, { ...det, CAEFchVto: "20261332" }, { ...det, CAEFchVto: "" }, { ...det, CAE: "7000000000001" }, { ...det, CAE: undefined }]) {
+      expect(() => parseCae({ FECAESolicitarResult: { FeCabResp: { Resultado: "A" }, FeDetResp: { FECAEDetResponse: [d] } } })).toThrow(AfipSdkError);
+    }
     expect(parseCae({ FECAESolicitarResult: { FeCabResp: { Resultado: "R" }, Errors: { Err: { Code: 10016, Msg: "Número" } } } })).toEqual({ resultado: "R", lineas: ["10016: Número"] });
     expect(parseCae({ FECAESolicitarResult: { Errors: { Err: [{ Code: 600, Msg: "Token" }] } } })).toEqual({ resultado: "R", lineas: ["600: Token"] });
     for (const bad of [null, "x", { FECAESolicitarResult: { FeDetResp: { FECAEDetResponse: { Resultado: "A", CAE: "corto" } } } }, { FECAESolicitarResult: {} }]) expect(() => parseCae(bad)).toThrow(AfipSdkError);
@@ -70,6 +74,19 @@ describe("WSFE vía Afip SDK (CC-F5-10)", () => {
     expect(await r.c.consultar(AUTH, "1", 1, 1, 9)).toBeNull();
     expect(await r.c.consultar(AUTH, "1", 1, 1, 9)).toEqual({ docNro: "30712345675", impTotal: 121.5, cbteFch: "20261119", cae: "70000000000001", caeFchVto: "20261129", resultado: "A" });
     expect(r.calls[0].body.params).toMatchObject({ FeCompConsReq: { CbteNro: 9, PtoVta: 1, CbteTipo: 1 } });
+  });
+
+  it("PEM (CC-F5-11): certificado solo CERTIFICATE; clave PRIVATE KEY / RSA / EC con el mismo rótulo en BEGIN y END", () => {
+    const b = (s: string) => Buffer.from(s).toString("base64");
+    const pem = (begin: string, end = begin) => `-----BEGIN ${begin}-----\nAAAA\n-----END ${end}-----`;
+    for (const l of ["PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY"]) expect(decodePem(b(pem(l)), "key")).toBe(pem(l));
+    for (const [begin, end] of [["RSA PRIVATE KEY", "PRIVATE KEY"], ["PRIVATE KEY", "EC PRIVATE KEY"], ["EC PRIVATE KEY", "RSA PRIVATE KEY"], ["ENCRYPTED PRIVATE KEY", "ENCRYPTED PRIVATE KEY"], ["DSA PRIVATE KEY", "DSA PRIVATE KEY"], ["PUBLIC KEY", "PUBLIC KEY"]]) {
+      expect(decodePem(b(pem(begin, end)), "key")).toBeNull();
+    }
+    for (const [begin, end] of [["CERTIFICATE REQUEST", "CERTIFICATE REQUEST"], ["TRUSTED CERTIFICATE", "TRUSTED CERTIFICATE"], ["CERTIFICATE", "PRIVATE KEY"], ["X509 CERTIFICATE", "X509 CERTIFICATE"]]) {
+      expect(decodePem(b(pem(begin, end)), "certificate")).toBeNull();
+    }
+    expect(decodePem(b(pem("CERTIFICATE")), "certificate")).toBe(pem("CERTIFICATE"));
   });
 
   it("PEM en base64: header válido; cualquier otra cosa → null", () => {

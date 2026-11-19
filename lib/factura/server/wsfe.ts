@@ -1,7 +1,7 @@
 import "server-only";
 
 import { AfipSdkError, AfipSdkTransport, readJsonCapped, type AfipSdkClientOptions } from "@/lib/arca/server/afipsdk";
-import { lineasArca } from "../factura";
+import { lineasArca, wsfeToIso } from "../factura";
 import type { FacturaConfig } from "./config";
 
 /**
@@ -56,7 +56,8 @@ export interface CaeRequest {
 }
 
 export type CaeResult =
-  | { resultado: "A"; cae: string; caeFchVto: string | null; observaciones: string[] }
+  /** CC-F5-11: solo con Resultado "A", CAE de 14 dígitos y CAEFchVto aaaammdd válida (ya como AAAA-MM-DD). */
+  | { resultado: "A"; cae: string; caeFchVto: string; observaciones: string[] }
   | { resultado: "R"; lineas: string[] };
 
 export interface ConsultaResult {
@@ -233,7 +234,10 @@ export function parseCae(body: unknown): CaeResult {
   const obs = det ? itemsOf(det.Observaciones, "Obs") : [];
   const resultado = str(det?.Resultado) ?? str(cab?.Resultado);
   const cae = str(det?.CAE);
-  if (resultado === "A" && cae && /^\d{14}$/.test(cae)) return { resultado: "A", cae, caeFchVto: str(det?.CAEFchVto), observaciones: lineasArca(obs) };
+  const vto = wsfeToIso(det?.CAEFchVto);
+  // Autorización completa o nada: un "A" sin CAE de 14 dígitos o sin vencimiento válido es una respuesta
+  // inesperada (→ Incierta, se resuelve con «Verificar en ARCA»), nunca Autorizada.
+  if (resultado === "A" && cae && /^\d{14}$/.test(cae) && vto) return { resultado: "A", cae, caeFchVto: vto, observaciones: lineasArca(obs) };
   if (resultado === "R" || (resultado === null && !det && errores.length > 0)) {
     const lineas = lineasArca([...errores, ...obs]);
     return { resultado: "R", lineas };

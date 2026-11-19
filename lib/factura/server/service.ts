@@ -294,13 +294,20 @@ export function vistaComprobante(r: ComprobanteRow, now = Date.now()): Comproban
     vencimientoCae: r.vencimientoCae,
     total: r.total === null ? null : Math.round(r.total * 100),
     mensaje: r.mensaje,
-    pdf: r.estado === "Autorizada" && r.datos !== null && r.numero !== null && r.cae !== null,
+    pdf: r.estado === "Autorizada" && autorizacionDelSnapshot(r.datos) !== null,
     verificable: r.estado === "Incierta" || colgado(r, now),
-    completable: r.estado === "Autorizada" && r.ambiente === "Producción" && pendienteDeRegistro(r),
+    completable: pendienteDeRegistro(r),
+    pendienteRegistro: pendienteDeRegistro(r),
   };
 }
 
-const pendienteDeRegistro = (r: ComprobanteRow) => r.venta === null || r.mensaje === FACTURA_MESSAGES.faltaRegistro;
+/**
+ * Registro pendiente (CC-F5-11), derivado de los datos y nunca del texto de Mensaje: una factura
+ * Autorizada en Producción sin el link a la Venta. `registrar` escribe el link a la Venta y a las
+ * horas en el mismo update, DESPUÉS de crear la Venta y de marcar las horas como Facturada: si
+ * cualquiera de esos pasos falla, el link no existe.
+ */
+export const pendienteDeRegistro = (r: Pick<ComprobanteRow, "estado" | "ambiente" | "venta">) => r.estado === "Autorizada" && r.ambiente === "Producción" && r.venta === null;
 
 export async function cargarEstadoFactura(clienteId: string, mes: string, now = new Date()): Promise<ServiceResult<FacturaEstado>> {
   const config = configLike();
@@ -569,12 +576,17 @@ export async function emitirFactura(user: SessionUser, body: Record<string, unkn
     await updateRowQuiet(id, { [F.estado]: "Rechazada", [F.mensaje]: mensaje, [F.finalizado]: nowIso(new Date()) });
     return { ok: true, data: { id, estado: "Rechazada", mensaje } };
   }
-  return autorizar(id, datos, resultado.cae, wsfeToIso(resultado.caeFchVto), label(numero), resultado.observaciones);
+  return autorizar(id, { ...datos, numero }, resultado.cae, resultado.caeFchVto, label(numero), resultado.observaciones);
 }
 
 /** Pasa a Autorizada con el CAE y (Producción) registra Ventas y Horas. Nunca deshace la factura. */
-async function autorizar(id: string, datos: FacturaDatos, cae: string, vencimientoCae: string | null, label: string, observaciones: string[] = []): Promise<ServiceResult<EmisionResultado>> {
-  const conCae: FacturaDatos = { ...datos, cae, vencimientoCae };
+/**
+ * Pasa a Autorizada. Número, CAE y Vencimiento CAE van al snapshot (Datos) en el MISMO update que
+ * los campos de la fila (CC-F5-11): el PDF sale solo de Datos. Las Observaciones de ARCA quedan
+ * siempre en Mensaje (los dos ambientes). Nunca deshace la factura.
+ */
+async function autorizar(id: string, datos: FacturaDatos & { numero: number }, cae: string, vencimientoCae: string, label: string, observaciones: string[] = []): Promise<ServiceResult<EmisionResultado>> {
+  const conCae: FacturaDatos = { ...datos, numero: datos.numero, cae, vencimientoCae };
   const mensajeObs = observaciones.length > 0 ? observaciones.join("\n") : null;
   try {
     await updateRow(id, {
@@ -584,7 +596,7 @@ async function autorizar(id: string, datos: FacturaDatos, cae: string, vencimien
       [F.numero]: conCae.numero,
       [F.comprobante]: label,
       [F.datos]: JSON.stringify(conCae),
-      [F.mensaje]: datos.ambiente === "Producción" ? FACTURA_MESSAGES.faltaRegistro : mensajeObs,
+      [F.mensaje]: mensajeObs,
       [F.finalizado]: nowIso(new Date()),
     });
   } catch {
@@ -594,7 +606,7 @@ async function autorizar(id: string, datos: FacturaDatos, cae: string, vencimien
   }
   if (datos.ambiente !== "Producción") return { ok: true, data: { id, estado: "Autorizada", mensaje: mensajeObs } };
   const reg = await registrar(id, conCae);
-  return { ok: true, data: { id, estado: "Autorizada", mensaje: reg ? mensajeObs : FACTURA_MESSAGES.faltaRegistro } };
+  return { ok: true, data: { id, estado: "Autorizada", mensaje: reg ? mensajeObs : [FACTURA_MESSAGES.faltaRegistro, mensajeObs].filter(Boolean).join("\n") } };
 }
 
 // ── Registro en Ventas y Horas (solo Producción, idempotente) ────────────────
@@ -692,11 +704,11 @@ async function registrar(id: string, d: FacturaDatos): Promise<boolean> {
 
     // Links del comprobante.
     const existentes = new Set(horas.filter((r) => d.horas.includes(r.id)).map((r) => r.id));
-    await updateRow(id, { [F.venta]: [ventaId], [F.horas]: d.horas.filter((h) => existentes.has(h)), [F.mensaje]: null });
+    // Venta y horas en el mismo update: es la marca de «registro completo» (ver pendienteDeRegistro). Mensaje no se toca.
+    await updateRow(id, { [F.venta]: [ventaId], [F.horas]: d.horas.filter((h) => existentes.has(h)) });
     return true;
   } catch {
     console.error("[factura] Falta registrar en Ventas/Horas", { id });
-    await updateRowQuiet(id, { [F.mensaje]: FACTURA_MESSAGES.faltaRegistro });
     return false;
   }
 }
@@ -705,9 +717,10 @@ async function registrar(id: string, d: FacturaDatos): Promise<boolean> {
 export async function completarRegistro(id: string): Promise<ServiceResult<EmisionResultado>> {
   const row = await leerComprobante(id);
   if (!row) return fail(404, FACTURA_MESSAGES.noEncontrado);
-  if (row.estado !== "Autorizada" || row.ambiente !== "Producción" || !row.datos || row.numero === null || !pendienteDeRegistro(row)) return fail(409, FACTURA_MESSAGES.noPendiente);
-  const ok = await registrar(id, { ...row.datos, numero: row.numero, cae: row.cae });
-  return ok ? { ok: true, data: { id, estado: "Autorizada", mensaje: null } } : fail(503, FACTURA_MESSAGES.faltaRegistro);
+  const snap = autorizacionDelSnapshot(row.datos);
+  if (!pendienteDeRegistro(row) || !snap) return fail(409, FACTURA_MESSAGES.noPendiente);
+  const ok = await registrar(id, snap);
+  return ok ? { ok: true, data: { id, estado: "Autorizada", mensaje: row.mensaje } } : fail(503, FACTURA_MESSAGES.faltaRegistro);
 }
 
 // ── Verificar en ARCA (Incierta) ─────────────────────────────────────────────
@@ -741,10 +754,15 @@ export async function verificarComprobante(id: string, now = new Date(), deps: W
     await updateRowQuiet(id, { [F.estado]: "Rechazada", [F.mensaje]: FACTURA_MESSAGES.noEmitida, [F.finalizado]: nowIso(now) });
     return { ok: true, data: { id, estado: "Rechazada", mensaje: FACTURA_MESSAGES.noEmitida } };
   }
+  // CC-F5-11: además de coincidir, ARCA tiene que informarla autorizada (Resultado "A", CAE de 14
+  // dígitos, FchVto válida), como en la forma real de FECompConsultar (ResultGet.Resultado/CodAutorizacion/FchVto).
+  const vencimiento = consulta ? wsfeToIso(consulta.caeFchVto) : null;
   const coincide =
     consulta !== null &&
+    consulta.resultado === "A" &&
     consulta.cae !== null &&
     /^\d{14}$/.test(consulta.cae) &&
+    vencimiento !== null &&
     consulta.docNro.replace(/\D/g, "") === datos.receptor.cuit &&
     consulta.impTotal !== null &&
     Math.round(consulta.impTotal * 100) === datos.importes.total &&
@@ -753,14 +771,26 @@ export async function verificarComprobante(id: string, now = new Date(), deps: W
     await updateRowQuiet(id, { [F.estado]: "Incierta", [F.mensaje]: FACTURA_MESSAGES.revisarManual });
     return { ok: true, data: { id, estado: "Incierta", mensaje: FACTURA_MESSAGES.revisarManual } };
   }
-  return autorizar(id, { ...datos, numero: row.numero }, consulta!.cae!, wsfeToIso(consulta!.caeFchVto), row.label);
+  return autorizar(id, { ...datos, numero: row.numero }, consulta!.cae!, vencimiento!, row.label);
 }
 
 // ── PDF ──────────────────────────────────────────────────────────────────────
 
+/** El snapshot con una autorización completa (número > 0, CAE de 14 dígitos, vencimiento válido), o null. */
+export function autorizacionDelSnapshot(d: FacturaDatos | null): (FacturaDatos & { numero: number; cae: string; vencimientoCae: string }) | null {
+  if (!d) return null;
+  const ok = typeof d.numero === "number" && Number.isInteger(d.numero) && d.numero > 0 && typeof d.cae === "string" && /^\d{14}$/.test(d.cae) && typeof d.vencimientoCae === "string" && wsfeToIso(d.vencimientoCae) === d.vencimientoCae;
+  return ok ? (d as FacturaDatos & { numero: number; cae: string; vencimientoCae: string }) : null;
+}
+
+/**
+ * Datos del PDF (CC-F5-11): EXCLUSIVAMENTE del snapshot. Número, CAE y Vencimiento CAE de la fila son
+ * solo para listar y filtrar; si el snapshot no tiene una autorización completa → 409 (sin PDF).
+ */
 export async function datosParaPdf(id: string): Promise<ServiceResult<FacturaDatos & { numero: number; cae: string }>> {
   const row = await leerComprobante(id);
   if (!row) return fail(404, FACTURA_MESSAGES.noEncontrado);
-  if (row.estado !== "Autorizada" || !row.datos || row.numero === null || !row.cae) return fail(409, FACTURA_MESSAGES.sinPdf);
-  return { ok: true, data: { ...row.datos, numero: row.numero, cae: row.cae, vencimientoCae: row.vencimientoCae ?? row.datos.vencimientoCae } };
+  const snap = row.estado === "Autorizada" ? autorizacionDelSnapshot(row.datos) : null;
+  if (!snap) return fail(409, FACTURA_MESSAGES.sinPdf);
+  return { ok: true, data: snap };
 }

@@ -47,7 +47,8 @@ export function decodePem(value: string | undefined, kind: "certificate" | "key"
   } catch {
     return null;
   }
-  const label = kind === "certificate" ? /^-----BEGIN CERTIFICATE-----\n[\s\S]+\n-----END CERTIFICATE-----$/ : /^-----BEGIN (RSA |EC |ENCRYPTED )?PRIVATE KEY-----\n[\s\S]+\n-----END (RSA |EC |ENCRYPTED )?PRIVATE KEY-----$/;
+  // CC-F5-11: certificado = CERTIFICATE; clave = PRIVATE KEY, RSA PRIVATE KEY o EC PRIVATE KEY con el MISMO rótulo en BEGIN y END.
+  const label = kind === "certificate" ? /^-----BEGIN CERTIFICATE-----\n[\s\S]+\n-----END CERTIFICATE-----$/ : /^-----BEGIN ((?:RSA |EC )?PRIVATE KEY)-----\n[\s\S]+\n-----END \1-----$/;
   return label.test(pem) ? pem : null;
 }
 

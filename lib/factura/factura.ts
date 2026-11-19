@@ -307,6 +307,8 @@ export interface ComprobanteVista {
   pdf: boolean;
   verificable: boolean;
   completable: boolean;
+  /** Producción: Autorizada sin registrar en Ventas/Horas (derivado de los datos, no de Mensaje). */
+  pendienteRegistro: boolean;
 }
 
 export interface FacturaEstado {

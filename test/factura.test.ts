@@ -568,3 +568,169 @@ describe("datos maestros (D6)", () => {
     expect(fake.rows(T.parametros.id).find((r) => r.id === ids.pLeyenda)!.fields[PA.concepto]).toBe("Leyenda factura A");
   });
 });
+
+describe("CC-F5-11 · autorización completa, PDF del snapshot, PEM y Observaciones", () => {
+  beforeEach(login);
+  const aprobada = (det: Record<string, unknown>) => ({
+    body: { FECAESolicitarResult: { FeCabResp: { Resultado: "A" }, FeDetResp: { FECAEDetResponse: [{ Resultado: "A", CAE: "70000000000099", CAEFchVto: "20261129", ...det }] } } },
+  });
+
+  it.each([
+    ["sin CAEFchVto", { CAEFchVto: undefined }],
+    ["CAEFchVto inválido", { CAEFchVto: "20261340" }],
+    ["CAEFchVto vacío", { CAEFchVto: "" }],
+    ["CAE de 13 dígitos", { CAE: "7000000000009" }],
+    ["sin CAE", { CAE: undefined }],
+  ])("Resultado A %s → Incierta (nunca Autorizada), un solo FECAESolicitar", async (_l, det) => {
+    wsfe.on("FECAESolicitar", aprobada(det));
+    const r = await emitir();
+    expect(r.json).toMatchObject({ estado: "Incierta", mensaje: FACTURA_MESSAGES.incierta });
+    expect(rows()[0].fields[F.estado]).toBe("Incierta");
+    expect(rows()[0].fields[F.cae]).toBeUndefined();
+    expect(wsfe.calls("FECAESolicitar")).toHaveLength(1);
+    expect((await pdf(r.json.id)).status).toBe(409);
+  });
+
+  describe("verificar exige una autorización completa en FECompConsultar", () => {
+    async function incierta() {
+      wsfe.on("FECAESolicitar", "network");
+      const r = await emitir();
+      wsfe.setUltimo(1);
+      return r.json.id as string;
+    }
+    const consulta = (over: Record<string, unknown>) => ({
+      body: { FECompConsultarResult: { ResultGet: { DocTipo: 80, DocNro: Number(CUIT_CLIENTE), CbteDesde: 1, CbteHasta: 1, CbteFch: "20261119", ImpTotal: TOTAL / 100, CodAutorizacion: "70000000000077", FchVto: "20261129", Resultado: "A", EmisionTipo: "CAE", ...over } } },
+    });
+    it.each([
+      ["Resultado R", { Resultado: "R" }],
+      ["sin Resultado", { Resultado: undefined }],
+      ["sin FchVto", { FchVto: undefined }],
+      ["FchVto inválida", { FchVto: "2026113" }],
+      ["CAE inválido", { CodAutorizacion: "123" }],
+      ["sin CAE", { CodAutorizacion: undefined }],
+    ])("%s → sigue Incierta «Revisar manualmente»", async (_l, over) => {
+      const id = await incierta();
+      wsfe.on("FECompConsultar", consulta(over));
+      const r = await verificar(id);
+      expect(r.json).toMatchObject({ estado: "Incierta", mensaje: FACTURA_MESSAGES.revisarManual });
+      expect(row(id).fields[F.cae]).toBeUndefined();
+      expect(wsfe.calls("FECAESolicitar")).toHaveLength(1);
+    });
+    it("completa y coincidente → Autorizada, con número, CAE y vencimiento también en el snapshot", async () => {
+      const id = await incierta();
+      wsfe.on("FECompConsultar", consulta({}));
+      expect((await verificar(id)).json.estado).toBe("Autorizada");
+      expect(row(id).fields).toMatchObject({ [F.cae]: "70000000000077", [F.vencimientoCae]: "2026-11-29", [F.numero]: 1 });
+      expect(parseDatos(row(id).fields[F.datos])).toMatchObject({ numero: 1, cae: "70000000000077", vencimientoCae: "2026-11-29" });
+      // Un solo update hace las dos cosas.
+      const upd = fake.calls.filter((c) => c.method === "update" && c.tableId === CE.id).map((c) => (c.payload as { fields: Record<string, unknown> }[])[0].fields);
+      const final = upd.find((f) => f[F.estado] === "Autorizada")!;
+      expect(final[F.cae]).toBe("70000000000077");
+      expect(parseDatos(final[F.datos])).toMatchObject({ cae: "70000000000077", vencimientoCae: "2026-11-29", numero: 1 });
+    });
+    it("con otro Ambiente → 409 (no llama a ARCA)", async () => {
+      const id = await incierta();
+      const antes = wsfe.requests.length;
+      usarProduccion();
+      const r = await verificar(id);
+      expect(r).toMatchObject({ status: 409, json: { error: "Esta factura es de Homologación; la app está en Producción." } });
+      expect(wsfe.requests).toHaveLength(antes);
+      expect(row(id).fields[F.estado]).toBe("Incierta");
+    });
+  });
+
+  it("emitir: Autorizada escribe número, CAE y vencimiento en Datos en el mismo update que la fila", async () => {
+    const r = await emitir();
+    const upd = fake.calls.filter((c) => c.method === "update" && c.tableId === CE.id).map((c) => (c.payload as { fields: Record<string, unknown> }[])[0].fields);
+    const final = upd.find((f) => f[F.estado] === "Autorizada")!;
+    expect(parseDatos(final[F.datos])).toMatchObject({ numero: 1, cae: final[F.cae], vencimientoCae: final[F.vencimientoCae] });
+    expect(r.json.estado).toBe("Autorizada");
+  });
+
+  it("el PDF sale solo de Datos: cambiar Número/CAE/Vencimiento CAE de la fila no lo cambia; sin CAE en Datos → 409", async () => {
+    const r = await emitir();
+    const rec = row(r.json.id);
+    rec.fields[F.numero] = 999;
+    rec.fields[F.cae] = "11111111111111";
+    rec.fields[F.vencimientoCae] = "2030-01-01";
+    const res = await pdf(r.json.id);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain("Factura_A_00001-00000001.pdf");
+    const t = (await pdfText(res.bytes)).pages[0].join(" ");
+    expect(t).toContain("00000001");
+    expect(t).toContain("70000000000001");
+    expect(t).toContain("29/11/2026");
+    expect(t).not.toContain("11111111111111");
+    expect(t).not.toContain("00000999");
+    for (const quitar of ["cae", "vencimientoCae", "numero"] as const) {
+      const d = { ...parseDatos(rec.fields[F.datos])!, [quitar]: null };
+      const sin = fake.seed(CE.id, { ...rec.fields, [F.datos]: JSON.stringify(d), [F.cae]: "70000000000001", [F.numero]: 1, [F.vencimientoCae]: "2026-11-29" });
+      expect((await pdf(sin)).status).toBe(409);
+    }
+  });
+
+  it("PEM: clave con rótulos distintos o certificado que no es CERTIFICATE → no configurada (503), sin logs del valor", async () => {
+    usarProduccion();
+    const mal = (begin: string, end: string) => b64(`-----BEGIN ${begin}-----\nMIIEvQIBADANclaveFalsa\n-----END ${end}-----`);
+    for (const [cert, key] of [
+      [b64(CERT_PEM), mal("RSA PRIVATE KEY", "PRIVATE KEY")],
+      [b64(CERT_PEM), mal("EC PRIVATE KEY", "RSA PRIVATE KEY")],
+      [b64(CERT_PEM), mal("ENCRYPTED PRIVATE KEY", "ENCRYPTED PRIVATE KEY")],
+      [mal("CERTIFICATE REQUEST", "CERTIFICATE REQUEST"), b64(KEY_PEM)],
+      [mal("TRUSTED CERTIFICATE", "TRUSTED CERTIFICATE"), b64(KEY_PEM)],
+    ]) {
+      vi.stubEnv("AFIP_CERT_B64", cert);
+      vi.stubEnv("AFIP_KEY_B64", key);
+      expect(await emitir()).toMatchObject({ status: 503, json: { error: FACTURA_MESSAGES.prodSinCertificado } });
+    }
+    expect(wsfe.requests).toHaveLength(0);
+    expect([...consoleLines, ...responses].join("\n")).not.toContain("MIIEvQIBADANclaveFalsa");
+  });
+
+  describe("Producción: Observaciones en Mensaje y registro pendiente derivado de los datos", () => {
+    beforeEach(usarProduccion);
+    const conObs = () => ({
+      body: { FECAESolicitarResult: { FeCabResp: { Resultado: "A" }, FeDetResp: { FECAEDetResponse: [{ Resultado: "A", CAE: "70000000000055", CAEFchVto: "20261129", Observaciones: { Obs: [{ Code: 10217, Msg: "El credito\u0007 fiscal discriminado…" }] } }] } } },
+    });
+
+    it("registro exitoso → Mensaje conserva las Observaciones; no queda pendiente", async () => {
+      wsfe.on("FECAESolicitar", conObs());
+      const r = await emitir();
+      expect(r.json).toMatchObject({ estado: "Autorizada", mensaje: "10217: El credito fiscal discriminado…" });
+      expect(rows()[0].fields[F.mensaje]).toBe("10217: El credito fiscal discriminado…");
+      expect(rows()[0].fields[F.venta]).toHaveLength(1);
+      const c = (await estado()).json.comprobantes[0];
+      expect(c).toMatchObject({ pendienteRegistro: false, completable: false, mensaje: "10217: El credito fiscal discriminado…" });
+      expect((await completar(r.json.id)).status).toBe(409);
+    });
+
+    it("registro fallido → pendiente por datos (sin link a la Venta), Mensaje con las Observaciones; «Completar registro» idempotente y las conserva", async () => {
+      vi.stubEnv("NODE_ENV", "development");
+      vi.stubEnv("KAIROS_FAULT_INJECTION", "factura:horas:0");
+      wsfe.on("FECAESolicitar", conObs());
+      const r = await emitir();
+      expect(r.json.mensaje).toBe(`${FACTURA_MESSAGES.faltaRegistro}\n10217: El credito fiscal discriminado…`);
+      expect(rows()[0].fields[F.mensaje]).toBe("10217: El credito fiscal discriminado…");
+      expect((await estado()).json.comprobantes[0]).toMatchObject({ pendienteRegistro: true, completable: true });
+      // No depende del texto: aunque se borre Mensaje, sigue pendiente.
+      delete rows()[0].fields[F.mensaje];
+      expect((await estado()).json.comprobantes[0]).toMatchObject({ pendienteRegistro: true, completable: true });
+      rows()[0].fields[F.mensaje] = "10217: El credito fiscal discriminado…";
+      vi.stubEnv("KAIROS_FAULT_INJECTION", "");
+      expect((await completar(r.json.id)).json).toMatchObject({ estado: "Autorizada", mensaje: "10217: El credito fiscal discriminado…" });
+      expect(rows()[0].fields[F.mensaje]).toBe("10217: El credito fiscal discriminado…");
+      expect(fake.rows(T.ventas.id)).toHaveLength(1);
+      expect(estadoHora(ids.h1)).toBe("Facturada");
+      expect((await estado()).json.comprobantes[0]).toMatchObject({ pendienteRegistro: false, completable: false });
+      expect((await completar(r.json.id)).status).toBe(409);
+      expect(fake.rows(T.ventas.id)).toHaveLength(1);
+    });
+
+    it("una registrada cuyo Mensaje dice «falta registrar» NO se considera pendiente", async () => {
+      const r = await emitir();
+      rows()[0].fields[F.mensaje] = FACTURA_MESSAGES.faltaRegistro;
+      expect((await estado()).json.comprobantes[0]).toMatchObject({ pendienteRegistro: false, completable: false });
+      expect((await completar(r.json.id)).status).toBe(409);
+    });
+  });
+});

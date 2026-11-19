@@ -1,5 +1,6 @@
 import { Suspense, type ReactNode } from "react";
 
+import { Cargando } from "@/components/shell/cargando";
 import { requireAdmin, requireCliente, requireUser } from "@/lib/auth/guards";
 
 /**
@@ -10,7 +11,8 @@ import { requireAdmin, requireCliente, requireUser } from "@/lib/auth/guards";
  */
 export function Guarded({ admin = false, cliente = false, children }: { admin?: boolean; cliente?: boolean; children: ReactNode }) {
   return (
-    <Suspense fallback={<PageSkeleton />}>
+    // CC-F4-13: mientras carga la página, la «K» girando (después de 300 ms).
+    <Suspense fallback={<Cargando />}>
       <GuardedContent admin={admin} cliente={cliente}>
         {children}
       </GuardedContent>

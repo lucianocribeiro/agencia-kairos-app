@@ -151,3 +151,21 @@ input:-webkit-autofill:focus {
   outline: 2px solid var(--color-accent-text);
   outline-offset: 2px;
 }
+
+/*
+ * Indicador de carga (CC-F4-13): aparece recién 300 ms después de MOSTRARSE (la animación se reinicia
+ * cada vez que el elemento pasa de display:none a visible, p. ej. cuando Next revela una ruta que tenía
+ * oculta con <Activity>). Durante la demora: visibility hidden (ni se ve ni lo leen los lectores de
+ * pantalla) y opacidad 0; después, opacidad 0 → 1 en 150 ms (con 0 s Chrome no aplica el relleno hacia
+ * atrás durante la demora). Sin movimiento.
+ */
+@keyframes cargando-aparece {
+  from {
+    opacity: 0;
+    visibility: hidden;
+  }
+  to {
+    opacity: 1;
+    visibility: visible;
+  }
+}

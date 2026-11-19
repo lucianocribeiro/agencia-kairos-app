@@ -20,12 +20,7 @@ const F = T.fields;
 
 export type EstadoSync = (typeof T.choices.estado)[number];
 export const SYNC_WINDOW_MS = 15 * 60 * 1000;
-/**
- * Un inicio tarda como máximo lo que dura su función (maxDuration de sincronizar = 60 s). Un log
- * «En proceso» sin Job ID más viejo que esto no tiene ningún inicio vivo detrás (p. ej. un
- * inicio duplicado que no se pudo borrar ni pasar a «Vencida»): no cuenta como en curso.
- */
-export const START_WINDOW_MS = 60 * 1000;
+
 export const MAX_ERRORES = 5;
 
 export const SYNC_LOG_MESSAGES = {
@@ -146,11 +141,12 @@ async function recent(now: number, ms: number): Promise<SyncRecord[]> {
 const inWindow = (t: number, now: number, ms: number) => Number.isFinite(t) && t >= now - ms && t <= now + 60_000;
 
 /**
- * «En proceso» vivas de esta tabla: iniciadas en los últimos 15 minutos y con Job ID, o sin Job ID
- * pero dentro de la ventana de un inicio. «Vencida», «Error» y el resto nunca cuentan.
+ * «En proceso» de esta tabla iniciadas en los últimos 15 minutos, tengan o no Job ID (CC-F5-05
+ * F-09: sin Job ID puede haber un job vivo en Afip SDK que no se pudo registrar → falla cerrado).
+ * «Vencida», «Error» y el resto nunca cuentan.
  */
 const running = (list: readonly SyncRecord[], kind: Kind, now: number) =>
-  list.filter((s) => s.tipo === kind && s.estado === "En proceso" && inWindow(s.iniciada, now, SYNC_WINDOW_MS) && (s.jobId !== null || inWindow(s.iniciada, now, START_WINDOW_MS)));
+  list.filter((s) => s.tipo === kind && s.estado === "En proceso" && inWindow(s.iniciada, now, SYNC_WINDOW_MS));
 
 /**
  * ¿El Admin está bloqueado? 5 «Error» dentro de 15 minutos bloquean por 15 minutos desde el

@@ -34,6 +34,8 @@ export const ARCHIVO_MENSAJES = {
   tipoEquivocado: (kind: Kind) =>
     `Este archivo es de «${KIND_LABEL[KIND_LABEL[kind].otro].archivo}» (${KIND_LABEL[KIND_LABEL[kind].otro].titulo}). Subilo en ${KIND_LABEL[KIND_LABEL[kind].otro].titulo} › Importar.`,
   sinFilas: "El archivo no tiene comprobantes.",
+  /** Solo ARCA: un elemento de la respuesta sin ningún dato reconocido. */
+  comprobanteVacio: "Comprobante vacío en la respuesta de ARCA.",
   demasiadasFilas: (n: number) => `El archivo tiene ${n} comprobantes; el máximo por importación es ${MAX_FILAS}. Dividilo por período.`,
 } as const;
 
@@ -172,8 +174,13 @@ export function buildRows(
   invalidas: ReadonlyMap<number, string> = new Map(),
 ): FilaBase[] | { error: string } {
   const data: { fila: number; cells: readonly Cell[] }[] = [];
-  // Excel: n.º de fila de la hoja. ARCA: n.º de comprobante 1..N (no hay hoja).
-  for (let r = header.row + 1; r < rows.length; r++) if (!isEmptyRow(rows[r])) data.push({ fila: source === "arca" ? data.length + 1 : r + 1, cells: rows[r] });
+  // Excel: n.º de fila de la hoja; las filas vacías se saltean. ARCA (CC-F5-05 F-08): ninguna
+  // fila se descarta; cada elemento de `data` conserva su posición original (1..N), la misma
+  // clave que `invalidas`, así un comprobante vacío o inválido nunca corre el número de otro.
+  for (let r = header.row + 1; r < rows.length; r++) {
+    if (source === "arca") data.push({ fila: r - header.row, cells: rows[r] });
+    else if (!isEmptyRow(rows[r])) data.push({ fila: r + 1, cells: rows[r] });
+  }
   if (data.length === 0) return { error: ARCHIVO_MENSAJES.sinFilas };
   if (data.length > MAX_FILAS) return { error: ARCHIVO_MENSAJES.demasiadasFilas(data.length) };
 
@@ -181,7 +188,8 @@ export function buildRows(
   const nuevosProveedores = new Map<string, ProveedorFila>();
   return data.map(({ fila, cells }) => {
     const datos: Record<string, Dato> = {};
-    const invalida = source === "arca" ? (invalidas.get(fila) ?? null) : null;
+    // ARCA: dato no primitivo → error; si no, todo vacío → «Comprobante vacío…». Antes que nada.
+    const invalida = source === "arca" ? (invalidas.get(fila) ?? (isEmptyRow(cells) ? ARCHIVO_MENSAJES.comprobanteVacio : null)) : null;
     let error: string | null = invalida;
     for (const col of COLUMNS[kind]) {
       // Columna opcional ausente (solo "arca"): vacía.

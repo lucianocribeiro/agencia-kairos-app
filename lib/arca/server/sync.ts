@@ -47,7 +47,7 @@ export const SYNC_MESSAGES = {
   noLista: "La sincronización todavía no está lista para importar.",
   vencida: "La sincronización tardó más de 15 minutos y venció. Probá de nuevo.",
   conError: "La sincronización terminó con error. Probá de nuevo.",
-  sinJob: "No se pudo registrar la sincronización en ARCA. Probá de nuevo.",
+  jobSinRegistrar: "La consulta a ARCA se inició pero no se pudo registrar. Esperá 15 minutos antes de volver a sincronizar.",
   errorArca: AFIP_SDK_MESSAGES.rejected,
   inicioDuplicado: "Inicio duplicado descartado.",
   inesperado: AFIP_SDK_MESSAGES.unexpected,
@@ -142,7 +142,15 @@ export async function startSync(kind: Kind, user: SessionUser, body: Record<stri
     console.error("[arca] Falló la creación del job", { id: syncId, error: err instanceof AfipSdkError ? err.toJSON() : describeError(err) });
     throw err;
   }
-  await updateSync(syncId, { jobId });
+  // Afip SDK ya aceptó el job: si no se puede registrar el Job ID (después de los reintentos del
+  // cliente de Airtable), el log queda «En proceso» sin Job ID y bloquea la tabla 15 minutos.
+  // Nunca se reintenta el create.
+  try {
+    await updateSync(syncId, { jobId });
+  } catch {
+    console.error("[arca] Job creado pero sin registrar el Job ID", { id: syncId });
+    return fail(503, SYNC_MESSAGES.jobSinRegistrar);
+  }
   return { ok: true, data: { syncId } };
 }
 
@@ -199,11 +207,9 @@ export async function pollSync(id: string, user: SessionUser, config: ArcaConfig
     await updateSyncQuiet(id, { estado: "Vencida", mensaje: SYNC_MESSAGES.vencida, finalizada: now });
     return fail(400, SYNC_MESSAGES.vencida);
   }
-  if (!sync.jobId) {
-    // El inicio puede estar todavía esperando a Afip SDK (hasta 30 s).
-    if (sync.estado === "En proceso" && now.getTime() - sync.iniciada < 60_000) return { ok: true, data: { estado: "en_proceso" } };
-    return terminarConError(id, SYNC_MESSAGES.sinJob);
-  }
+  // Sin Job ID: el inicio todavía espera a Afip SDK o el Job ID no se pudo registrar. Sigue «En
+  // proceso» (y bloqueando la tabla) hasta que vence a los 15 minutos (arriba).
+  if (!sync.jobId) return { ok: true, data: { estado: "en_proceso" } };
 
   let job;
   try {

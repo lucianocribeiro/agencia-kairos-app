@@ -206,3 +206,41 @@ describe("CC-F5-04: respuestas hostiles", () => {
     expect(await readJsonCapped(new Response('{"ok":1}'))).toEqual({ ok: 1 });
   });
 });
+
+describe("CC-F5-05: readJsonCapped con un stream que falla", () => {
+  it("read rechaza → AfipSdkError(unexpected), el reader se libera y no se usa el body parcial", async () => {
+    let cancelled = false;
+    let pulls = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls++;
+        if (pulls === 1) controller.enqueue(new TextEncoder().encode('{"status":"complete","data":[]}'));
+        else throw new Error("conexión cortada");
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const res = new Response(stream, { status: 200 });
+    const err = await readJsonCapped(res).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(AfipSdkError);
+    expect((err as AfipSdkError).kind).toBe("unexpected");
+    expect(res.body!.locked).toBe(false);
+    expect(cancelled || pulls === 2).toBe(true);
+  });
+
+  it("por el cliente: GET con un body que se corta → unexpected (no un job «complete» parcial)", async () => {
+    const broken: typeof fetch = async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"status":"complete","data":[{"a":1}]}'));
+            controller.error(new Error("corte"));
+          },
+        }),
+        { status: 200 },
+      );
+    const client = new AfipSdkClient({ token: "t", baseUrl: "https://afip.test/api/v1", fetch: broken, sleep: async () => {} });
+    expect((await rejection(client.getJob("job-1"))).kind).toBe("unexpected");
+  });
+});

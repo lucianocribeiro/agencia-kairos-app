@@ -152,15 +152,24 @@ export async function readJsonCapped(res: Response, maxBytes: number = MAX_RESPO
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
-      throw new AfipSdkError({ kind: "unexpected", status: res.status });
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new AfipSdkError({ kind: "unexpected", status: res.status });
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (err) {
+    // Lectura fallida (o tope superado): nunca se usa un body parcial.
+    chunks.length = 0;
+    await reader.cancel().catch(() => {});
+    throw err instanceof AfipSdkError ? err : new AfipSdkError({ kind: "unexpected", status: res.status });
+  } finally {
+    reader.releaseLock();
   }
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));

@@ -533,7 +533,7 @@ describe("CC-F5-04 · F-07: limpieza del inicio que pierde la carrera", () => {
     expect((await start("ventas")).status).toBe(200);
   });
 
-  it("borrado y paso a «Vencida» fallan → 503; ese registro no bloquea un inicio posterior", async () => {
+  it("borrado y paso a «Vencida» fallan → 503; ese registro bloquea la tabla 15 minutos (falla cerrado, CC-F5-05)", async () => {
     fake.barrier("create", T.sincronizacionesArca.id, 2);
     fake.fail("delete", T.sincronizacionesArca.id);
     fake.failWhen((call) => call.method === "update" && call.tableId === T.sincronizacionesArca.id && (call.payload as { fields: Record<string, unknown> }[])[0].fields[S.estado] === "Vencida");
@@ -545,8 +545,10 @@ describe("CC-F5-04 · F-07: limpieza del inicio que pierde la carrera", () => {
     expect(stuck.fields[S.jobId]).toBeUndefined();
     expect(consoleLines.join("\n")).toContain(`"id":"${stuck.id}"`);
     finish(winner);
-    // Pasada la ventana de un inicio (60 s), un «En proceso» sin Job ID no tiene inicio vivo detrás.
-    stuck.fields[S.iniciada] = new Date(Date.now() - 61_000).toISOString();
+    // Un «En proceso» sin Job ID cuenta los 15 minutos completos.
+    stuck.fields[S.iniciada] = new Date(Date.now() - 14 * 60_000).toISOString();
+    expect((await start("ventas")).status).toBe(409);
+    stuck.fields[S.iniciada] = new Date(Date.now() - 16 * 60_000).toISOString();
     expect((await start("ventas")).status).toBe(200);
   });
 
@@ -573,5 +575,90 @@ describe("CC-F5-04: el log no se puede marcar «Importada» después de importar
     const again = await conf("ventas", { syncId, payload, ediciones: {} });
     expect(again).toMatchObject({ status: 200, json: { importadas: 0, omitidas: { yaImportadas: 2 } } });
     expect(fake.rows(T.ventas.id)).toHaveLength(before);
+  });
+});
+
+describe("CC-F5-05 · F-08: posiciones de las filas de ARCA", () => {
+  beforeEach(() => loginAs(ids.admin));
+  const vacia = () => Object.fromEntries(Object.keys(afipRow("ventas")).map((k) => [k, null])) as AfipRow;
+
+  it("fila vacía salvo un objeto/array, antes de una válida → error sin Clave; la válida sigue «nueva» con su número; se importa solo la válida", async () => {
+    for (const bad of [{ cuit: CUIT_CLIENTE }, [CUIT_CLIENTE]]) {
+      fake.rows(T.sincronizacionesArca.id).length = 0;
+      fake.rows(T.ventas.id).length = 0;
+      afip.reset();
+      const rows = [{ ...vacia(), "Nro. Doc. Receptor": bad as unknown as string }, afipRow("ventas", { "Número Desde": "5", "Nro. Doc. Receptor": CUIT_CLIENTE })];
+      const { syncId, preview, payload } = await syncToPreview("ventas", rows);
+      expect(preview.filas.map((f: { fila: number; estado: string; clave: string | null; error: string | null }) => [f.fila, f.estado, f.clave, f.error])).toEqual([
+        [1, "error", null, "Dato inválido en la respuesta de ARCA (columna «Nro. Doc. Receptor»)."],
+        [2, "nueva", `11|2|5|${CUIT_CLIENTE}`, null],
+      ]);
+      const c = await conf("ventas", { syncId, payload, ediciones: {} });
+      expect(c.json).toMatchObject({ importadas: 1, conError: [{ fila: 1, motivo: "Dato inválido en la respuesta de ARCA (columna «Nro. Doc. Receptor»)." }] });
+      expect(fake.rows(T.ventas.id).map((r) => r.fields[T.ventas.fields.claveArca])).toEqual([`11|2|5|${CUIT_CLIENTE}`]);
+    }
+  });
+
+  it("fila completamente vacía antes de una válida → «Comprobante vacío…», sin Clave; la válida conserva su número y es la única importada", async () => {
+    const rows = [vacia(), {}, afipRow("ventas", { "Número Desde": "6", "Nro. Doc. Receptor": CUIT_CLIENTE })];
+    const { syncId, preview, payload } = await syncToPreview("ventas", rows);
+    expect(preview.filas.map((f: { fila: number; estado: string; clave: string | null; error: string | null }) => [f.fila, f.estado, f.clave, f.error])).toEqual([
+      [1, "error", null, "Comprobante vacío en la respuesta de ARCA."],
+      [2, "error", null, "Comprobante vacío en la respuesta de ARCA."],
+      [3, "nueva", `11|2|6|${CUIT_CLIENTE}`, null],
+    ]);
+    const c = await conf("ventas", { syncId, payload, ediciones: { [`11|2|6|${CUIT_CLIENTE}`]: { observaciones: "QA" } } });
+    expect(c.json).toMatchObject({ importadas: 1, conError: [{ fila: 1 }, { fila: 2 }] });
+    expect(fake.rows(T.ventas.id)).toHaveLength(1);
+    expect(fake.rows(T.ventas.id)[0].fields[T.ventas.fields.observaciones]).toBe("QA");
+  });
+});
+
+describe("CC-F5-05 · F-09: el Job ID no se pudo registrar", () => {
+  beforeEach(() => loginAs(ids.admin));
+
+  it("create OK y el patch del Job ID falla → 503 con el mensaje; un solo create; la tabla queda bloqueada 15 minutos", async () => {
+    let patchFails = true;
+    fake.failWhen((call) => patchFails && call.method === "update" && call.tableId === T.sincronizacionesArca.id && S.jobId in (call.payload as { fields: Record<string, unknown> }[])[0].fields);
+    consoleLines.length = 0;
+    const s = await start("ventas");
+    expect(s).toMatchObject({ status: 503, json: { error: "La consulta a ARCA se inició pero no se pudo registrar. Esperá 15 minutos antes de volver a sincronizar." } });
+    expect(afip.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+    const row = logs()[0];
+    expect(row.fields).toMatchObject({ [S.estado]: "En proceso" });
+    expect(row.fields[S.jobId]).toBeUndefined();
+    expect(consoleLines.find((l) => l.includes("sin registrar el Job ID"))).toBe(`[arca] Job creado pero sin registrar el Job ID {"id":"${row.id}"}`);
+    // Dentro de los 15 minutos → 409, sin otro create.
+    expect((await start("ventas")).status).toBe(409);
+    row.fields[S.iniciada] = new Date(Date.now() - 14 * 60_000).toISOString();
+    expect((await start("ventas")).status).toBe(409);
+    expect(afip.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+    // Consultarla no la termina en Error (seguiría bloqueando sin poder verse): sigue en proceso.
+    expect((await poll(row.id)).json).toEqual({ ok: true, estado: "en_proceso" });
+    // Pasados 15 minutos → permitido (y al consultarla queda «Vencida»).
+    patchFails = false;
+    row.fields[S.iniciada] = new Date(Date.now() - 16 * 60_000).toISOString();
+    expect((await start("ventas")).status).toBe(200);
+    expect((await poll(row.id)).status).toBe(400);
+    expect(row.fields[S.estado]).toBe("Vencida");
+  });
+});
+
+describe("CC-F5-05: create 200 con status «error» que repite la clave y la CUIT de login", () => {
+  beforeEach(() => loginAs(ids.admin));
+
+  it("no aparecen en la respuesta, el log ni la consola", async () => {
+    responses.length = 0;
+    consoleLines.length = 0;
+    const formatted = `${CUIT_LOGIN.slice(0, 2)}-${CUIT_LOGIN.slice(2, 10)}-${CUIT_LOGIN[10]}`;
+    afip.onCreate({ status: 200, body: { status: "error", data: { message: `Usuario ${CUIT_LOGIN} (${formatted}) con clave ${CLAVE} rechazado` } } });
+    const s = await start("ventas");
+    expect(s.status).toBe(400);
+    for (const text of [responses.join("\n"), JSON.stringify(logs().map((r) => r.fields)), consoleLines.join("\n")]) {
+      expect(text).not.toContain(CLAVE);
+      expect(text).not.toContain(CUIT_LOGIN);
+      expect(text).not.toContain(formatted);
+    }
+    expect(logs()[0].fields).toMatchObject({ [S.estado]: "Error" });
   });
 });

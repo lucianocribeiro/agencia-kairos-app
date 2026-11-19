@@ -837,3 +837,108 @@ describe("CC-F5-12 · guardas de borrado sin depender de los links (F-10)", () =
     expect(fake.rows(T.ventas.id)).toHaveLength(0);
   });
 });
+
+describe("CC-F5-13 · F-11 (guarda de Ventas siempre lee) y F-12 (horas que cambian mientras se emite)", () => {
+  beforeEach(login);
+  const snapshot = (over: Record<string, unknown> = {}) => JSON.stringify({ version: 1, ambiente: "Producción", tipo: "Factura A", cbteTipo: 1, emisor: {}, receptor: { cuit: CUIT_CLIENTE }, importes: { total: 1 }, detalle: {}, puntoVenta: 7, horas: [], numero: 12, cae: "70000000000012", vencimientoCae: "2026-11-29", ...over });
+  const venta = (clave: string) => fake.seed(T.ventas.id, { ...(clave ? { [V.claveArca]: clave } : {}), [V.tipoComprobante]: [ids.fa] });
+  const clave = `1|7|12|${CUIT_CLIENTE}`;
+
+  it("F-11: Venta con Clave ARCA vacía → la guarda igual lee (falla de lectura → 503, cero borrados)", async () => {
+    const v = venta("");
+    fake.fail("list", CE.id);
+    expect(await deleteComprobante("ventas", v)).toMatchObject({ ok: false, status: 503 });
+    expect(fake.calls.filter((c) => c.method === "delete")).toHaveLength(0);
+    expect(fake.calls.some((c) => c.method === "list" && c.tableId === CE.id)).toBe(true);
+  });
+
+  it("F-11: Venta con Clave ARCA vacía y lectura ok → se borra (una clave vacía nunca coincide)", async () => {
+    fake.seed(CE.id, { [F.ambiente]: "Producción", [F.estado]: "Autorizada", [F.datos]: snapshot() });
+    const v = venta("");
+    expect(await deleteComprobante("ventas", v)).toMatchObject({ ok: true });
+    expect(fake.calls.some((c) => c.method === "list" && c.tableId === CE.id)).toBe(true);
+  });
+
+  it("F-11: Producción Autorizada con «Clave ARCA» vacía pero snapshot válido que coincide → 409; Homologación o Incierta → se borra", async () => {
+    const homo = venta(clave);
+    fake.seed(CE.id, { [F.ambiente]: "Homologación", [F.estado]: "Autorizada", [F.datos]: snapshot({ ambiente: "Homologación" }) });
+    fake.seed(CE.id, { [F.ambiente]: "Producción", [F.estado]: "Incierta", [F.datos]: snapshot() });
+    expect(await deleteComprobante("ventas", homo)).toMatchObject({ ok: true });
+    const prod = venta(clave);
+    fake.seed(CE.id, { [F.ambiente]: "Producción", [F.estado]: "Autorizada", [F.datos]: snapshot() });
+    expect(await deleteComprobante("ventas", prod)).toMatchObject({ ok: false, status: 409, error: "Esta venta es de una factura emitida desde la app: no se puede borrar." });
+  });
+
+  /** Ejecuta `cambio` justo después de que se crea el registro «En proceso» (antes de la relectura). */
+  function alCrearElRegistro(cambio: () => void) {
+    const original = fake.client.create;
+    fake.client.create = (async (tableId: string, records: Record<string, unknown>[]) => {
+      const out = await original(tableId, records);
+      if (tableId === CE.id) cambio();
+      return out;
+    }) as typeof original;
+    return () => void (fake.client.create = original);
+  }
+
+  it.each([
+    ["se borró", () => fake.rows(T.horas.id).splice(fake.rows(T.horas.id).findIndex((h) => h.id === ids.h2), 1)],
+    ["pasó a Facturada", () => void (fake.rows(T.horas.id).find((h) => h.id === ids.h2)!.fields[Hf.estadoFacturacion] = "Facturada")],
+    ["dejó de ser facturable", () => void (fake.rows(T.horas.id).find((h) => h.id === ids.h2)!.fields[Hf.facturable] = false)],
+  ])("F-12: una hora incluida %s entre la creación del registro y la relectura → Rechazada, cero llamadas a WSFE", async (_l, cambio) => {
+    const restore = alCrearElRegistro(cambio as () => void);
+    try {
+      const r = await emitir();
+      expect(r.json).toMatchObject({ estado: "Rechazada", mensaje: FACTURA_MESSAGES.horasCambiaron });
+      expect(rows()[0].fields).toMatchObject({ [F.estado]: "Rechazada", [F.mensaje]: FACTURA_MESSAGES.horasCambiaron });
+      expect(wsfe.requests).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it("F-12: si la relectura de horas falla → Rechazada y 503, sin WSFE", async () => {
+    const restore = alCrearElRegistro(() => fake.failWhen((c) => c.method === "list" && c.tableId === T.horas.id));
+    try {
+      const r = await emitir();
+      expect(r).toMatchObject({ status: 503, json: { error: FACTURA_MESSAGES.horasNoVerificadas } });
+      expect(rows()[0].fields[F.estado]).toBe("Rechazada");
+      expect(wsfe.requests).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it("F-12: registrar con una hora que ya no existe → Venta creada, las otras Facturada, IDs faltantes en Mensaje (con las Observaciones), sin error", async () => {
+    usarProduccion();
+    wsfe.on("FECAESolicitar", { body: { FECAESolicitarResult: { FeCabResp: { Resultado: "A" }, FeDetResp: { FECAEDetResponse: [{ Resultado: "A", CAE: "70000000000055", CAEFchVto: "20261129", Observaciones: { Obs: { Code: 10217, Msg: "Obs" } } }] } } } });
+    // La hora h2 desaparece justo después de autorizar (antes del registro).
+    const original = fake.client.update;
+    fake.client.update = (async (tableId: string, records: { id: string; fields: Record<string, unknown> }[]) => {
+      const out = await original(tableId, records);
+      if (tableId === CE.id && records[0].fields[F.estado] === "Autorizada") fake.rows(T.horas.id).splice(fake.rows(T.horas.id).findIndex((h) => h.id === ids.h2), 1);
+      return out;
+    }) as typeof original;
+    try {
+      const r = await emitir();
+      expect(r.json.estado).toBe("Autorizada");
+      expect(fake.rows(T.ventas.id)).toHaveLength(1);
+      expect(estadoHora(ids.h1)).toBe("Facturada");
+      const rec = rows()[0];
+      expect(rec.fields[F.horas]).toEqual([ids.h1]);
+      expect(rec.fields[F.venta]).toEqual([fake.rows(T.ventas.id)[0].id]);
+      expect(rec.fields[F.mensaje]).toBe(`10217: Obs\n${FACTURA_MESSAGES.horasFaltantes([ids.h2])}`);
+      expect((await estado()).json.comprobantes[0]).toMatchObject({ pendienteRegistro: false, completable: false });
+      expect(parseDatos(rec.fields[F.datos])!.horas).toEqual([ids.h1, ids.h2]);
+    } finally {
+      fake.client.update = original;
+    }
+  });
+
+  it("Homologación: la autorización deja «Clave ARCA» vacía", async () => {
+    const r = await emitir();
+    expect(r.json.estado).toBe("Autorizada");
+    expect(rows()[0].fields[F.claveArca]).toBeUndefined();
+    const final = fake.calls.filter((c) => c.method === "update" && c.tableId === CE.id).map((c) => (c.payload as { fields: Record<string, unknown> }[])[0].fields).find((f) => f[F.estado] === "Autorizada")!;
+    expect(F.claveArca in final).toBe(false);
+  });
+});

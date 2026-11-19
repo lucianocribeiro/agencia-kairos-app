@@ -46,6 +46,7 @@ import {
   type EstadoComprobante,
   type FacturaDatos,
   type FacturaEstado,
+  autorizacionDelSnapshot,
 } from "../factura";
 import { getFacturaConfig, type FacturaConfig } from "./config";
 import { WsfeClient, type WsfeAuth } from "./wsfe";
@@ -521,6 +522,20 @@ export async function emitirFactura(user: SessionUser, body: Record<string, unkn
     return fail(409, FACTURA_MESSAGES.enParalelo);
   }
 
+  // 2b. CC-F5-12/F-12: las horas pueden haber cambiado entre la lectura del contexto y la creación del
+  // registro. Desde que el registro existe, la guarda de borrado las protege; se releen ahora, ANTES de
+  // hablar con WSFE: si falta alguna, ya no es facturable o ya no está Pendiente → Rechazada, sin WSFE.
+  try {
+    if (!(await horasSiguenPendientes(datos.horas))) {
+      await updateRowQuiet(id, { [F.estado]: "Rechazada", [F.mensaje]: FACTURA_MESSAGES.horasCambiaron, [F.finalizado]: nowIso(new Date()) });
+      return { ok: true, data: { id, estado: "Rechazada", mensaje: FACTURA_MESSAGES.horasCambiaron } };
+    }
+  } catch {
+    console.error("[factura] No se pudieron releer las horas antes de emitir", { id });
+    await updateRowQuiet(id, { [F.estado]: "Rechazada", [F.mensaje]: FACTURA_MESSAGES.horasNoVerificadas, [F.finalizado]: nowIso(new Date()) });
+    return fail(503, FACTURA_MESSAGES.horasNoVerificadas);
+  }
+
   // 3. Número: FECompUltimoAutorizado + 1, guardado ANTES de pedir el CAE.
   const wsfe = wsfeDe(config, deps);
   let auth: WsfeAuth;
@@ -612,7 +627,7 @@ async function autorizar(id: string, datos: FacturaDatos & { numero: number }, c
     return fail(500, "ARCA autorizó la factura pero no pudimos guardarla. En unos minutos usá «Verificar en ARCA».");
   }
   if (datos.ambiente !== "Producción") return { ok: true, data: { id, estado: "Autorizada", mensaje: mensajeObs } };
-  const reg = await registrar(id, conCae);
+  const reg = await registrar(id, conCae, mensajeObs);
   return { ok: true, data: { id, estado: "Autorizada", mensaje: reg ? mensajeObs : [FACTURA_MESSAGES.faltaRegistro, mensajeObs].filter(Boolean).join("\n") } };
 }
 
@@ -664,7 +679,32 @@ export function camposVenta(d: FacturaDatos, tipoComprobanteId: string): Record<
  * Crea lo que falte: la Venta (unicidad por Clave ARCA después de escribir), las horas en
  * Facturada (Compensation; si falla, se restauran) y los links del comprobante. true si quedó todo.
  */
-async function registrar(id: string, d: FacturaDatos): Promise<boolean> {
+/** Relee las horas del snapshot: true si todas existen, son facturables y siguen en Pendiente. Lanza si no se puede leer. */
+async function horasSiguenPendientes(ids: readonly string[]): Promise<boolean> {
+  const leidas = await leerHoras(ids, [H.facturable, H.estadoFacturacion]);
+  return ids.every((h) => {
+    const r = leidas.get(h);
+    return r !== undefined && r.fields[H.facturable] === true && estadoEfectivo(r.fields[H.estadoFacturacion]) === "Pendiente";
+  });
+}
+
+/** Horas por ID, en lotes de 100 (se filtra en código también). */
+async function leerHoras(ids: readonly string[], fields: string[]): Promise<Map<string, { id: string; fields: Record<string, unknown> }>> {
+  const out = new Map<string, { id: string; fields: Record<string, unknown> }>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const lote = ids.slice(i, i + 100);
+    const rows = await getAirtableClient().list(TABLES.horas.id, { fields, filterByFormula: or(...lote.map(recordIdIs)) });
+    for (const r of rows) if (lote.includes(r.id)) out.set(r.id, r);
+  }
+  return out;
+}
+
+/**
+ * `mensaje`: el Mensaje actual del comprobante (Observaciones). Si alguna hora del snapshot ya no
+ * existe (CC-F5-13), el registro sigue (la factura es válida: el snapshot tiene IDs e importes), se
+ * marcan Facturada solo las que existen y los IDs faltantes se agregan a Mensaje.
+ */
+async function registrar(id: string, d: FacturaDatos, mensaje: string | null = null): Promise<boolean> {
   const client = getAirtableClient();
   const clave = claveArca(CBTE_TIPO_FACTURA_A, d.puntoVenta, d.numero!, d.receptor.cuit);
   try {
@@ -688,12 +728,8 @@ async function registrar(id: string, d: FacturaDatos): Promise<boolean> {
     }
 
     // Horas: Facturada (las Pagada/Facturada quedan como están).
-    const horas = [];
-    for (let i = 0; i < d.horas.length; i += 100) {
-      const lote = d.horas.slice(i, i + 100);
-      horas.push(...(await client.list(TABLES.horas.id, { fields: [H.estadoFacturacion], filterByFormula: or(...lote.map(recordIdIs)) })));
-    }
-    const pendientes = horas.filter((r) => d.horas.includes(r.id) && estadoEfectivo(r.fields[H.estadoFacturacion]) === "Pendiente");
+    const horas = [...(await leerHoras(d.horas, [H.estadoFacturacion])).values()];
+    const pendientes = horas.filter((r) => estadoEfectivo(r.fields[H.estadoFacturacion]) === "Pendiente");
     if (pendientes.length > 0) {
       const tx = new Compensation();
       try {
@@ -710,10 +746,15 @@ async function registrar(id: string, d: FacturaDatos): Promise<boolean> {
     }
 
     // Links del comprobante.
-    const existentes = new Set(horas.filter((r) => d.horas.includes(r.id)).map((r) => r.id));
-    // Venta y horas en el mismo update: es la marca de «registro completo» (ver pendienteDeRegistro). Mensaje no se toca.
+    const existentes = new Set(horas.map((r) => r.id));
+    const faltantes = d.horas.filter((h) => !existentes.has(h));
+    // Venta y horas en el mismo update: es la marca de «registro completo» (ver pendienteDeRegistro).
+    // Mensaje solo cambia para anotar horas que ya no existen (se conservan las Observaciones).
+    const nota = faltantes.length > 0 ? FACTURA_MESSAGES.horasFaltantes(faltantes) : null;
+    const nuevoMensaje = nota && !(mensaje ?? "").includes(nota) ? [mensaje, nota].filter(Boolean).join("\n") : undefined;
     injectFault("factura:links");
-    await updateRow(id, { [F.venta]: [ventaId], [F.horas]: d.horas.filter((h) => existentes.has(h)) });
+    await updateRow(id, { [F.venta]: [ventaId], [F.horas]: d.horas.filter((h) => existentes.has(h)), ...(nuevoMensaje !== undefined ? { [F.mensaje]: nuevoMensaje } : {}) });
+    if (faltantes.length > 0) console.error("[factura] Horas del snapshot que ya no existen", { id, horas: faltantes });
     return true;
   } catch {
     console.error("[factura] Falta registrar en Ventas/Horas", { id });
@@ -727,8 +768,9 @@ export async function completarRegistro(id: string): Promise<ServiceResult<Emisi
   if (!row) return fail(404, FACTURA_MESSAGES.noEncontrado);
   const snap = autorizacionDelSnapshot(row.datos);
   if (!pendienteDeRegistro(row) || !snap) return fail(409, FACTURA_MESSAGES.noPendiente);
-  const ok = await registrar(id, snap);
-  return ok ? { ok: true, data: { id, estado: "Autorizada", mensaje: row.mensaje } } : fail(503, FACTURA_MESSAGES.faltaRegistro);
+  const ok = await registrar(id, snap, row.mensaje);
+  if (!ok) return fail(503, FACTURA_MESSAGES.faltaRegistro);
+  return { ok: true, data: { id, estado: "Autorizada", mensaje: (await leerComprobante(id))?.mensaje ?? row.mensaje } };
 }
 
 // ── Verificar en ARCA (Incierta) ─────────────────────────────────────────────
@@ -783,13 +825,6 @@ export async function verificarComprobante(id: string, now = new Date(), deps: W
 }
 
 // ── PDF ──────────────────────────────────────────────────────────────────────
-
-/** El snapshot con una autorización completa (número > 0, CAE de 14 dígitos, vencimiento válido), o null. */
-export function autorizacionDelSnapshot(d: FacturaDatos | null): (FacturaDatos & { numero: number; cae: string; vencimientoCae: string }) | null {
-  if (!d) return null;
-  const ok = typeof d.numero === "number" && Number.isInteger(d.numero) && d.numero > 0 && typeof d.cae === "string" && /^\d{14}$/.test(d.cae) && typeof d.vencimientoCae === "string" && wsfeToIso(d.vencimientoCae) === d.vencimientoCae;
-  return ok ? (d as FacturaDatos & { numero: number; cae: string; vencimientoCae: string }) : null;
-}
 
 /**
  * Datos del PDF (CC-F5-11): EXCLUSIVAMENTE del snapshot. Número, CAE y Vencimiento CAE de la fila son

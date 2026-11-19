@@ -105,6 +105,9 @@ export const FACTURA_MESSAGES = {
   noEmitida: "ARCA no emitió la factura; podés volver a intentar.",
   revisarManual: "Revisar manualmente en ARCA.",
   datosIncompletos: "Revisar manualmente: datos del comprobante incompletos.",
+  horasCambiaron: "Cambiaron las horas mientras se emitía; volvé a intentar.",
+  horasNoVerificadas: "No pudimos verificar las horas antes de emitir; volvé a intentar.",
+  horasFaltantes: (ids: readonly string[]) => `Horas que ya no existen (no se marcaron Facturada): ${ids.slice(0, 20).join(", ")}${ids.length > 20 ? ` y ${ids.length - 20} más` : ""}.`,
   rechazada: "ARCA rechazó la factura.",
   noIncierta: "Solo se puede verificar una factura Incierta.",
   noPendiente: "Esta factura no tiene registros pendientes.",
@@ -273,6 +276,13 @@ export function parseDatos(text: unknown): FacturaDatos | null {
     typeof x.puntoVenta === "number" &&
     Array.isArray(x.horas);
   return ok ? (x as FacturaDatos) : null;
+}
+
+/** El snapshot con una autorización completa (número > 0, CAE de 14 dígitos, vencimiento válido), o null. */
+export function autorizacionDelSnapshot(d: FacturaDatos | null): (FacturaDatos & { numero: number; cae: string; vencimientoCae: string }) | null {
+  if (!d) return null;
+  const ok = typeof d.numero === "number" && Number.isInteger(d.numero) && d.numero > 0 && typeof d.cae === "string" && /^\d{14}$/.test(d.cae) && typeof d.vencimientoCae === "string" && wsfeToIso(d.vencimientoCae) === d.vencimientoCae;
+  return ok ? (d as FacturaDatos & { numero: number; cae: string; vencimientoCae: string }) : null;
 }
 
 // ── Formatos ──────────────────────────────────────────────────────────────────

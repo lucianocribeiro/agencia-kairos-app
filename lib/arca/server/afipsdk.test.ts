@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createFakeAfipSdk } from "@/test/afipsdk-fixture";
-import { AfipSdkClient, AfipSdkError, afipSdkErrorResponse, sanitizeDetail } from "./afipsdk";
+import { AFIP_SDK_DETAIL_MAX, AfipSdkClient, AfipSdkError, afipSdkErrorResponse, createRejectionDetail, MAX_RESPONSE_BYTES, MENSAJE_RECHAZO, parseRetryAfter, readJsonCapped, sanitizeDetail } from "./afipsdk";
 
 const PARAMS = { cuit: "30712345678", username: "20111111112", password: "clave-secreta-123", t: "E" as const, fechaEmision: "01/10/2026 - 31/10/2026" };
 
@@ -43,21 +43,21 @@ describe("AfipSdkClient", () => {
     expect(err.status).toBe(400);
     expect(err.detail).not.toContain(PARAMS.username);
     expect(err.detail).not.toContain(PARAMS.password);
-    expect(err.detail!.length).toBeLessThanOrEqual(301);
+    expect(err.detail!.length).toBeLessThanOrEqual(300);
     expect(err.detail).toMatch(/^Usuario \[redactado\] o clave \[redactado\] incorrectos\./);
     expect(JSON.stringify(err)).not.toContain("incorrectos"); // toJSON no lleva el detalle
     expect(err.message).not.toContain("incorrectos");
     expect(afipSdkErrorResponse(err)).toEqual({ status: 400, error: err.detail });
   });
 
-  it("job terminado con error (GET 400 o status error) → rejected / error", async () => {
+  it("job terminado con error (GET 400 o status error) → siempre el mensaje fijo (CC-F5-04 F-01)", async () => {
     const { fake, client } = setup();
-    fake.onGet({ status: 400, body: { status: "error", data: { message: "Clave fiscal vencida para 20-11111111-2" } } });
+    fake.onGet({ status: 400, body: { status: "error", data: { message: `La clave ${PARAMS.password} venció` } } });
     const err = await rejection(client.getJob("job-1"));
     expect(err.kind).toBe("rejected");
-    expect(err.detail).toBe("Clave fiscal vencida para [CUIT]");
-    fake.onGet({ status: 200, body: { status: "error", data: { message: "Falló" } } });
-    expect(await client.getJob("job-1")).toEqual({ status: "error", detail: "Falló" });
+    expect(err.detail).toBe(MENSAJE_RECHAZO);
+    fake.onGet({ status: 200, body: { status: "error", data: { message: `La clave ${PARAMS.password} venció` } } });
+    expect(await client.getJob("job-1")).toEqual({ status: "error" });
   });
 
   it("401/403 → config (503 «no está configurada correctamente»)", async () => {
@@ -128,9 +128,81 @@ describe("AfipSdkClient", () => {
 
 describe("sanitizeDetail", () => {
   it("saca secretos, CUITs con o sin guiones y controles; acota a 300", () => {
-    expect(sanitizeDetail("CUIT 20-11111111-2 y 30712345678\nlínea", [])).toBe("CUIT [CUIT] y [CUIT] línea");
+    expect(sanitizeDetail("CUIT 20-11111111-2 y 30712345678 \nlínea", [])).toBe("CUIT [CUIT] y [CUIT] línea");
     expect(sanitizeDetail("la clave abc12345 no sirve", ["abc12345"])).toBe("la clave [redactado] no sirve");
-    expect(sanitizeDetail("y".repeat(500))).toHaveLength(301);
+    expect(sanitizeDetail("y".repeat(500))).toHaveLength(300);
+    // Secretos cortos también se redactan (nunca se saltean por largo).
+    expect(sanitizeDetail("clave: xy.", ["xy"])).toBe("clave: [redactado].");
     vi.restoreAllMocks();
+  });
+});
+
+describe("CC-F5-04: mensajes del proveedor", () => {
+  const creds = (password: string) => ({ username: PARAMS.username, password, cuit: PARAMS.cuit });
+
+  it("create 400: clave de 1, 3 o 5 caracteres, o con caracteres de control → mensaje fijo", async () => {
+    for (const clave of ["§", "§¶‡", "§¶‡µ¤", "abc\u0007defgh", "abcdefgh\u0000"]) {
+      const { fake, client } = setup();
+      fake.onCreate({ status: 400, body: { status: "error", data: { message: `Usuario o clave ${clave} incorrectos` } } });
+      const err = await rejection(client.createJob({ ...PARAMS, password: clave }));
+      expect(err.detail).toBe(MENSAJE_RECHAZO);
+      expect(createRejectionDetail(`clave ${clave}`, creds(clave))).toBe(MENSAJE_RECHAZO);
+    }
+  });
+
+  it("create 400 con clave ≥ 6: el mensaje limpio, sin la clave, la CUIT de login ni CUITs", () => {
+    const clave = "Abc123xyz";
+    expect(createRejectionDetail(`Usuario ${PARAMS.username} o clave ${clave} incorrectos`, creds(clave))).toBe("Usuario [redactado] o clave [redactado] incorrectos");
+    expect(createRejectionDetail("CUIT 27-22222222-3 inexistente", creds(clave))).toBe("CUIT [CUIT] inexistente");
+    expect(createRejectionDetail("Usuario 20-11111111-2 bloqueado", creds(clave))).toBe("Usuario [redactado] bloqueado");
+    expect(createRejectionDetail(`eco ${clave.split("").join("\u0001")}`, creds(clave))).toBe("eco [redactado]");
+    expect(createRejectionDetail(undefined, creds(clave))).toBe(MENSAJE_RECHAZO);
+    expect(createRejectionDetail("\u0000\u0001", creds(clave))).toBe(MENSAJE_RECHAZO);
+  });
+
+  it("largo: 300 exactos quedan; 1.000 → ≤ 300 con el «…» incluido", () => {
+    const clave = "Abc123xyz";
+    const exact = "m".repeat(AFIP_SDK_DETAIL_MAX);
+    expect(createRejectionDetail(exact, creds(clave))).toBe(exact);
+    const long = createRejectionDetail("m".repeat(1000), creds(clave));
+    expect(long.length).toBeLessThanOrEqual(AFIP_SDK_DETAIL_MAX);
+    expect(long.endsWith("…")).toBe(true);
+  });
+});
+
+describe("CC-F5-04: Retry-After", () => {
+  const NOW = Date.UTC(2026, 10, 20, 12, 0, 0);
+  it("segundos (tope 60) y HTTP-date futura; pasada, inválida o 0 → null", () => {
+    expect(parseRetryAfter("2", NOW)).toBe(2000);
+    expect(parseRetryAfter("120", NOW)).toBe(60_000);
+    expect(parseRetryAfter(new Date(NOW + 5000).toUTCString(), NOW)).toBe(5000);
+    expect(parseRetryAfter(new Date(NOW + 600_000).toUTCString(), NOW)).toBe(60_000);
+    expect(parseRetryAfter(new Date(NOW - 5000).toUTCString(), NOW)).toBeNull();
+    for (const bad of ["mañana", "-3", "1.5", "0", "", null, "2026-11-20"]) expect(parseRetryAfter(bad, NOW)).toBeNull();
+  });
+
+  it("en el cliente: HTTP-date futura se respeta; pasada o inválida → backoff normal", async () => {
+    for (const [header, expected] of [[new Date(NOW + 3000).toUTCString(), 3000], [new Date(NOW - 3000).toUTCString(), null], ["basura", null], ["90", 60_000]] as const) {
+      const fake = createFakeAfipSdk();
+      const sleeps: number[] = [];
+      const client = new AfipSdkClient({ token: "t", baseUrl: "https://afip.test/api/v1", fetch: fake.fetch, sleep: async (ms) => void sleeps.push(ms), now: () => NOW, baseDelayMs: 10 });
+      fake.onGet({ status: 429, headers: { "retry-after": header } }, { status: 200, body: { status: "in_process" } });
+      await client.getJob("job-1");
+      if (expected === null) expect(sleeps[0]).toBeLessThan(13); // 10 · 2^0 + jitter
+      else expect(sleeps[0]).toBe(expected);
+    }
+  });
+});
+
+describe("CC-F5-04: respuestas hostiles", () => {
+  it("body de más de 8 MB → unexpected antes de JSON.parse (create y GET; con y sin Content-Length)", async () => {
+    const big = `{"status":"complete","data":"${"x".repeat(MAX_RESPONSE_BYTES)}"}`;
+    const huge: typeof fetch = async () => new Response(big, { status: 200 });
+    const client = new AfipSdkClient({ token: "t", baseUrl: "https://afip.test/api/v1", fetch: huge, sleep: async () => {} });
+    expect((await rejection(client.getJob("job-1"))).kind).toBe("unexpected");
+    expect((await rejection(client.createJob(PARAMS))).kind).toBe("unexpected");
+    const declared = new Response("{}", { status: 200, headers: { "content-length": String(MAX_RESPONSE_BYTES + 1) } });
+    await expect(readJsonCapped(declared)).rejects.toMatchObject({ kind: "unexpected" });
+    expect(await readJsonCapped(new Response('{"ok":1}'))).toEqual({ ok: 1 });
   });
 });

@@ -29,6 +29,7 @@ export const NOMBRES_ARCA: Readonly<Record<string, string>> = {
 export const ARCA_ADAPTER_MESSAGES = {
   formato: "ARCA devolvió una respuesta con un formato inesperado. Probá de nuevo o subí el Excel.",
   sinComprobantes: "ARCA no devolvió comprobantes para ese período.",
+  datoInvalido: (columna: string) => `Dato inválido en la respuesta de ARCA (columna «${columna}»).`,
   demasiadas: (n: number) => `ARCA devolvió ${n} comprobantes; el máximo por sincronización es ${MAX_FILAS}. Elegí un período más corto.`,
   faltanColumnas: (faltan: readonly string[], recibidas: readonly string[]) =>
     `Faltan columnas en la respuesta de ARCA: ${faltan.join(", ")} · Columnas recibidas: ${recibidas.length > 0 ? recibidas.join(", ") : "(ninguna)"}`,
@@ -48,32 +49,45 @@ function safeName(name: string): string {
 
 const MAX_NOMBRES = 60;
 const MAX_TEXTO = 1000;
+/** Respuesta hostil (CC-F5-04 F-06): como máximo 100 claves distintas y de ≤ 200 caracteres. */
+export const MAX_CLAVES = 100;
+export const MAX_LARGO_CLAVE = 200;
+/** Claves que nunca se leen (contaminación de prototipos). */
+const CLAVES_PROTOTIPO: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
 
-function toCell(value: unknown): Cell {
+const isPrimitive = (v: unknown): v is string | number | boolean | null | undefined =>
+  v === null || v === undefined || typeof v === "string" || typeof v === "number" || typeof v === "boolean";
+
+/** Valor primitivo → celda. (Los no primitivos se marcan antes como error de fila.) */
+function toCell(value: string | number | boolean | null | undefined): Cell {
   if (value === null || value === undefined) return null;
   if (typeof value === "string") return value.length > MAX_TEXTO ? value.slice(0, MAX_TEXTO) : value;
-  if (typeof value === "number") return Number.isFinite(value) ? value : "?";
-  if (typeof value === "boolean") return value;
-  return "?"; // objeto o array: "Número inválido" en importes, texto "?" en el resto
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  return value;
 }
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-export type ArcaRow = Record<string, Cell>;
+/** Una fila tal como vino de Afip SDK, solo con las columnas reconocidas (lo que viaja firmado). */
+export type ArcaRow = Record<string, unknown>;
 
 export type AdaptResult =
   | {
       ok: true;
       /** Encabezados del parser + filas, lista para findHeader/buildRows con source "arca". */
       sheet: Cell[][];
-      /** Las filas recibidas, solo con las columnas reconocidas (lo que viaja firmado). */
+      /** Las filas recibidas, solo con las columnas reconocidas y los valores tal cual (lo que viaja firmado). */
       rows: ArcaRow[];
+      /** N.º de comprobante (1..N) → motivo, para las filas con un dato no primitivo. */
+      invalidas: ReadonlyMap<number, string>;
     }
   | { ok: false; code: "formato" | "sin_comprobantes" | "demasiadas" | "faltan_columnas"; error: string };
 
+const formato = (): AdaptResult => ({ ok: false, code: "formato", error: ARCA_ADAPTER_MESSAGES.formato });
+
 /** Filas de Afip SDK (`data` del job) → hoja del parser. */
 export function adaptArcaRows(kind: Kind, data: unknown): AdaptResult {
-  if (!Array.isArray(data) || !data.every(isPlainObject)) return { ok: false, code: "formato", error: ARCA_ADAPTER_MESSAGES.formato };
+  if (!Array.isArray(data) || !data.every(isPlainObject)) return formato();
   if (data.length === 0) return { ok: false, code: "sin_comprobantes", error: ARCA_ADAPTER_MESSAGES.sinComprobantes };
   if (data.length > MAX_FILAS) return { ok: false, code: "demasiadas", error: ARCA_ADAPTER_MESSAGES.demasiadas(data.length) };
 
@@ -81,10 +95,11 @@ export function adaptArcaRows(kind: Kind, data: unknown): AdaptResult {
   const seen = new Set<string>();
   for (const row of data) {
     for (const key of Object.keys(row)) {
-      if (!seen.has(key)) {
-        seen.add(key);
-        recibidas.push(key);
-      }
+      if (CLAVES_PROTOTIPO.has(key) || seen.has(key)) continue;
+      if (key.length > MAX_LARGO_CLAVE) return formato();
+      seen.add(key);
+      recibidas.push(key);
+      if (recibidas.length > MAX_CLAVES) return formato();
     }
   }
   const byNormalized = new Map<string, string>();
@@ -108,7 +123,25 @@ export function adaptArcaRows(kind: Kind, data: unknown): AdaptResult {
   }
 
   const cols = COLUMNS[kind].filter((c) => keyFor.has(c.key));
-  const rows: ArcaRow[] = data.map((row) => Object.fromEntries(cols.map((c) => [keyFor.get(c.key)!, toCell(row[keyFor.get(c.key)!])])));
-  const sheet: Cell[][] = [cols.map((c) => c.header), ...rows.map((row) => cols.map((c) => row[keyFor.get(c.key)!] ?? null))];
-  return { ok: true, sheet, rows };
+  const invalidas = new Map<number, string>();
+  const rows: ArcaRow[] = [];
+  const cells: Cell[][] = [];
+  data.forEach((row, i) => {
+    const raw: ArcaRow = {};
+    const line: Cell[] = [];
+    for (const c of cols) {
+      const key = keyFor.get(c.key)!;
+      const value = Object.hasOwn(row, key) ? row[key] : undefined;
+      raw[key] = value === undefined ? null : value;
+      if (isPrimitive(value)) line.push(toCell(value));
+      else {
+        // Objeto o array: error de fila antes de armar ninguna Clave ARCA (CC-F5-04 F-05).
+        if (!invalidas.has(i + 1)) invalidas.set(i + 1, ARCA_ADAPTER_MESSAGES.datoInvalido(nombreArca(c)));
+        line.push(null);
+      }
+    }
+    rows.push(raw);
+    cells.push(line);
+  });
+  return { ok: true, sheet: [cols.map((c) => c.header), ...cells], rows, invalidas };
 }

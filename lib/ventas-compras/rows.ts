@@ -159,7 +159,18 @@ const isEmptyRow = (row: readonly Cell[]) => row.every((c) => c === null || c ==
  * Filas de datos → FilaBase. Estado: error (no se importa) → ya importada (Clave
  * ARCA en la tabla) → duplicada en el archivo (2.ª aparición) → nueva.
  */
-export function buildRows(kind: Kind, rows: readonly (readonly Cell[])[], header: HeaderMatch, refs: Referencias, source: Source = "excel"): FilaBase[] | { error: string } {
+/**
+ * `invalidas` (solo "arca"): n.º de fila → motivo, para filas con un dato no primitivo. Esas
+ * filas quedan con error y sin Clave ARCA (no se importan).
+ */
+export function buildRows(
+  kind: Kind,
+  rows: readonly (readonly Cell[])[],
+  header: HeaderMatch,
+  refs: Referencias,
+  source: Source = "excel",
+  invalidas: ReadonlyMap<number, string> = new Map(),
+): FilaBase[] | { error: string } {
   const data: { fila: number; cells: readonly Cell[] }[] = [];
   // Excel: n.º de fila de la hoja. ARCA: n.º de comprobante 1..N (no hay hoja).
   for (let r = header.row + 1; r < rows.length; r++) if (!isEmptyRow(rows[r])) data.push({ fila: source === "arca" ? data.length + 1 : r + 1, cells: rows[r] });
@@ -170,7 +181,8 @@ export function buildRows(kind: Kind, rows: readonly (readonly Cell[])[], header
   const nuevosProveedores = new Map<string, ProveedorFila>();
   return data.map(({ fila, cells }) => {
     const datos: Record<string, Dato> = {};
-    let error: string | null = null;
+    const invalida = source === "arca" ? (invalidas.get(fila) ?? null) : null;
+    let error: string | null = invalida;
     for (const col of COLUMNS[kind]) {
       // Columna opcional ausente (solo "arca"): vacía.
       const read = readCell(col, col.key in header.index ? (cells[header.index[col.key]] ?? null) : null);
@@ -209,7 +221,7 @@ export function buildRows(kind: Kind, rows: readonly (readonly Cell[])[], header
     const docDigits = soloDigitos(doc);
     const clientePorCuit = kind === "ventas" && docDigits.length === 11 ? (refs.clientesPorCuit.get(docDigits) ?? null) : null;
 
-    const clave = codigo !== null && num("puntoVenta") !== null && num("numeroDesde") !== null && tipo
+    const clave = !invalida && codigo !== null && num("puntoVenta") !== null && num("numeroDesde") !== null && tipo
       ? claveArca(codigo, num("puntoVenta")!, num("numeroDesde")!, doc)
       : null;
     let estado: FilaBase["estado"] = "nueva";

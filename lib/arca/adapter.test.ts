@@ -27,10 +27,10 @@ function adapt(kind: Kind, rows: unknown[]) {
 }
 
 function filas(kind: Kind, rows: unknown[]) {
-  const { sheet } = adapt(kind, rows);
+  const { sheet, invalidas } = adapt(kind, rows);
   const header = findHeader(kind, sheet, "arca");
   if ("error" in header) throw new Error(header.error);
-  const out = buildRows(kind, sheet, header, refs, "arca");
+  const out = buildRows(kind, sheet, header, refs, "arca", invalidas);
   if ("error" in out) throw new Error(out.error);
   return out;
 }
@@ -146,9 +146,18 @@ describe("valores", () => {
     expect(out.map((f) => f.fila)).toEqual([1, 2]);
   });
 
-  it("objetos o arrays en una celda → «Número inválido», no rompe", () => {
-    const [f] = filas("ventas", [afipRow("ventas", { "Imp. Total": { v: 1 } as unknown as string })]);
-    expect(f).toMatchObject({ estado: "error", error: "Número inválido en «Imp. Total»" });
+  it("objetos o arrays en una celda → error de fila «Dato inválido…», sin Clave ARCA (CC-F5-04 F-05)", () => {
+    const out = filas("ventas", [
+      afipRow("ventas", { "Imp. Total": { v: 1 } as unknown as string, "Número Desde": "1" }),
+      afipRow("ventas", { "Nro. Doc. Receptor": [CUIT] as unknown as string, "Número Desde": "2" }),
+      afipRow("ventas", { "Nro. Doc. Receptor": { a: CUIT } as unknown as string, "Número Desde": "3" }),
+      afipRow("ventas", { "Número Desde": "4" }),
+    ]);
+    expect(out[0]).toMatchObject({ estado: "error", error: "Dato inválido en la respuesta de ARCA (columna «Imp. Total»).", clave: null });
+    expect(out[1]).toMatchObject({ estado: "error", error: "Dato inválido en la respuesta de ARCA (columna «Nro. Doc. Receptor»).", clave: null });
+    expect(out[2]).toMatchObject({ estado: "error", clave: null });
+    expect(out[3]).toMatchObject({ estado: "nueva", error: null });
+    expect(out.slice(0, 3).every((f) => f.clientePorCuit === null)).toBe(true);
   });
 });
 
@@ -164,5 +173,34 @@ describe("misma Clave ARCA que el .xlsx", () => {
     const [fromArca] = filas(kind, [afipRow(kind, { "Punto de Venta": "2", "Número Desde": "42", ...docArca })]);
     expect(fromArca.clave).toBe(fromExcel[0].clave);
     expect(fromArca.clave).toBe(`11|2|42|${kind === "ventas" ? CUIT : CUIT_EMISOR}`);
+  });
+});
+
+describe("CC-F5-04: respuestas hostiles", () => {
+  it("más de 100 claves distintas → formato", () => {
+    const row: Record<string, string | number | null> = afipRow("ventas");
+    const extra = Object.fromEntries(Array.from({ length: 101 - Object.keys(row).length }, (_, i) => [`extra ${i}`, "1"]));
+    expect(adaptArcaRows("ventas", [{ ...row, ...extra }])).toMatchObject({ ok: false, code: "formato" });
+    const justo = Object.fromEntries(Array.from({ length: 100 - Object.keys(row).length }, (_, i) => [`extra ${i}`, "1"]));
+    expect(adaptArcaRows("ventas", [{ ...row, ...justo }])).toMatchObject({ ok: true });
+  });
+
+  it("una clave de 201 caracteres → formato (200 sí)", () => {
+    expect(adaptArcaRows("ventas", [{ ...afipRow("ventas"), ["k".repeat(201)]: "1" }])).toMatchObject({ ok: false, code: "formato" });
+    expect(adaptArcaRows("ventas", [{ ...afipRow("ventas"), ["k".repeat(200)]: "1" }])).toMatchObject({ ok: true });
+  });
+
+  it("__proto__, constructor y prototype se ignoran (no cuentan, no se leen)", () => {
+    const hostile = JSON.parse(`{"__proto__":{"polluted":true},"constructor":"x","prototype":"y",${JSON.stringify(afipRow("ventas")).slice(1)}`);
+    const r = adaptArcaRows("ventas", [hostile]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(Object.keys(r.rows[0])).not.toContain("__proto__");
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+    // En el diagnóstico tampoco aparecen.
+    const sinFecha = JSON.parse(`{"__proto__":{"a":1},"IVA":"1"}`);
+    const d = adaptArcaRows("ventas", [sinFecha]);
+    expect(d.ok).toBe(false);
+    if (!d.ok) expect(d.error).not.toContain("__proto__");
   });
 });

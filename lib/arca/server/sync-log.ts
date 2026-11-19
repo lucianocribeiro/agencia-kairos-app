@@ -3,7 +3,6 @@ import "server-only";
 import { getAirtableClient } from "@/lib/airtable/client";
 import { field, formula, or } from "@/lib/airtable/formula";
 import { TABLES } from "@/lib/airtable/schema";
-import { describeError } from "@/lib/auth/users";
 import { displayDate } from "@/lib/horas/dates";
 import { KIND_LABEL, type Kind } from "@/lib/ventas-compras/columns";
 
@@ -21,6 +20,12 @@ const F = T.fields;
 
 export type EstadoSync = (typeof T.choices.estado)[number];
 export const SYNC_WINDOW_MS = 15 * 60 * 1000;
+/**
+ * Un inicio tarda como máximo lo que dura su función (maxDuration de sincronizar = 60 s). Un log
+ * «En proceso» sin Job ID más viejo que esto no tiene ningún inicio vivo detrás (p. ej. un
+ * inicio duplicado que no se pudo borrar ni pasar a «Vencida»): no cuenta como en curso.
+ */
+export const START_WINDOW_MS = 60 * 1000;
 export const MAX_ERRORES = 5;
 
 export const SYNC_LOG_MESSAGES = {
@@ -118,8 +123,9 @@ export async function updateSync(id: string, patch: SyncPatch): Promise<void> {
 export async function updateSyncQuiet(id: string, patch: SyncPatch): Promise<void> {
   try {
     await updateSync(id, patch);
-  } catch (err) {
-    console.error("[arca] No se pudo actualizar el log de la sincronización", { id, error: describeError(err) });
+  } catch {
+    // Solo el ID: nada del error (podría traer valores).
+    console.error("[arca] No se pudo actualizar el log de la sincronización", { id });
   }
 }
 
@@ -139,9 +145,12 @@ async function recent(now: number, ms: number): Promise<SyncRecord[]> {
 
 const inWindow = (t: number, now: number, ms: number) => Number.isFinite(t) && t >= now - ms && t <= now + 60_000;
 
-/** ¿Hay otra «En proceso» de esta tabla iniciada en los últimos 15 minutos? */
+/**
+ * «En proceso» vivas de esta tabla: iniciadas en los últimos 15 minutos y con Job ID, o sin Job ID
+ * pero dentro de la ventana de un inicio. «Vencida», «Error» y el resto nunca cuentan.
+ */
 const running = (list: readonly SyncRecord[], kind: Kind, now: number) =>
-  list.filter((s) => s.tipo === kind && s.estado === "En proceso" && inWindow(s.iniciada, now, SYNC_WINDOW_MS));
+  list.filter((s) => s.tipo === kind && s.estado === "En proceso" && inWindow(s.iniciada, now, SYNC_WINDOW_MS) && (s.jobId !== null || inWindow(s.iniciada, now, START_WINDOW_MS)));
 
 /**
  * ¿El Admin está bloqueado? 5 «Error» dentro de 15 minutos bloquean por 15 minutos desde el
@@ -165,8 +174,8 @@ export async function checkGuards(kind: Kind, userId: string, now: number): Prom
   let list: SyncRecord[];
   try {
     list = await recent(now, 2 * SYNC_WINDOW_MS);
-  } catch (err) {
-    console.error("[arca] No se pudo leer Sincronizaciones ARCA", describeError(err));
+  } catch {
+    console.error("[arca] No se pudo leer Sincronizaciones ARCA");
     return { ok: false, status: 503, error: SYNC_LOG_MESSAGES.noDisponible };
   }
   if (isBlocked(list, userId, now)) return { ok: false, status: 429, error: SYNC_LOG_MESSAGES.bloqueado };

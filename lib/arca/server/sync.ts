@@ -49,6 +49,7 @@ export const SYNC_MESSAGES = {
   conError: "La sincronización terminó con error. Probá de nuevo.",
   sinJob: "No se pudo registrar la sincronización en ARCA. Probá de nuevo.",
   errorArca: AFIP_SDK_MESSAGES.rejected,
+  inicioDuplicado: "Inicio duplicado descartado.",
   inesperado: AFIP_SDK_MESSAGES.unexpected,
 } as const;
 
@@ -115,13 +116,14 @@ export async function startSync(kind: Kind, user: SessionUser, body: Record<stri
   let lost: boolean;
   try {
     lost = await losesRunningRace(kind, syncId, now.getTime());
-  } catch (err) {
-    console.error("[arca] Verificación posterior fallida", { id: syncId, error: describeError(err) });
-    await deleteSync(syncId).catch(() => {});
+  } catch {
+    console.error("[arca] Verificación posterior fallida", { id: syncId });
+    await descartarInicio(syncId);
     return fail(503, SYNC_LOG_MESSAGES.noDisponible);
   }
   if (lost) {
-    await deleteSync(syncId).catch(() => {});
+    // Perdimos la carrera: nuestro log no llegó a ARCA. Se borra; si no se puede, queda «Vencida».
+    if (!(await descartarInicio(syncId))) return fail(503, SYNC_LOG_MESSAGES.noDisponible);
     return fail(409, SYNC_LOG_MESSAGES.enCurso(kind));
   }
 
@@ -142,6 +144,26 @@ export async function startSync(kind: Kind, user: SessionUser, body: Record<stri
   }
   await updateSync(syncId, { jobId });
   return { ok: true, data: { syncId } };
+}
+
+/**
+ * Descarta el log de un inicio que no siguió (CC-F5-04 F-07): lo borra; si el borrado falla, lo
+ * deja «Vencida» con Finalizada = ahora y «Inicio duplicado descartado.» («Vencida» no cuenta
+ * para ninguna guarda). true si quedó resuelto; false si fallaron los dos (se loguea el ID).
+ */
+async function descartarInicio(syncId: string): Promise<boolean> {
+  try {
+    await deleteSync(syncId);
+    return true;
+  } catch {
+    try {
+      await updateSync(syncId, { estado: "Vencida", finalizada: new Date(), mensaje: SYNC_MESSAGES.inicioDuplicado });
+      return true;
+    } catch {
+      console.error("[arca] No se pudo descartar el log de un inicio duplicado", { id: syncId });
+      return false;
+    }
+  }
 }
 
 export type PollResult =
@@ -195,7 +217,8 @@ export async function pollSync(id: string, user: SessionUser, config: ArcaConfig
     throw err;
   }
   if (job.status === "in_process") return { ok: true, data: { estado: "en_proceso" } };
-  if (job.status === "error") return terminarConError(id, job.detail || SYNC_MESSAGES.errorArca);
+  // Error del job: siempre el mensaje fijo (no tenemos las credenciales para limpiar el del proveedor).
+  if (job.status === "error") return terminarConError(id, SYNC_MESSAGES.errorArca);
 
   const adapted = adaptArcaRows(kind, job.data);
   if (!adapted.ok) {
@@ -210,7 +233,7 @@ export async function pollSync(id: string, user: SessionUser, config: ArcaConfig
     }
     return terminarConError(id, adapted.error);
   }
-  const preview = await previewSheet(kind, adapted.sheet, "arca");
+  const preview = await previewSheet(kind, adapted.sheet, "arca", adapted.invalidas);
   if (!preview.ok) return preview.status === 400 ? terminarConError(id, preview.error) : preview;
 
   const payload = signPayload(getEnv().SESSION_SECRET, { syncId: id, tabla: kind, userId: user.id, issuedAt: now.getTime() }, adapted.rows);
@@ -244,7 +267,7 @@ export async function confirmSync(kind: Kind, user: SessionUser, body: Record<st
 
   const adapted = adaptArcaRows(kind, verified.rows);
   if (!adapted.ok) return fail(400, adapted.error);
-  const result = await confirmSheet(kind, adapted.sheet, ediciones, "arca");
+  const result = await confirmSheet(kind, adapted.sheet, ediciones, "arca", adapted.invalidas);
   if (!result.ok) return result;
 
   const r = result.data;

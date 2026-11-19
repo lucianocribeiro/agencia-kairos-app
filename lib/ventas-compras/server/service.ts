@@ -46,11 +46,11 @@ function readFile(file: Uint8Array): ServiceResult<Sheet> {
 }
 
 /** Hoja (del .xlsx o armada desde ARCA) → filas con estado y el contexto de la base. */
-async function parseSheet(kind: Kind, sheet: Sheet, source: Source): Promise<ServiceResult<Parsed>> {
+async function parseSheet(kind: Kind, sheet: Sheet, source: Source, invalidas?: ReadonlyMap<number, string>): Promise<ServiceResult<Parsed>> {
   const header = findHeader(kind, sheet, source);
   if ("error" in header) return fail(400, header.error);
   const { refs, ctx } = await loadImportContext(kind);
-  const filas = buildRows(kind, sheet, header, refs, source);
+  const filas = buildRows(kind, sheet, header, refs, source, invalidas);
   if ("error" in filas) return fail(400, filas.error);
   return { ok: true, data: { filas, ctx } };
 }
@@ -65,8 +65,8 @@ export async function previewImport(kind: Kind, file: Uint8Array): Promise<Servi
 }
 
 /** Vista previa desde una hoja ya armada (ARCA, CC-F5-03). Mismo resultado que el .xlsx. */
-export async function previewSheet(kind: Kind, sheet: Sheet, source: Source): Promise<ServiceResult<Preview>> {
-  return previewParsed(kind, await parseSheet(kind, sheet, source));
+export async function previewSheet(kind: Kind, sheet: Sheet, source: Source, invalidas?: ReadonlyMap<number, string>): Promise<ServiceResult<Preview>> {
+  return previewParsed(kind, await parseSheet(kind, sheet, source, invalidas));
 }
 
 function previewParsed(kind: Kind, parsed: ServiceResult<Parsed>): ServiceResult<Preview> {
@@ -161,8 +161,8 @@ export async function confirmImport(kind: Kind, file: Uint8Array, edicionesRaw: 
  * Confirmación desde una hoja ya armada (ARCA, CC-F5-03): la misma validación de ediciones,
  * compensación, rollback, verificaciones posteriores y puntos de falla que el .xlsx.
  */
-export async function confirmSheet(kind: Kind, sheet: Sheet, edicionesRaw: unknown, source: Source): Promise<ServiceResult<ResultadoImportacion>> {
-  return confirmParsed(kind, await parseSheet(kind, sheet, source), edicionesRaw, source);
+export async function confirmSheet(kind: Kind, sheet: Sheet, edicionesRaw: unknown, source: Source, invalidas?: ReadonlyMap<number, string>): Promise<ServiceResult<ResultadoImportacion>> {
+  return confirmParsed(kind, await parseSheet(kind, sheet, source, invalidas), edicionesRaw, source);
 }
 
 async function confirmParsed(kind: Kind, parsed: ServiceResult<Parsed>, edicionesRaw: unknown, source: Source): Promise<ServiceResult<ResultadoImportacion>> {

@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TABLES } from "@/lib/airtable/schema";
-import { afipRow, createFakeAfipSdk, type AfipRow } from "./afipsdk-fixture";
+import { afipRow, afipRowVentasReal, createFakeAfipSdk, type AfipRow } from "./afipsdk-fixture";
 import { cuitSintetico } from "./arca-fixture";
 import { createFakeAirtable } from "./fake-airtable";
 
@@ -660,5 +660,38 @@ describe("CC-F5-05: create 200 con status «error» que repite la clave y la CUI
       expect(text).not.toContain(formatted);
     }
     expect(logs()[0].fields).toMatchObject({ [S.estado]: "Error" });
+  });
+});
+
+describe("CC-F5-07: respuesta real de Ventas de punta a punta", () => {
+  beforeEach(() => loginAs(ids.admin));
+
+  it("vista previa → confirmar escribe Neto Gravado Total y las 11 columnas por alícuota", async () => {
+    const tipoA = fake.seed(T.tiposComprobante.id, { [T.tiposComprobante.fields.codigo]: 1, [T.tiposComprobante.fields.signo]: 1 });
+    const { syncId, preview, payload } = await syncToPreview("ventas", [afipRowVentasReal({ "Nro. Doc. Receptor": CUIT_CLIENTE })]);
+    expect(preview.resumen).toMatchObject({ total: 1, nuevas: 1, conError: 0 });
+    const c = await conf("ventas", { syncId, payload, ediciones: {} });
+    expect(c.json).toMatchObject({ importadas: 1 });
+    const V = T.ventas.fields;
+    const [row] = fake.rows(T.ventas.id);
+    expect(row.fields).toMatchObject({
+      [V.claveArca]: `1|3|77|${CUIT_CLIENTE}`,
+      [V.tipoComprobante]: [tipoA],
+      [V.cliente]: [ids.cliente],
+      [V.netoGravIva0]: 10,
+      [V.iva25]: 0.25,
+      [V.netoGravIva25]: 10,
+      [V.iva5]: 0.5,
+      [V.netoGravIva5]: 10,
+      [V.iva105]: 1.05,
+      [V.netoGravIva105]: 10,
+      [V.iva21]: 210,
+      [V.netoGravIva21]: 1000,
+      [V.iva27]: 2.7,
+      [V.netoGravIva27]: 10,
+      [V.netoGravadoTotal]: 1050,
+      [V.totalIva]: 214.5,
+      [V.impTotal]: 1264.5,
+    });
   });
 });

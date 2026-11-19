@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { afipRow } from "@/test/afipsdk-fixture";
+import { afipRow, afipRowVentasReal, AFIP_VENTAS_COLUMNAS_REALES } from "@/test/afipsdk-fixture";
 import { cuitSintetico } from "@/test/arca-fixture";
 import { COLUMNS, type Kind } from "@/lib/ventas-compras/columns";
 import { buildRows, COLUMNAS_POR_ALICUOTA, findHeader, type Cell, type Referencias } from "@/lib/ventas-compras/rows";
@@ -12,6 +12,7 @@ const CUIT_EMISOR = cuitSintetico("27", 66666666);
 
 const refs: Referencias = {
   tipos: new Map([
+    [1, { id: "recTIPO01000000000", signo: 1 }],
     [11, { id: "recTIPO11000000000", signo: 1 }],
     [13, { id: "recTIPO13000000000", signo: -1 }],
   ]),
@@ -92,12 +93,16 @@ describe("diagnóstico de columnas", () => {
     expect(r.error).not.toContain("1000,00");
   });
 
-  it("muestra el nombre documentado de lo que falta (p. ej. «Fecha de Emisión»)", () => {
+  it("lista todos los nombres aceptados de cada columna que falta (CC-F5-07)", () => {
     const row = afipRow("ventas");
     delete row["Fecha de Emisión"];
     delete row.IVA;
+    delete row["Imp. Neto Gravado"];
     const r = adaptArcaRows("ventas", [row]);
-    expect(r).toMatchObject({ ok: false, error: expect.stringContaining("«Fecha de Emisión», «IVA»") });
+    expect(r).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Faltan columnas en la respuesta de ARCA: «Fecha de Emisión» / «Fecha», «Imp. Neto Gravado Total» / «Imp. Neto Gravado» / «Neto Gravado Total», «IVA» / «Total IVA» · Columnas recibidas: "),
+    });
   });
 
   it("nombres raros: sin caracteres de control y acotados", () => {
@@ -202,5 +207,68 @@ describe("CC-F5-04: respuestas hostiles", () => {
     const d = adaptArcaRows("ventas", [sinFecha]);
     expect(d.ok).toBe(false);
     if (!d.ok) expect(d.error).not.toContain("__proto__");
+  });
+});
+
+describe("CC-F5-07: nombres reales de Afip SDK en Ventas (t=E)", () => {
+  it("la respuesta real (28 columnas, en orden) se adapta y llena todas las columnas de Ventas", () => {
+    const row = afipRowVentasReal({ "Nro. Doc. Receptor": CUIT });
+    expect(Object.keys(row)).toEqual(AFIP_VENTAS_COLUMNAS_REALES);
+    const r = adapt("ventas", [row]);
+    // Ninguna columna del parser queda sin mapear: las 28 de Ventas.
+    expect(r.sheet[0]).toEqual(COLUMNS.ventas.map((c) => c.header));
+    const [f] = filas("ventas", [row]);
+    expect(f.error).toBeNull();
+    expect(f.datos).toMatchObject({
+      fecha: "2026-10-15",
+      tipo: "1 - Factura A",
+      puntoVenta: 3,
+      numeroDesde: 77,
+      numeroHasta: 77,
+      netoGravIva0: 10,
+      iva25: 0.25,
+      netoGravIva25: 10,
+      iva5: 0.5,
+      netoGravIva5: 10,
+      iva105: 1.05,
+      netoGravIva105: 10,
+      iva21: 210,
+      netoGravIva21: 1000,
+      iva27: 2.7,
+      netoGravIva27: 10,
+      netoGravadoTotal: 1050,
+      netoNoGravado: 0,
+      opExentas: 0,
+      otrosTributos: 0,
+      totalIva: 214.5,
+      impTotal: 1264.5,
+      nroDocReceptor: CUIT,
+    });
+    expect(f.importes).toEqual({ total: 126450, iva: 21450, otros: 0, neto: 105000 });
+  });
+
+  it("misma Clave ARCA que la fila equivalente del .xlsx", () => {
+    const excel = excelSheet("ventas", { fecha: "15/10/2026", tipo: "1 - Factura A", puntoVenta: "00003", numeroDesde: "00000077", numeroHasta: 77, tipoDocReceptor: "CUIT", nroDocReceptor: CUIT, denominacionReceptor: "QA", impTotal: 1264.5 });
+    const header = findHeader("ventas", excel);
+    if ("error" in header) throw new Error(header.error);
+    const fromExcel = buildRows("ventas", excel, header, refs);
+    if ("error" in fromExcel) throw new Error(fromExcel.error);
+    const { sheet, invalidas } = adapt("ventas", [afipRowVentasReal({ "Nro. Doc. Receptor": CUIT })]);
+    const h = findHeader("ventas", sheet, "arca");
+    if ("error" in h) throw new Error(h.error);
+    const fromArca = buildRows("ventas", sheet, h, refs, "arca", invalidas);
+    if ("error" in fromArca) throw new Error(fromArca.error);
+    expect(fromArca[0].clave).toBe(fromExcel[0].clave);
+    expect(fromArca[0].clave).toBe(`1|3|77|${CUIT}`);
+  });
+
+  it("los nombres documentados de antes siguen funcionando («Imp. Neto Gravado», «IVA»)", () => {
+    const [f] = filas("ventas", [afipRow("ventas", { "Imp. Neto Gravado": "500,00", IVA: "105,00", "Imp. Total": "605,00" })]);
+    expect(f.datos).toMatchObject({ netoGravadoTotal: 500, totalIva: 105, impTotal: 605 });
+  });
+
+  it("si vienen el nombre real y el viejo, gana el real", () => {
+    const [f] = filas("ventas", [{ ...afipRowVentasReal(), "Imp. Neto Gravado": "999,00" }]);
+    expect(f.datos.netoGravadoTotal).toBe(1050);
   });
 });

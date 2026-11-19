@@ -26,7 +26,7 @@ import {
 } from "@/components/ui";
 import { controlClasses } from "@/components/ui/control-classes";
 import { MesAnioSelect, type MesAnioPartes } from "@/components/ui/mes-anio-select";
-import { ESTADO_PENDIENTE, ESTADOS_FACTURACION, isEstadoFacturacion, type EstadoFacturacion } from "@/lib/horas/estado";
+import { ESTADOS_FACTURACION } from "@/lib/horas/estado";
 import type { FieldErrors } from "@/lib/abm/fields";
 import { cn } from "@/lib/cn";
 import { displayDate, displayMonth, type DateRange } from "@/lib/horas/dates";
@@ -53,8 +53,6 @@ interface FormState {
   /** Mes a facturar en dos selects: mes "01".."12" y año "AAAA" (cualquiera puede estar vacío). */
   mesNum: string;
   mesAnio: string;
-  /** CC-F4-08: alta = Pendiente; edición = el guardado (vacío → Pendiente). */
-  estadoFacturacion: EstadoFacturacion;
 }
 
 /** Lo que se manda a la API: el formulario con Mes a facturar "YYYY-MM" ("" si falta mes o año). */
@@ -132,7 +130,7 @@ export function HorasManager({ today, options, initial }: { today: string; optio
     setFormError(null);
     setConfirmDelete(false);
     if (target.mode === "create") {
-      setForm({ colaborador: "", proyecto: "", fecha: today, tarea: "", desde: "", hasta: "", facturable: true, ...conMes(mesFormInicial(null, today)), estadoFacturacion: ESTADO_PENDIENTE });
+      setForm({ colaborador: "", proyecto: "", fecha: today, tarea: "", desde: "", hasta: "", facturable: true, ...conMes(mesFormInicial(null, today)) });
       setMesSigueFecha(true);
     } else {
       const r = target.record;
@@ -145,7 +143,6 @@ export function HorasManager({ today, options, initial }: { today: string; optio
         hasta: r.hasta,
         facturable: r.facturable,
         ...conMes(mesFormInicial(r.mesAFacturar, r.fecha)),
-        estadoFacturacion: r.estadoFacturacion,
       });
       setMesSigueFecha(false);
     }
@@ -282,14 +279,6 @@ export function HorasManager({ today, options, initial }: { today: string; optio
                 <div className="flex items-end pb-2">
                   <Checkbox label="Facturable" checked={form.facturable} onChange={(e) => set("facturable")(e.target.checked)} disabled={saving} />
                 </div>
-                <FormField label="Estado de facturación" error={errors.estadoFacturacion}>
-                  <Select
-                    value={form.estadoFacturacion}
-                    onChange={(e) => isEstadoFacturacion(e.target.value) && set("estadoFacturacion")(e.target.value)}
-                    options={ESTADOS_FACTURACION.map((v) => ({ value: v, label: v }))}
-                    disabled={saving}
-                  />
-                </FormField>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="submit" disabled={saving}>

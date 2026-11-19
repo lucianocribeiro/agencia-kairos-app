@@ -1,7 +1,8 @@
 /**
  * Estado de facturación de las horas (CC-F4-08): Pendiente (por defecto), Facturada, Pagada.
  * Client-safe. Un registro sin valor (anterior al campo) es Pendiente en todos lados.
- * Solo el Admin lo cambia (alta, edición o en lote desde la selección); el Empleado nunca lo ve.
+ * Una hora cargada es siempre Pendiente (alta del Admin y del Empleado). Solo el Admin lo cambia, y
+ * solo en lote desde la selección (CC-F4-10 / F4-12); el Empleado nunca lo ve.
  */
 
 export const ESTADOS_FACTURACION = ["Pendiente", "Facturada", "Pagada"] as const;
@@ -26,8 +27,14 @@ function participio(estado: EstadoFacturacion, n: number): string {
 export const ESTADO_MESSAGES = {
   invalido: "Elegí un estado de facturación válido.",
   filtro: "El filtro de estado no es válido.",
-  confirmar: (n: number, estado: EstadoFacturacion) => `¿Marcar ${n} ${n === 1 ? "hora" : "horas"} como ${participio(estado, n)}?`,
-  hecho: (n: number, estado: EstadoFacturacion) => `${n} ${n === 1 ? "hora marcada" : "horas marcadas"} como ${participio(estado, n)}.`,
+  confirmar: (n: number, estado: EstadoFacturacion) =>
+    estado === ESTADO_PENDIENTE ? `¿Volver ${n} ${n === 1 ? "hora" : "horas"} a pendiente?` : `¿Marcar ${n} ${n === 1 ? "hora" : "horas"} como ${participio(estado, n)}?`,
+  hecho: (n: number, estado: EstadoFacturacion) =>
+    estado === ESTADO_PENDIENTE
+      ? `${n} ${n === 1 ? "hora vuelta" : "horas vueltas"} a pendiente.`
+      : `${n} ${n === 1 ? "hora marcada" : "horas marcadas"} como ${participio(estado, n)}.`,
+  /** Botón y confirmación del panel de selección. */
+  accion: { Pendiente: "Volver a pendiente", Facturada: "Marcar como facturadas", Pagada: "Marcar como pagadas" } as Record<EstadoFacturacion, string>,
 } as const;
 
 /** Filtro de un query (`?estado=`): "" / null = todos; otro valor que no sea un estado → error. */

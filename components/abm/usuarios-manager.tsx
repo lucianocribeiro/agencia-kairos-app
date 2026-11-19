@@ -8,6 +8,7 @@ import { Button, Card, CardContent, CardHeader, CardTitle, FormField, InlineMess
 import { formatForInput, type FieldErrors, type RawValues } from "@/lib/abm/fields";
 import type { AbmData, RecordDTO } from "@/lib/abm/types";
 import { rolConProyectos, USUARIO_FIELDS, usuarioFieldsFor, validateTemporaryPassword, validateUsuario } from "@/lib/abm/usuarios";
+import { noJsAction } from "@/lib/no-js-form";
 import { generateTemporaryPassword } from "@/lib/auth/password-policy";
 import { formatDateTime } from "@/lib/format";
 
@@ -163,7 +164,8 @@ export function UsuariosManager({ data, currentUserId }: { data: AbmData; curren
             <CardTitle>{record ? String(record.values.nombre || "Editar usuario") : "Nuevo usuario"}</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-6">
-            <form onSubmit={submit} noValidate className="flex flex-col gap-5">
+            {/* Lleva la contraseña temporal en el alta: POST y action segura, nunca un GET (CC-F4-10). */}
+            <form method="post" action={noJsAction("usuarios")} onSubmit={submit} noValidate className="flex flex-col gap-5">
               {formError && <InlineMessage tone="danger">{formError}</InlineMessage>}
               {record && (
                 <p className="text-sm text-muted">

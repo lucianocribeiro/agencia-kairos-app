@@ -199,4 +199,36 @@ describe("Horas (Admin) · Estado de facturación (CC-F4-08)", () => {
     expect(fetchMock.mock.calls.slice(antes).some(([url]) => String(url).startsWith("/api/admin/horas?"))).toBe(true);
     expect(panel()).toBeNull();
   });
+
+  it("CC-F4-10: tercer botón «Volver a pendiente»: diálogo, POST { ids, estado: Pendiente } y toast", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const body =
+        url === "/api/admin/horas/seleccion"
+          ? { ok: true, ...RESUMEN }
+          : url === "/api/admin/horas/seleccion/estado"
+            ? { ok: true, actualizadas: 2, estado: "Pendiente" }
+            : { range: INITIAL.range, records: RECORDS, total: 0 };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+    });
+    await click(fila("01/03/2030"));
+    await click(fila("02/03/2030"));
+    const p = panel()!;
+    const labels = [...p.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels).toEqual(expect.arrayContaining(["Marcar como facturadas", "Marcar como pagadas", "Volver a pendiente"]));
+    await click(boton("Volver a pendiente", p));
+    expect(dialog()!.querySelector("h2")!.textContent).toBe("¿Volver 2 horas a pendiente?");
+    const confirmar = boton("Volver a pendiente", dialog()!);
+    expect(confirmar.className).toContain("bg-accent");
+    await click(confirmar);
+    await act(async () => {});
+    const post = fetchMock.mock.calls.find(([url]) => url === "/api/admin/horas/seleccion/estado")!;
+    expect(JSON.parse(post[1].body)).toEqual({ ids: ["recHHHHHHHHHHHHH1", "recHHHHHHHHHHHHH2"], estado: "Pendiente" });
+    expect(document.body.textContent).toContain("2 horas vueltas a pendiente.");
+  });
+
+  it("CC-F4-10: con una sola hora, singular («¿Volver 1 hora a pendiente?»)", async () => {
+    await click(fila("01/03/2030"));
+    await click(boton("Volver a pendiente", panel()!));
+    expect(dialog()!.querySelector("h2")!.textContent).toBe("¿Volver 1 hora a pendiente?");
+  });
 });

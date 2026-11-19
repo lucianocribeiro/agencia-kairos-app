@@ -244,3 +244,60 @@ describe("CC-F5-05: readJsonCapped con un stream que falla", () => {
     expect((await rejection(client.getJob("job-1"))).kind).toBe("unexpected");
   });
 });
+
+describe("CC-F5-08: mensajes conocidos de ARCA (allowlist)", () => {
+  const CONOCIDO = "ARCA indicó que el usuario o la clave fiscal son incorrectos. Revisalos e intentá de nuevo.";
+
+  it("la lista y la normalización (control, bordes, espacios, un punto final, mayúsculas); match exacto", async () => {
+    const { ARCA_MENSAJES_CONOCIDOS, normalizarMensaje, mensajeConocido } = await import("./afipsdk");
+    expect(ARCA_MENSAJES_CONOCIDOS).toEqual({ "clave o usuario incorrecto": CONOCIDO });
+    expect(normalizarMensaje("  CLAVE o\u0007  usuario\n incorrecto.  ")).toBe("clave o usuario incorrecto");
+    expect(normalizarMensaje("Clave o usuario incorrecto..")).toBe("clave o usuario incorrecto.");
+    for (const m of ["Clave o usuario incorrecto", "Clave o usuario incorrecto.", "  clave   o usuario INCORRECTO ", "Clave o usuario\tincorrecto"]) {
+      expect(mensajeConocido({ status: "error", data: { message: m } })).toBe(CONOCIDO);
+      expect(mensajeConocido({ status: "error", message: m })).toBe(CONOCIDO);
+    }
+    for (const m of ["Clave o usuario incorrecto para CUIT 20111111112", "Clave incorrecta", "Error: Clave o usuario incorrecto", "Clave o usuario incorrecto..", "Clave o usuario incorrecto clave-secreta-123", "constructor", "__proto__"]) {
+      expect(mensajeConocido({ data: { message: m } })).toBeNull();
+    }
+    expect(mensajeConocido(null)).toBeNull();
+    expect(mensajeConocido({ data: { message: 7 } })).toBeNull();
+  });
+
+  it("job: GET 400 y 200 status error con el mensaje conocido → texto de la app; sin él → el fijo", async () => {
+    const { fake, client } = setup();
+    fake.onGet({ status: 400, body: { status: "error", data: { message: "Clave o usuario incorrecto" } } });
+    expect((await rejection(client.getJob("job-1"))).detail).toBe(CONOCIDO);
+    fake.onGet({ status: 200, body: { status: "error", data: { message: "clave o usuario incorrecto." } } });
+    expect(await client.getJob("job-1")).toEqual({ status: "error", mensaje: CONOCIDO });
+    fake.onGet({ status: 200, body: { status: "failed", message: "Clave o usuario incorrecto" } });
+    expect(await client.getJob("job-1")).toEqual({ status: "error", mensaje: CONOCIDO });
+    fake.onGet({ status: 400, body: { status: "error", data: { message: `Clave o usuario incorrecto para ${PARAMS.username}` } } });
+    expect((await rejection(client.getJob("job-1"))).detail).toBe(MENSAJE_RECHAZO);
+    fake.onGet({ status: 200, body: { status: "error", data: { message: "Clave incorrecta" } } });
+    expect(await client.getJob("job-1")).toEqual({ status: "error" });
+  });
+
+  it("create: 400 y 200 status error con el mensaje conocido → texto de la app; desconocido → reglas de createRejectionDetail", async () => {
+    const { fake, client } = setup();
+    fake.onCreate({ status: 400, body: { status: "error", data: { message: "Clave o usuario incorrecto." } } });
+    expect((await rejection(client.createJob(PARAMS))).detail).toBe(CONOCIDO);
+    fake.onCreate({ status: 200, body: { status: "error", message: "CLAVE O USUARIO INCORRECTO" } });
+    expect((await rejection(client.createJob(PARAMS))).detail).toBe(CONOCIDO);
+    // Clave corta: igual el texto conocido (es de la app, no del proveedor).
+    fake.onCreate({ status: 400, body: { status: "error", data: { message: "Clave o usuario incorrecto" } } });
+    expect((await rejection(client.createJob({ ...PARAMS, password: "abc" }))).detail).toBe(CONOCIDO);
+    fake.onCreate({ status: 400, body: { status: "error", data: { message: `Usuario ${PARAMS.username} bloqueado` } } });
+    expect((await rejection(client.createJob(PARAMS))).detail).toBe(createRejectionDetail(`Usuario ${PARAMS.username} bloqueado`, { username: PARAMS.username, password: PARAMS.password, cuit: PARAMS.cuit }));
+    fake.onCreate({ status: 400, body: { status: "error", data: { message: "Clave o usuario incorrecto" } } });
+    const err = await rejection(client.createJob(PARAMS));
+    expect(JSON.stringify(err)).not.toMatch(/incorrect/i); // toJSON nunca lleva el detalle
+  });
+
+  it("el body de un 400 se sigue leyendo con el tope de 8 MB → unexpected", async () => {
+    const huge: typeof fetch = async () => new Response(`{"status":"error","data":{"message":"${"x".repeat(MAX_RESPONSE_BYTES)}"}}`, { status: 400 });
+    const client = new AfipSdkClient({ token: "t", baseUrl: "https://afip.test/api/v1", fetch: huge, sleep: async () => {} });
+    expect((await rejection(client.getJob("job-1"))).kind).toBe("unexpected");
+    expect((await rejection(client.createJob(PARAMS))).kind).toBe("unexpected");
+  });
+});

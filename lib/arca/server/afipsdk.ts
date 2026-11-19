@@ -193,8 +193,11 @@ export interface CreateJobParams {
 export type JobStatus =
   | { status: "in_process" }
   | { status: "complete"; data: unknown }
-  /** El job terminó con error. Sin mensaje del proveedor: se muestra MENSAJE_RECHAZO. */
-  | { status: "error" };
+  /**
+   * El job terminó con error. Nunca el mensaje del proveedor: `mensaje` es un texto de la app
+   * (ARCA_MENSAJES_CONOCIDOS) si el del proveedor es conocido; si no, se muestra MENSAJE_RECHAZO.
+   */
+  | { status: "error"; mensaje?: string };
 
 export interface AfipSdkClientOptions {
   token: string;
@@ -218,6 +221,50 @@ function messageOf(body: unknown): string | undefined {
   if (typeof data === "object" && data !== null && typeof (data as { message?: unknown }).message === "string") return (data as { message: string }).message;
   const message = (body as { message?: unknown }).message;
   return typeof message === "string" ? message : undefined;
+}
+
+/** Todos los mensajes del proveedor en el body: data.message y message (nivel superior). */
+function messagesOf(body: unknown): string[] {
+  if (typeof body !== "object" || body === null) return [];
+  const out: string[] = [];
+  const data = (body as { data?: unknown }).data;
+  if (typeof data === "object" && data !== null && typeof (data as { message?: unknown }).message === "string") out.push((data as { message: string }).message);
+  const message = (body as { message?: unknown }).message;
+  if (typeof message === "string") out.push(message);
+  return out;
+}
+
+/**
+ * Mensajes conocidos de ARCA (CC-F5-08): mensaje del proveedor YA normalizado → texto PROPIO de la
+ * app. Lo único que se muestra o se guarda es el texto de la app, nunca el del proveedor. Para
+ * agregar uno: una línea más (la clave en minúsculas, sin punto final y con espacios simples).
+ */
+export const ARCA_MENSAJES_CONOCIDOS: Readonly<Record<string, string>> = {
+  "clave o usuario incorrecto": "ARCA indicó que el usuario o la clave fiscal son incorrectos. Revisalos e intentá de nuevo.",
+};
+
+/**
+ * Normalización SOLO para comparar: sin caracteres de control (tab y saltos de línea = espacio), sin espacios en los bordes,
+ * espacios simples, sin UN punto final, minúsculas. La comparación es exacta sobre todo el texto.
+ */
+export function normalizarMensaje(message: string): string {
+  return message
+    // Tab, saltos de línea y demás espacios de control cuentan como espacio; el resto de los controles se borra.
+    .replace(/[\t\n\v\f\r]/g, " ")
+    .replace(CONTROL, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\.$/, "")
+    .toLocaleLowerCase("es");
+}
+
+/** Texto de la app para un mensaje conocido del body (data.message o message), o null. El del proveedor se descarta. */
+export function mensajeConocido(body: unknown): string | null {
+  for (const m of messagesOf(body)) {
+    const key = normalizarMensaje(m);
+    if (Object.hasOwn(ARCA_MENSAJES_CONOCIDOS, key)) return ARCA_MENSAJES_CONOCIDOS[key];
+  }
+  return null;
 }
 
 export class AfipSdkClient {
@@ -255,7 +302,7 @@ export class AfipSdkClient {
       },
     }, false, creds);
     const body = (await readJsonCapped(res)) as { id?: unknown; status?: unknown } | null;
-    if (body && typeof body === "object" && body.status === "error") throw new AfipSdkError({ kind: "rejected", status: res.status, detail: createRejectionDetail(messageOf(body), creds) });
+    if (body && typeof body === "object" && body.status === "error") throw new AfipSdkError({ kind: "rejected", status: res.status, detail: mensajeConocido(body) ?? createRejectionDetail(messageOf(body), creds) });
     if (!body || typeof body.id !== "string" || !JOB_ID_RE.test(body.id)) throw new AfipSdkError({ kind: "unexpected", status: res.status });
     return body.id;
   }
@@ -271,7 +318,10 @@ export class AfipSdkClient {
     const body = (await readJsonCapped(res)) as { status?: unknown; data?: unknown } | null;
     if (!body || typeof body !== "object" || typeof body.status !== "string") throw new AfipSdkError({ kind: "unexpected", status: res.status });
     if (body.status === "complete") return { status: "complete", data: body.data };
-    if (body.status === "error" || body.status === "failed") return { status: "error" };
+    if (body.status === "error" || body.status === "failed") {
+      const conocido = mensajeConocido(body);
+      return conocido ? { status: "error", mensaje: conocido } : { status: "error" };
+    }
     return { status: "in_process" };
   }
 
@@ -320,12 +370,11 @@ export class AfipSdkClient {
         throw new AfipSdkError({ kind: "config", status: res.status });
       }
       if (res.status === 400) {
-        if (!creds) {
-          await res.body?.cancel().catch(() => {});
-          throw new AfipSdkError({ kind: "rejected", status: 400, detail: MENSAJE_RECHAZO });
-        }
+        // Se lee con el tope de 8 MB solo para reconocer un mensaje conocido; después se descarta.
         const data = await readJsonCapped(res);
-        throw new AfipSdkError({ kind: "rejected", status: 400, detail: createRejectionDetail(messageOf(data), creds) });
+        const conocido = mensajeConocido(data);
+        if (!creds) throw new AfipSdkError({ kind: "rejected", status: 400, detail: conocido ?? MENSAJE_RECHAZO });
+        throw new AfipSdkError({ kind: "rejected", status: 400, detail: conocido ?? createRejectionDetail(messageOf(data), creds) });
       }
       await res.body?.cancel().catch(() => {});
       throw new AfipSdkError({ kind: transient ? "unavailable" : "unexpected", status: res.status });

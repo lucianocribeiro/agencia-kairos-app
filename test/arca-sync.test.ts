@@ -695,3 +695,53 @@ describe("CC-F5-07: respuesta real de Ventas de punta a punta", () => {
     });
   });
 });
+
+describe("CC-F5-08: mensajes conocidos de ARCA en la sincronización", () => {
+  beforeEach(() => loginAs(ids.admin));
+  const CONOCIDO = "ARCA indicó que el usuario o la clave fiscal son incorrectos. Revisalos e intentá de nuevo.";
+  const everywhere = () => [responses.join("\n"), JSON.stringify(logs().map((r) => r.fields)), consoleLines.join("\n")];
+
+  it.each([
+    ["GET 400", { status: 400, body: { status: "error", data: { message: "Clave o usuario incorrecto" } } }],
+    ["200 status error", { status: 200, body: { status: "error", data: { message: "clave o usuario incorrecto." } } }],
+    ["200, message de nivel superior y espacios", { status: 200, body: { status: "error", message: "  CLAVE O USUARIO   INCORRECTO " } }],
+  ])("error del job (%s) con el mensaje conocido → el texto de la app en la respuesta y en el log", async (_l, reply) => {
+    const s = await start("ventas");
+    afip.onGet(reply);
+    const p = await poll(s.json.syncId);
+    expect(p).toMatchObject({ status: 400, json: { error: CONOCIDO } });
+    expect(log(s.json.syncId)).toMatchObject({ [S.estado]: "Error", [S.mensaje]: CONOCIDO });
+  });
+
+  it("casi iguales (con CUIT, otra frase, con la clave) → el mensaje fijo; nunca la clave ni la CUIT de login", async () => {
+    for (const message of [`Clave o usuario incorrecto para CUIT ${CUIT_LOGIN}`, "Clave incorrecta", `Clave o usuario incorrecto ${CLAVE}`]) {
+      fake.rows(T.sincronizacionesArca.id).length = 0;
+      responses.length = 0;
+      consoleLines.length = 0;
+      const s = await start("ventas");
+      afip.onGet({ status: 200, body: { status: "error", data: { message } } });
+      const p = await poll(s.json.syncId);
+      expect(p).toMatchObject({ status: 400, json: { error: MENSAJE_RECHAZO } });
+      expect(log(s.json.syncId)[S.mensaje]).toBe(MENSAJE_RECHAZO);
+      for (const text of everywhere()) {
+        expect(text).not.toContain(CLAVE);
+        expect(text).not.toContain(CUIT_LOGIN);
+      }
+    }
+  });
+
+  it("create 400 con el mensaje conocido → texto de la app; desconocido → como antes", async () => {
+    afip.onCreate({ status: 400, body: { status: "error", data: { message: "Clave o usuario incorrecto" } } });
+    expect(await start("ventas")).toMatchObject({ status: 400, json: { error: CONOCIDO } });
+    expect(logs()[0].fields[S.mensaje]).toBe(CONOCIDO);
+    afip.onCreate({ status: 400, body: { status: "error", data: { message: `Usuario ${CUIT_LOGIN} bloqueado` } } });
+    expect(await start("compras")).toMatchObject({ status: 400, json: { error: "Usuario [redactado] bloqueado" } });
+  });
+
+  it("el error conocido cuenta para el bloqueo por errores (5 → 429)", async () => {
+    afip.onCreate({ status: 400, body: { status: "error", data: { message: "Clave o usuario incorrecto" } } });
+    for (let i = 0; i < 5; i++) expect((await start("ventas")).json.error).toBe(CONOCIDO);
+    expect((await start("ventas")).status).toBe(429);
+    expect(afip.requests.filter((r) => r.method === "POST")).toHaveLength(5);
+  });
+});

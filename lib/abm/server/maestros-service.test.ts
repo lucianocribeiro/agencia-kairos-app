@@ -412,9 +412,9 @@ describe("Clientes · borrado (F2-01)", () => {
     expect(CLIENTE_MESSAGES.referenciado([{ fieldId: CF.ventas, count: 4 }])).toBe("No se puede borrar: tiene 4 ventas. Pasalo a Inactivo.");
   });
 
-  it("revisa los tres links inversos: Proyectos, Ventas y Tesorería", async () => {
-    expect(MAESTRO_CONFIGS.clientes.references).toEqual([CF.proyectos, CF.ventas, CF.tesoreria]);
-    for (const fieldId of [CF.proyectos, CF.ventas, CF.tesoreria]) {
+  it("revisa los cuatro links inversos: Proyectos, Ventas, Tesorería y Comprobantes emitidos (CC-F5-10)", async () => {
+    expect(MAESTRO_CONFIGS.clientes.references).toEqual([CF.proyectos, CF.ventas, CF.tesoreria, CF.comprobantesEmitidos]);
+    for (const fieldId of [CF.proyectos, CF.ventas, CF.tesoreria, CF.comprobantesEmitidos]) {
       const c = seedCliente(`R ${fieldId}`, null, "Inactivo", { [fieldId]: ["recRRRRRRRRRRRRRR"] });
       expect(await deleteMaestro("clientes", c)).toMatchObject({ status: 409, error: expect.stringContaining("Pasalo a Inactivo.") });
     }
@@ -425,7 +425,7 @@ describe("Clientes · borrado (F2-01)", () => {
       const c = seedCliente(`Libre ${estado}`, "LB", estado);
       expect(await deleteCheckMaestro("clientes", c)).toEqual({
         ok: true,
-        data: { blocked: false, message: null, counts: { proyectos: 0, ventas: 0, tesoreria: 0 } },
+        data: { blocked: false, message: null, counts: { proyectos: 0, ventas: 0, tesoreria: 0, comprobantesEmitidos: 0 } },
       });
       expect(await deleteMaestro("clientes", c)).toEqual({ ok: true, data: { id: c } });
       expect(fake.rows(C.id).some((r) => r.id === c)).toBe(false);
@@ -436,7 +436,7 @@ describe("Clientes · borrado (F2-01)", () => {
     const c = seedCliente("A", "AA", "Activo", { [CF.ventas]: ["recVVVVVVVVVVVVVV"] });
     expect(await deleteCheckMaestro("clientes", c)).toEqual({
       ok: true,
-      data: { blocked: true, message: "No se puede borrar: tiene 1 venta. Pasalo a Inactivo.", counts: { proyectos: 0, ventas: 1, tesoreria: 0 } },
+      data: { blocked: true, message: "No se puede borrar: tiene 1 venta. Pasalo a Inactivo.", counts: { proyectos: 0, ventas: 1, tesoreria: 0, comprobantesEmitidos: 0 } },
     });
     expect(fake.calls.some((x) => x.method === "delete")).toBe(false);
   });

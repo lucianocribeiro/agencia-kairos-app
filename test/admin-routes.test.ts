@@ -330,7 +330,7 @@ describe("Clientes · Estado Activo / Inactivo y borrado (F2-01)", () => {
     const c = fake.seed(C.id, { [C.fields.nombre]: "QA", [C.fields.sigla]: "QA", [C.fields.estado]: "Activo", [C.fields.proyectos]: ["recPPPPPPPPPPPPPP"] });
     const msg = "No se puede borrar: tiene 1 proyecto. Pasalo a Inactivo.";
     const check = await call(REFS, "GET", undefined, { tabla: "clientes", id: c });
-    expect(check.json).toEqual({ ok: true, blocked: true, message: msg, counts: { proyectos: 1, ventas: 0, tesoreria: 0 } });
+    expect(check.json).toEqual({ ok: true, blocked: true, message: msg, counts: { proyectos: 1, ventas: 0, tesoreria: 0, comprobantesEmitidos: 0 } });
     expect(check.text).not.toMatch(/fld[A-Za-z0-9]{14}/); // solo categorías y cantidades, nunca IDs de campo
     const blocked = await call(ITEM, "DELETE", undefined, { tabla: "clientes", id: c });
     expect(blocked).toMatchObject({ status: 409, json: { error: msg } });
@@ -339,7 +339,7 @@ describe("Clientes · Estado Activo / Inactivo y borrado (F2-01)", () => {
       ok: true,
       blocked: false,
       message: null,
-      counts: { proyectos: 0, ventas: 0, tesoreria: 0 },
+      counts: { proyectos: 0, ventas: 0, tesoreria: 0, comprobantesEmitidos: 0 },
     });
     expect((await call(ITEM, "DELETE", undefined, { tabla: "clientes", id: c })).status).toBe(200);
     expect(fake.rows(C.id)).toHaveLength(0);

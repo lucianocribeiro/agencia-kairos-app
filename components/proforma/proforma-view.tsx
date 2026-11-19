@@ -1,5 +1,6 @@
 import { Download } from "lucide-react";
 
+import { FacturaArca } from "@/components/factura/factura-arca";
 import { InlineMessage } from "@/components/ui";
 import { buttonClasses } from "@/components/ui/button";
 import { controlClasses } from "@/components/ui/control-classes";
@@ -7,6 +8,7 @@ import { MesAnioInput } from "@/components/ui/mes-anio-select";
 import { cn } from "@/lib/cn";
 import { formatNumber, isoToDisplayDate } from "@/lib/format";
 import { formatHours } from "@/lib/horas/time";
+import type { FacturaEstado } from "@/lib/factura/factura";
 import { PROFORMA_MESSAGES, type ProformaData } from "@/lib/proforma/proforma";
 
 const money = (cents: number | null) => (cents === null ? "" : formatNumber(cents / 100, { decimals: 2 }));
@@ -43,10 +45,12 @@ export interface ProformaViewProps {
   mes: string;
   data: ProformaData | null;
   error: string | null;
+  /** «Factura ARCA» (CC-F5-10) del cliente + mes; null si no se pudo cargar. */
+  factura?: FacturaEstado | null;
 }
 
 /** Proforma de horas (Admin). Server component: el formulario es un GET (cliente y mes). */
-export function ProformaView({ clientes, cliente, mes, data, error }: ProformaViewProps) {
+export function ProformaView({ clientes, cliente, mes, data, error, factura = null }: ProformaViewProps) {
   const pdf = data ? `/api/admin/proforma/pdf?cliente=${encodeURIComponent(data.cliente.id)}&mes=${data.mes}` : null;
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
@@ -101,6 +105,8 @@ export function ProformaView({ clientes, cliente, mes, data, error }: ProformaVi
               </div>
             ))}
           </dl>
+
+          {factura && <FacturaArca cliente={{ id: data.cliente.id, nombre: data.cliente.nombre }} mes={data.mes} mesLabel={data.mesLabel} initial={factura} />}
 
           {data.vacia ? (
             <InlineMessage tone="info">{PROFORMA_MESSAGES.vacia(data.mesLabel)}</InlineMessage>

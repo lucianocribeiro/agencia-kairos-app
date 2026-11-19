@@ -267,7 +267,21 @@ export function mensajeConocido(body: unknown): string | null {
   return null;
 }
 
-export class AfipSdkClient {
+export interface SendOptions {
+  /** Reintenta 429, 5xx y errores de red (solo lecturas e idempotentes). */
+  retry: boolean;
+  /** Error de un 400: recibe el body ya leído con el tope de 8 MB (para un mensaje conocido); después se descarta. */
+  onBadRequest: (data: unknown) => AfipSdkError;
+}
+
+/**
+ * Transporte compartido de la API de Afip SDK (CC-F5-10): lo usan la automatización
+ * «mis-comprobantes» (AfipSdkClient) y WSFE (lib/factura/server/wsfe.ts). Bearer token,
+ * timeout por pedido, `redirect: "error"`, `cache: "no-store"`, reintentos con backoff + jitter
+ * respetando Retry-After (solo con `retry`). Respuesta 2xx → Response; si no, AfipSdkError
+ * (sin bodies): 401/403 → config; 400 → `onBadRequest`; 429/5xx/red → unavailable; otro → unexpected.
+ */
+export class AfipSdkTransport {
   readonly #token: string;
   readonly #baseUrl: string;
   readonly #fetch: typeof fetch;
@@ -289,42 +303,6 @@ export class AfipSdkClient {
     this.#timeoutMs = options.timeoutMs ?? 30_000;
   }
 
-  /** Crea el job. Nunca se reintenta. Devuelve el ID del job. */
-  async createJob(params: CreateJobParams): Promise<string> {
-    const creds = { username: params.username, password: params.password, cuit: params.cuit };
-    const res = await this.#send("POST", "/automations", {
-      automation: "mis-comprobantes",
-      params: {
-        cuit: params.cuit,
-        username: params.username,
-        password: params.password,
-        filters: { t: params.t, fechaEmision: params.fechaEmision },
-      },
-    }, false, creds);
-    const body = (await readJsonCapped(res)) as { id?: unknown; status?: unknown } | null;
-    if (body && typeof body === "object" && body.status === "error") throw new AfipSdkError({ kind: "rejected", status: res.status, detail: mensajeConocido(body) ?? createRejectionDetail(messageOf(body), creds) });
-    if (!body || typeof body.id !== "string" || !JOB_ID_RE.test(body.id)) throw new AfipSdkError({ kind: "unexpected", status: res.status });
-    return body.id;
-  }
-
-  /**
-   * Estado del job (un solo GET, con reintentos ante fallas transitorias). Un estado que no
-   * sea complete ni error se trata como "en proceso" (los otros valores no están documentados);
-   * el vencimiento de 15 minutos lo corta.
-   */
-  async getJob(id: string): Promise<JobStatus> {
-    if (!JOB_ID_RE.test(id)) throw new AfipSdkError({ kind: "unexpected" });
-    const res = await this.#send("GET", `/automations/${encodeURIComponent(id)}`, undefined, true, null);
-    const body = (await readJsonCapped(res)) as { status?: unknown; data?: unknown } | null;
-    if (!body || typeof body !== "object" || typeof body.status !== "string") throw new AfipSdkError({ kind: "unexpected", status: res.status });
-    if (body.status === "complete") return { status: "complete", data: body.data };
-    if (body.status === "error" || body.status === "failed") {
-      const conocido = mensajeConocido(body);
-      return conocido ? { status: "error", mensaje: conocido } : { status: "error" };
-    }
-    return { status: "in_process" };
-  }
-
   #backoff(attempt: number, retryAfterHeader: string | null): number {
     const exp = this.#baseDelayMs * 2 ** attempt;
     const jitter = Math.random() * this.#baseDelayMs * 0.25;
@@ -332,12 +310,7 @@ export class AfipSdkClient {
     return fromHeader ?? exp + jitter;
   }
 
-  /**
-   * Manda el pedido. Respuesta 2xx → Response; si no, AfipSdkError (sin bodies). `creds`: solo
-   * en el create (para decidir si el mensaje de un 400 se puede mostrar); null en el GET del
-   * job → el 400 lleva siempre el mensaje fijo.
-   */
-  async #send(method: "GET" | "POST", path: string, body: unknown, retry: boolean, creds: { username: string; password: string; cuit: string } | null): Promise<Response> {
+  async send(method: "GET" | "POST", path: string, body: unknown, options: SendOptions): Promise<Response> {
     for (let attempt = 0; ; attempt++) {
       let res: Response;
       try {
@@ -351,7 +324,7 @@ export class AfipSdkClient {
         });
       } catch {
         // Timeout o red. No se adjunta la causa (podría incluir la URL o el pedido).
-        if (retry && attempt < this.#maxRetries) {
+        if (options.retry && attempt < this.#maxRetries) {
           await this.#sleep(this.#backoff(attempt, null));
           continue;
         }
@@ -360,7 +333,7 @@ export class AfipSdkClient {
       if (res.ok) return res;
 
       const transient = res.status === 429 || res.status >= 500;
-      if (transient && retry && attempt < this.#maxRetries) {
+      if (transient && options.retry && attempt < this.#maxRetries) {
         await res.body?.cancel().catch(() => {});
         await this.#sleep(this.#backoff(attempt, res.headers.get("retry-after")));
         continue;
@@ -372,12 +345,62 @@ export class AfipSdkClient {
       if (res.status === 400) {
         // Se lee con el tope de 8 MB solo para reconocer un mensaje conocido; después se descarta.
         const data = await readJsonCapped(res);
-        const conocido = mensajeConocido(data);
-        if (!creds) throw new AfipSdkError({ kind: "rejected", status: 400, detail: conocido ?? MENSAJE_RECHAZO });
-        throw new AfipSdkError({ kind: "rejected", status: 400, detail: conocido ?? createRejectionDetail(messageOf(data), creds) });
+        throw options.onBadRequest(data);
       }
       await res.body?.cancel().catch(() => {});
       throw new AfipSdkError({ kind: transient ? "unavailable" : "unexpected", status: res.status });
     }
+  }
+}
+
+export class AfipSdkClient {
+  readonly #transport: AfipSdkTransport;
+
+  constructor(options: AfipSdkClientOptions) {
+    this.#transport = new AfipSdkTransport(options);
+  }
+
+  /** Crea el job. Nunca se reintenta. Devuelve el ID del job. */
+  async createJob(params: CreateJobParams): Promise<string> {
+    const creds = { username: params.username, password: params.password, cuit: params.cuit };
+    const res = await this.#transport.send(
+      "POST",
+      "/automations",
+      {
+        automation: "mis-comprobantes",
+        params: {
+          cuit: params.cuit,
+          username: params.username,
+          password: params.password,
+          filters: { t: params.t, fechaEmision: params.fechaEmision },
+        },
+      },
+      { retry: false, onBadRequest: (data) => new AfipSdkError({ kind: "rejected", status: 400, detail: mensajeConocido(data) ?? createRejectionDetail(messageOf(data), creds) }) },
+    );
+    const body = (await readJsonCapped(res)) as { id?: unknown; status?: unknown } | null;
+    if (body && typeof body === "object" && body.status === "error") throw new AfipSdkError({ kind: "rejected", status: res.status, detail: mensajeConocido(body) ?? createRejectionDetail(messageOf(body), creds) });
+    if (!body || typeof body.id !== "string" || !JOB_ID_RE.test(body.id)) throw new AfipSdkError({ kind: "unexpected", status: res.status });
+    return body.id;
+  }
+
+  /**
+   * Estado del job (un solo GET, con reintentos ante fallas transitorias). Un estado que no
+   * sea complete ni error se trata como "en proceso" (los otros valores no están documentados);
+   * el vencimiento de 15 minutos lo corta. Un 400 lleva siempre el mensaje fijo (o uno conocido).
+   */
+  async getJob(id: string): Promise<JobStatus> {
+    if (!JOB_ID_RE.test(id)) throw new AfipSdkError({ kind: "unexpected" });
+    const res = await this.#transport.send("GET", `/automations/${encodeURIComponent(id)}`, undefined, {
+      retry: true,
+      onBadRequest: (data) => new AfipSdkError({ kind: "rejected", status: 400, detail: mensajeConocido(data) ?? MENSAJE_RECHAZO }),
+    });
+    const body = (await readJsonCapped(res)) as { status?: unknown; data?: unknown } | null;
+    if (!body || typeof body !== "object" || typeof body.status !== "string") throw new AfipSdkError({ kind: "unexpected", status: res.status });
+    if (body.status === "complete") return { status: "complete", data: body.data };
+    if (body.status === "error" || body.status === "failed") {
+      const conocido = mensajeConocido(body);
+      return conocido ? { status: "error", mensaje: conocido } : { status: "error" };
+    }
+    return { status: "in_process" };
   }
 }

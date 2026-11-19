@@ -99,6 +99,7 @@ const CLIENTE_REFERENCE_NOUNS: Record<string, [singular: string, plural: string]
   [T.clientes.fields.proyectos]: ["proyecto", "proyectos"],
   [T.clientes.fields.ventas]: ["venta", "ventas"],
   [T.clientes.fields.tesoreria]: ["movimiento de Tesorería", "movimientos de Tesorería"],
+  [T.clientes.fields.comprobantesEmitidos]: ["comprobante emitido", "comprobantes emitidos"],
 };
 
 /** "a", "a y b", "a, b y c". */
@@ -313,6 +314,8 @@ export const MAESTRO_CONFIGS: Record<MaestroSlug, MaestroConfig> = {
       sigla: C.sigla,
       cuit: C.cuit,
       condicionIva: C.condicionIva,
+      razonSocial: C.razonSocial,
+      domicilioComercial: C.domicilioComercial,
       contacto: C.contacto,
       telefono: C.telefono,
       mail: C.mail,

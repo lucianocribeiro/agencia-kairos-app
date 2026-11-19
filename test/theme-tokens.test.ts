@@ -90,7 +90,7 @@ describe("CC-F4-09-FIX: links y foco", () => {
 });
 
 /** Salidas que no son pantalla (PDF de la Proforma): tienen su propia paleta fija. */
-const OUTPUTS = new Set(["lib/proforma/pdf.ts"]);
+const OUTPUTS = new Set(["lib/proforma/pdf.ts", "lib/factura/pdf.ts"]);
 const FILES = ["app", "components", "lib"]
   .flatMap((d) => sourceFiles(d, [".ts", ".tsx"]))
   .filter((f) => !/\.test\.tsx?$/.test(f) && !OUTPUTS.has(f));

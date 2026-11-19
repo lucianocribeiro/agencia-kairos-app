@@ -211,10 +211,14 @@ export async function updateHora(_actor: Actor, id: string, raw: RawValues): Pro
   return writeHora({ mode: "edit", existing }, fields, slot);
 }
 
-/** Borrado físico (Horas no tiene referencias). */
+/** Borrado físico. Una hora incluida en una factura emitida (CC-F5-10) no se borra. */
 export async function deleteHora(id: string): Promise<ServiceResult<{ id: string }>> {
   if (!RECORD_ID_RE.test(id)) return fail(404, HORA_MESSAGES.noEncontrado);
   if (!(await getHora(id))) return fail(404, HORA_MESSAGES.noEncontrado);
+  const refs = await getAirtableClient().get(HORAS_TABLE, id, { fields: [TABLES.horas.fields.comprobantesEmitidos] });
+  if (Array.isArray(refs?.fields[TABLES.horas.fields.comprobantesEmitidos]) && (refs.fields[TABLES.horas.fields.comprobantesEmitidos] as unknown[]).length > 0) {
+    return fail(409, HORA_MESSAGES.facturada);
+  }
   await getAirtableClient().delete(HORAS_TABLE, [id]);
   return { ok: true, data: { id } };
 }

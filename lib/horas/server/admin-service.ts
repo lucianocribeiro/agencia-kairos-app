@@ -7,6 +7,7 @@ import type { RawValues } from "@/lib/abm/fields";
 import type { ServiceResult } from "@/lib/abm/types";
 import { todayInBuenosAires } from "../dates";
 import { ESTADO_PENDIENTE, estadoEfectivo, filtroEstado } from "../estado";
+import { GUARD_MESSAGES, horaEnFacturaEmitida } from "@/lib/factura/server/guards";
 import { HORA_MESSAGES, validateHora } from "../rules";
 import { formatTime, sumHours } from "../time";
 import { findOverlaps, getHora, H, HORAS_ADMIN_READ_FIELDS, horaFields, HORAS_TABLE, listHorasInRange, overlapConflict, sortHoras } from "./repo";
@@ -218,6 +219,14 @@ export async function deleteHora(id: string): Promise<ServiceResult<{ id: string
   const refs = await getAirtableClient().get(HORAS_TABLE, id, { fields: [TABLES.horas.fields.comprobantesEmitidos] });
   if (Array.isArray(refs?.fields[TABLES.horas.fields.comprobantesEmitidos]) && (refs.fields[TABLES.horas.fields.comprobantesEmitidos] as unknown[]).length > 0) {
     return fail(409, HORA_MESSAGES.facturada);
+  }
+  // CC-F5-12: también si está en el snapshot de una factura de Producción en curso o autorizada
+  // (el link puede no existir todavía). Fail-closed: sin poder leer, no se borra.
+  try {
+    if (await horaEnFacturaEmitida(id)) return fail(409, HORA_MESSAGES.facturada);
+  } catch {
+    console.error("[horas] No se pudo verificar Comprobantes emitidos antes de borrar", { id });
+    return { ok: false, status: 503, error: GUARD_MESSAGES.noVerificado };
   }
   await getAirtableClient().delete(HORAS_TABLE, [id]);
   return { ok: true, data: { id } };

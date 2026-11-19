@@ -104,6 +104,7 @@ export const FACTURA_MESSAGES = {
   faltaRegistro: "Autorizada en ARCA; falta registrar en Ventas.",
   noEmitida: "ARCA no emitió la factura; podés volver a intentar.",
   revisarManual: "Revisar manualmente en ARCA.",
+  datosIncompletos: "Revisar manualmente: datos del comprobante incompletos.",
   rechazada: "ARCA rechazó la factura.",
   noIncierta: "Solo se puede verificar una factura Incierta.",
   noPendiente: "Esta factura no tiene registros pendientes.",
@@ -309,6 +310,8 @@ export interface ComprobanteVista {
   completable: boolean;
   /** Producción: Autorizada sin registrar en Ventas/Horas (derivado de los datos, no de Mensaje). */
   pendienteRegistro: boolean;
+  /** Producción + Autorizada con el snapshot incompleto (CC-F5-12): revisar a mano, sin «Completar registro». */
+  datosIncompletos: boolean;
 }
 
 export interface FacturaEstado {

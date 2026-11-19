@@ -620,6 +620,11 @@ export const TABLES = {
       corregidoPor: "fldiOSxeJGHCLN7MJ",
       /** multilineText: snapshot JSON (emisor y receptor enviados, detalle, importes, fechas, IDs de horas, CAE) */
       datos: "fldAonZC8nOiaV2JW",
+      /**
+       * Solo Producción (CC-F5-12): claveArca(1, PV, Número, CUIT), la misma de la Venta. Se escribe al
+       * autorizar; bloquea borrar esa Venta aunque el link todavía no exista. Homologación: vacía.
+       */
+      claveArca: "fldzRsZE8m0pggdQk",
       /** multilineText: motivo de un rechazo o estado (nunca bodies ni secretos) */
       mensaje: "fldeFpwGJnL3PuAcR",
       /** dateTime ISO, tz America/Argentina/Buenos_Aires */

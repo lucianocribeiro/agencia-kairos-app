@@ -120,6 +120,18 @@ describe("setup-comprobantes-emitidos (CC-F5-10)", () => {
     expect(records.records.every((x) => !(TABLES.parametros.fields.valor in x.fields))).toBe(true);
   });
 
+  it("CC-F5-12: falta «Clave ARCA» en una tabla existente → --verify 1 (solo GET); sin --verify la crea en esa tabla", async () => {
+    const v = await run(base({ drop: "Clave ARCA" }), true);
+    expect(v.code).toBe(1);
+    expect(v.err).toContain("no tiene el campo «Clave ARCA»");
+    expect(v.calls.every((c) => c.method === "GET")).toBe(true);
+    const c = await run(base({ drop: "Clave ARCA" }), false);
+    const post = c.calls.filter((x) => x.method === "POST");
+    expect(post).toHaveLength(1);
+    expect(post[0]).toMatchObject({ url: expect.stringContaining(`/tables/${T.id}/fields`), body: { name: "Clave ARCA", type: "singleLineText" } });
+    expect(c.err).toContain(UPDATE_SCHEMA_MESSAGE);
+  });
+
   it("el inverso del link a sí misma se renombra a «Corregido por»", async () => {
     const r = await run(base({ selfName: "From field: Comprobante asociado" }), false);
     expect(r.calls.find((c) => c.method === "PATCH")).toMatchObject({ url: expect.stringContaining(`/tables/${T.id}/fields/${F.corregidoPor}`), body: { name: SELF_INVERSE_NAME } });
@@ -129,7 +141,12 @@ describe("setup-comprobantes-emitidos (CC-F5-10)", () => {
 describe("la tabla nunca guarda secretos ni cálculos", () => {
   it("nombres y claves sin certificado/clave/token; sin fórmulas; precisiones pedidas", () => {
     for (const n of [...FIELDS.map((f) => f.name), "Cliente", "Usuario", "Horas", "Venta", "Comprobante asociado", SELF_INVERSE_NAME]) expect(n).not.toMatch(FORBIDDEN_NAME);
-    for (const key of Object.keys(F)) expect(key).not.toMatch(/cert|key|token|clave|password|sign/i);
+    expect(FIELDS.find((f) => f.name === "Clave ARCA")).toMatchObject({ type: "singleLineText" });
+    // «claveArca» es la Clave ARCA de la Venta (código|PV|número|CUIT), no un secreto (CC-F5-12).
+    for (const key of Object.keys(F).filter((k) => k !== "claveArca")) expect(key).not.toMatch(/cert|key|token|clave|password|sign/i);
+    expect(FORBIDDEN_NAME.test("Clave ARCA")).toBe(false);
+    expect(FORBIDDEN_NAME.test("Clave fiscal")).toBe(true);
+    expect(FORBIDDEN_NAME.test("Clave ARCA fiscal")).toBe(true);
     for (const f of FIELDS) expect(["formula", "rollup", "lookup", "count", "multipleLookupValues"]).not.toContain(f.type);
     expect(FIELDS.find((f) => f.name === "Alícuota")).toMatchObject({ options: { precision: 4 } });
     for (const n of ["Neto", "IVA", "Total"]) expect(FIELDS.find((f) => f.name === n)).toMatchObject({ options: { precision: 2 } });

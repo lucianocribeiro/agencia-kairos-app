@@ -298,6 +298,7 @@ export function vistaComprobante(r: ComprobanteRow, now = Date.now()): Comproban
     verificable: r.estado === "Incierta" || colgado(r, now),
     completable: pendienteDeRegistro(r),
     pendienteRegistro: pendienteDeRegistro(r),
+    datosIncompletos: datosIncompletos(r),
   };
 }
 
@@ -307,7 +308,11 @@ export function vistaComprobante(r: ComprobanteRow, now = Date.now()): Comproban
  * horas en el mismo update, DESPUÉS de crear la Venta y de marcar las horas como Facturada: si
  * cualquiera de esos pasos falla, el link no existe.
  */
-export const pendienteDeRegistro = (r: Pick<ComprobanteRow, "estado" | "ambiente" | "venta">) => r.estado === "Autorizada" && r.ambiente === "Producción" && r.venta === null;
+export const pendienteDeRegistro = (r: Pick<ComprobanteRow, "estado" | "ambiente" | "venta" | "datos">) =>
+  r.estado === "Autorizada" && r.ambiente === "Producción" && r.venta === null && autorizacionDelSnapshot(r.datos) !== null;
+
+/** Producción + Autorizada con un snapshot sin autorización completa (CC-F5-12): se revisa a mano, sin «Completar registro». */
+export const datosIncompletos = (r: Pick<ComprobanteRow, "estado" | "ambiente" | "datos">) => r.estado === "Autorizada" && r.ambiente === "Producción" && autorizacionDelSnapshot(r.datos) === null;
 
 export async function cargarEstadoFactura(clienteId: string, mes: string, now = new Date()): Promise<ServiceResult<FacturaEstado>> {
   const config = configLike();
@@ -596,6 +601,8 @@ async function autorizar(id: string, datos: FacturaDatos & { numero: number }, c
       [F.numero]: conCae.numero,
       [F.comprobante]: label,
       [F.datos]: JSON.stringify(conCae),
+      // CC-F5-12: solo Producción, la misma Clave ARCA que usará la Venta (bloquea borrarla aunque falte el link).
+      ...(datos.ambiente === "Producción" ? { [F.claveArca]: claveArca(CBTE_TIPO_FACTURA_A, conCae.puntoVenta, conCae.numero!, conCae.receptor.cuit) } : {}),
       [F.mensaje]: mensajeObs,
       [F.finalizado]: nowIso(new Date()),
     });
@@ -705,6 +712,7 @@ async function registrar(id: string, d: FacturaDatos): Promise<boolean> {
     // Links del comprobante.
     const existentes = new Set(horas.filter((r) => d.horas.includes(r.id)).map((r) => r.id));
     // Venta y horas en el mismo update: es la marca de «registro completo» (ver pendienteDeRegistro). Mensaje no se toca.
+    injectFault("factura:links");
     await updateRow(id, { [F.venta]: [ventaId], [F.horas]: d.horas.filter((h) => existentes.has(h)) });
     return true;
   } catch {

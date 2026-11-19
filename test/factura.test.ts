@@ -734,3 +734,106 @@ describe("CC-F5-11 · autorización completa, PDF del snapshot, PEM y Observacio
     });
   });
 });
+
+describe("CC-F5-12 · guardas de borrado sin depender de los links (F-10)", () => {
+  beforeEach(login);
+  const ceRow = (ambiente: string, estado: string, horas: string[], extra: Record<string, unknown> = {}) =>
+    fake.seed(CE.id, {
+      [F.tipo]: "Factura A", [F.ambiente]: ambiente, [F.estado]: estado, [F.cliente]: [ids.cliente], [F.mes]: "2026-10-01",
+      [F.datos]: JSON.stringify({ version: 1, ambiente, tipo: "Factura A", cbteTipo: 1, emisor: {}, receptor: { cuit: CUIT_CLIENTE }, importes: {}, detalle: {}, puntoVenta: 7, horas }),
+      ...extra,
+    });
+
+  it("Producción: falla el update final de links (Venta creada, horas Facturada) → Autorizada y pendiente; Venta y horas no se borran; «Completar registro» linkea y una segunda vez → 409", async () => {
+    usarProduccion();
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("KAIROS_FAULT_INJECTION", "factura:links");
+    const r = await emitir();
+    expect(r.json).toMatchObject({ estado: "Autorizada", mensaje: FACTURA_MESSAGES.faltaRegistro });
+    const rec = rows()[0];
+    expect(rec.fields[F.venta]).toBeUndefined();
+    expect(rec.fields[F.claveArca]).toBe(`1|7|1|${CUIT_CLIENTE}`);
+    const [venta] = fake.rows(T.ventas.id);
+    expect(venta.fields[V.claveArca]).toBe(`1|7|1|${CUIT_CLIENTE}`);
+    expect([estadoHora(ids.h1), estadoHora(ids.h2)]).toEqual(["Facturada", "Facturada"]);
+    expect((await estado()).json.comprobantes[0]).toMatchObject({ pendienteRegistro: true, completable: true });
+    // Sin links inversos: las guardas miran la Clave ARCA y el snapshot.
+    expect(await deleteComprobante("ventas", venta.id)).toMatchObject({ ok: false, status: 409 });
+    for (const h of [ids.h1, ids.h2]) expect(await deleteHora(h)).toMatchObject({ ok: false, status: 409 });
+    expect(fake.rows(T.ventas.id)).toHaveLength(1);
+    expect(fake.rows(T.horas.id).some((h) => h.id === ids.h1)).toBe(true);
+    vi.stubEnv("KAIROS_FAULT_INJECTION", "");
+    expect((await completar(r.json.id)).json.estado).toBe("Autorizada");
+    expect(rows()[0].fields).toMatchObject({ [F.venta]: [venta.id], [F.horas]: [ids.h1, ids.h2] });
+    expect(fake.rows(T.ventas.id)).toHaveLength(1);
+    expect((await completar(r.json.id)).status).toBe(409);
+  });
+
+  it("deleteHora: en el snapshot de una Producción En proceso o Incierta (sin links) → 409; Homologación o Rechazada → se borra", async () => {
+    for (const estado of ["En proceso", "Incierta", "Autorizada"]) {
+      const ce = ceRow("Producción", estado, [ids.h1]);
+      expect(await deleteHora(ids.h1)).toMatchObject({ ok: false, status: 409 });
+      fake.rows(CE.id).splice(fake.rows(CE.id).findIndex((x) => x.id === ce), 1);
+    }
+    ceRow("Homologación", "Autorizada", [ids.h1]);
+    ceRow("Producción", "Rechazada", [ids.h1]);
+    // El ID aparece como texto en otra parte del JSON pero no en `horas` → no bloquea (no es substring).
+    ceRow("Producción", "Incierta", [], { [F.mensaje]: ids.h1, [F.comprobante]: ids.h1 });
+    expect(await deleteHora(ids.h1)).toMatchObject({ ok: true });
+  });
+
+  it("deleteHora: el ID solo como texto dentro de Datos (fuera de `horas`) no bloquea; Datos ilegible tampoco", async () => {
+    fake.seed(CE.id, { [F.tipo]: "Factura A", [F.ambiente]: "Producción", [F.estado]: "Incierta", [F.datos]: JSON.stringify({ version: 1, nota: ids.h2, horas: [] }) });
+    fake.seed(CE.id, { [F.tipo]: "Factura A", [F.ambiente]: "Producción", [F.estado]: "Incierta", [F.datos]: `{roto ${ids.h2}` });
+    expect(await deleteHora(ids.h2)).toMatchObject({ ok: true });
+  });
+
+  it("deleteComprobante: Clave ARCA de una Homologación → se borra; de una Producción Autorizada → 409", async () => {
+    const venta = (clave: string) => fake.seed(T.ventas.id, { [V.claveArca]: clave, [V.tipoComprobante]: [ids.fa] });
+    const homo = venta("1|1|5|30000000007");
+    ceRow("Homologación", "Autorizada", [], { [F.claveArca]: "1|1|5|30000000007" });
+    expect(await deleteComprobante("ventas", homo)).toMatchObject({ ok: true });
+    const prod = venta("1|7|9|30000000007");
+    ceRow("Producción", "Autorizada", [], { [F.claveArca]: "1|7|9|30000000007" });
+    expect(await deleteComprobante("ventas", prod)).toMatchObject({ ok: false, status: 409, error: "Esta venta es de una factura emitida desde la app: no se puede borrar." });
+    // Una Producción Rechazada o Incierta con esa clave no bloquea (solo Autorizada).
+    const otra = venta("1|7|10|30000000007");
+    ceRow("Producción", "Incierta", [], { [F.claveArca]: "1|7|10|30000000007" });
+    expect(await deleteComprobante("ventas", otra)).toMatchObject({ ok: true });
+  });
+
+  it("fail-closed: si «Comprobantes emitidos» no se puede leer → 503 y no se borra nada", async () => {
+    const venta = fake.seed(T.ventas.id, { [V.claveArca]: "1|7|9|30000000007", [V.tipoComprobante]: [ids.fa] });
+    fake.fail("list", CE.id);
+    expect(await deleteHora(ids.h1)).toMatchObject({ ok: false, status: 503 });
+    expect(await deleteComprobante("ventas", venta)).toMatchObject({ ok: false, status: 503 });
+    expect(fake.calls.filter((c) => c.method === "delete")).toHaveLength(0);
+  });
+
+  // Afip SDK responde 400/401/403 antes de procesar el pedido en ARCA (pedido inválido o token sin
+  // permisos): no hay factura emitida que reconciliar, así que es definitivo → Rechazada (la clave queda
+  // libre). 429/5xx/red/respuesta ilegible, en cambio, no garantizan eso → Incierta.
+  it.each([
+    [400, { message: "Error\u0007 de validación del pedido" }, "400: Error de validación del pedido"],
+    [401, {}, "La integración con ARCA no está configurada correctamente."],
+    [403, {}, "La integración con ARCA no está configurada correctamente."],
+  ])("FECAESolicitar HTTP %s de Afip SDK → Rechazada, un solo intento, mensaje saneado, sin CAE", async (status, body, mensaje) => {
+    wsfe.on("FECAESolicitar", { status, body });
+    const r = await emitir();
+    expect(r.json).toMatchObject({ estado: "Rechazada", mensaje });
+    expect(wsfe.calls("FECAESolicitar")).toHaveLength(1);
+    expect(rows()[0].fields).toMatchObject({ [F.estado]: "Rechazada", [F.mensaje]: mensaje });
+    expect(rows()[0].fields[F.cae]).toBeUndefined();
+    expect(String(rows()[0].fields[F.mensaje])).not.toMatch(/[\u0000-\u001f]/);
+    expect((await estado()).json.elegible).toBe(true);
+  });
+
+  it("Producción Autorizada con Datos mal formado → «Revisar manualmente», sin «Completar registro»; el endpoint la rechaza", async () => {
+    usarProduccion();
+    const id = fake.seed(CE.id, { [F.tipo]: "Factura A", [F.ambiente]: "Producción", [F.estado]: "Autorizada", [F.cliente]: [ids.cliente], [F.mes]: "2026-10-01", [F.numero]: 3, [F.cae]: "70000000000003", [F.datos]: "{no es json" });
+    const c = (await estado()).json.comprobantes.find((x: { id: string }) => x.id === id);
+    expect(c).toMatchObject({ datosIncompletos: true, pendienteRegistro: false, completable: false, pdf: false });
+    expect((await completar(id)).status).toBe(409);
+    expect(fake.rows(T.ventas.id)).toHaveLength(0);
+  });
+});

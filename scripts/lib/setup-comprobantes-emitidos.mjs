@@ -47,6 +47,7 @@ export const NAMES = {
   venta: "Venta",
   comprobanteAsociado: "Comprobante asociado",
   datos: "Datos",
+  claveArca: "Clave ARCA",
   mensaje: "Mensaje",
   iniciado: "Iniciado",
   finalizado: "Finalizado",
@@ -79,6 +80,7 @@ export const FIELDS = [
   number("Total", 2),
   number("Alícuota", 4),
   { name: "Datos", type: "multilineText", description: "Snapshot JSON de lo enviado a ARCA: el PDF se arma siempre desde acá." },
+  { name: "Clave ARCA", type: "singleLineText", description: "Solo Producción: la Clave ARCA de la Venta (código|PV|número|CUIT). Bloquea borrar esa Venta (CC-F5-12)." },
   { name: "Mensaje", type: "multilineText" },
   { name: "Iniciado", type: "dateTime", options: dateTime },
   { name: "Finalizado", type: "dateTime", options: dateTime },
@@ -111,8 +113,8 @@ export const CONCEPTOS = [
   { concepto: "Leyenda factura A", descripcion: "Leyenda debajo de la letra de la factura A (p. ej. «PAGO EN C.B.U. INFORMADA»). Vacío = sin leyenda." },
 ];
 
-/** Nombres que la tabla nunca puede tener (secretos). */
-export const FORBIDDEN_NAME = /clave|password|contrase|token|certific|privad|private|\bkey\b|\bsign\b/i;
+/** Nombres que la tabla nunca puede tener (secretos). «Clave ARCA» (la de la Venta) no es un secreto. */
+export const FORBIDDEN_NAME = /clave(?! arca$)|password|contrase|token|certific|privad|private|\bkey\b|\bsign\b/i;
 const COMPUTED = ["formula", "rollup", "lookup", "count", "multipleLookupValues", "autoNumber"];
 
 function verifyShape(table, ids) {
@@ -215,10 +217,12 @@ export async function setupComprobantesEmitidos({ token, baseId, verifyOnly = fa
   const existing = tables.find((t) => t.name === TABLE_NAME);
   const faltanClientes = Object.values(CLIENTES_FIELDS).filter((name) => !clientes?.fields.some((f) => f.name === name));
   const faltanConceptos = CONCEPTOS.filter((c) => !conceptos.includes(c.concepto));
+  // Campos agregados después de crear la tabla (p. ej. «Clave ARCA», CC-F5-12): se crean si faltan.
+  const faltanCampos = existing ? FIELDS.filter((f) => !existing.fields.some((x) => x.name === f.name)) : [];
   const selfInverse = inverseOf(existing, existing, NAMES.comprobanteAsociado);
   const renombrar = existing && selfInverse && selfInverse.name !== SELF_INVERSE_NAME ? selfInverse : null;
 
-  if (existing && faltanClientes.length === 0 && faltanConceptos.length === 0 && !renombrar) {
+  if (existing && faltanClientes.length === 0 && faltanConceptos.length === 0 && faltanCampos.length === 0 && !renombrar) {
     const problems = [];
     let expected = null;
     try {
@@ -257,6 +261,7 @@ export async function setupComprobantesEmitidos({ token, baseId, verifyOnly = fa
 
   if (verifyOnly) {
     if (!existing) error(`✖ La tabla ${TABLE_NAME} no existe (modo --verify: no se crea).`);
+    for (const f of faltanCampos) error(`✖ ${TABLE_NAME} no tiene el campo «${f.name}» (modo --verify: no se crea).`);
     for (const name of faltanClientes) error(`✖ Clientes no tiene el campo «${name}» (modo --verify: no se crea).`);
     for (const c of faltanConceptos) error(`✖ Parámetros no tiene el Concepto «${c.concepto}» (modo --verify: no se crea).`);
     if (renombrar) error(`✖ El inverso «${renombrar.name}» tiene que llamarse «${SELF_INVERSE_NAME}» (modo --verify: no se renombra).`);
@@ -271,6 +276,7 @@ export async function setupComprobantesEmitidos({ token, baseId, verifyOnly = fa
       const created = await request(fetchImpl, "POST", meta, token, { name: TABLE_NAME, description: DESCRIPTION, fields: FIELDS });
       for (const link of linkFields({ ...ids, self: created.id })) await request(fetchImpl, "POST", `${meta}/${created.id}/fields`, token, link);
     }
+    for (const f of faltanCampos) await request(fetchImpl, "POST", `${meta}/${existing.id}/fields`, token, f);
     if (renombrar) await request(fetchImpl, "PATCH", `${meta}/${existing.id}/fields/${renombrar.id}`, token, { name: SELF_INVERSE_NAME });
     if (faltanConceptos.length > 0) {
       const P = parametros.fields;

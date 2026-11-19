@@ -215,6 +215,7 @@ export function FacturaArca({ cliente, mes, mesLabel, initial }: FacturaArcaProp
                     <td className="px-4 py-2">
                       <div className="font-medium text-strong">{c.label}</div>
                       {c.pendienteRegistro && <div className="text-xs font-medium text-danger">{FACTURA_MESSAGES.faltaRegistro}</div>}
+                      {c.datosIncompletos && <div className="text-xs font-medium text-danger">{FACTURA_MESSAGES.datosIncompletos}</div>}
                       {c.mensaje && <div className="whitespace-pre-line text-xs text-muted">{c.mensaje}</div>}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2">{c.estado ?? ""}</td>

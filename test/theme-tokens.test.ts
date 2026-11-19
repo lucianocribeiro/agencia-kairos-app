@@ -54,12 +54,38 @@ describe("tokens claro / oscuro", () => {
     expect(LIGHT.get("--color-accent-ink")).toBe("#000000");
   });
 
+  it("en oscuro accent-text = accent (el foco y los links accent no cambian en oscuro)", () => {
+    expect(DARK.get("--color-accent-text")).toBe(DARK.get("--color-accent"));
+    expect(LIGHT.get("--color-accent-text")).toBe("#047572");
+  });
+
   it("globals.css: ningún color hex fuera de los dos bloques de tokens", () => {
     const rest = stripComments(CSS)
       .replace(/@theme\s*\{[^}]*\}/, "")
       .replace(/html\.light\s*\{[^}]*\}/, "");
     expect(rest).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     expect(rest).not.toMatch(/\b(rgb|rgba|hsl|hsla|oklch|oklab)\(/i);
+  });
+});
+
+describe("CC-F4-09-FIX: links y foco", () => {
+  const css = stripComments(CSS);
+
+  it("`a { color: inherit }` está dentro de @layer base (no sin capa)", () => {
+    const base = /@layer\s+base\s*\{\s*a\s*\{\s*color:\s*inherit;\s*\}\s*\}/;
+    expect(css).toMatch(base);
+    // Fuera de @layer base no queda ninguna regla de color para `a`.
+    expect(css.replace(base, "")).not.toMatch(/(^|[\s,}])a\s*\{[^}]*color\s*:/);
+  });
+
+  it("el anillo de foco usa accent-text (#047572 en claro, #0DE8E1 en oscuro)", () => {
+    expect(block(css, /:focus-visible\s*\{/)).toMatch(/outline:\s*2px solid var\(--color-accent-text\)/);
+  });
+
+  it("el borde de foco de Input/Select usa accent-text", () => {
+    const control = read("components/ui/control-classes.ts");
+    expect(control).toContain("focus-visible:border-accent-text");
+    expect(control).not.toMatch(/focus-visible:border-accent(?![-\w])/);
   });
 });
 

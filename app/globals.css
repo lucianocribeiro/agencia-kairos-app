@@ -71,9 +71,15 @@ body {
   font-family: var(--font-sans);
 }
 
-/* Sin azules del navegador: links, selección, controles nativos, autofill. */
-a {
-  color: inherit;
+/*
+ * Sin azules del navegador: links, selección, controles nativos, autofill.
+ * Los links heredan el color, pero en `@layer base` (CC-F4-09-FIX): así una clase de color
+ * de Tailwind (`text-muted`, `text-accent-text`…) sí aplica a un <a>/<Link>.
+ */
+@layer base {
+  a {
+    color: inherit;
+  }
 }
 
 ::selection {
@@ -133,12 +139,15 @@ input:-webkit-autofill:focus {
   caret-color: var(--color-text);
 }
 
-/* Foco de teclado visible con el anillo accent en todo lo enfocable. */
+/*
+ * Foco de teclado visible en todo lo enfocable. Usa `accent-text` (CC-F4-09-FIX): en oscuro es el
+ * mismo #0DE8E1; en claro, #047572 (el #0DE8E1 sobre blanco no llega a 3:1).
+ */
 :focus {
   outline: none;
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--color-accent-text);
   outline-offset: 2px;
 }

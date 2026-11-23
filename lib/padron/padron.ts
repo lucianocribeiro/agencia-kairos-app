@@ -98,11 +98,21 @@ export function domicilioDe(dg: Obj | null): string | null {
   return limpiarTexto(partes.join(" - "));
 }
 
+/**
+ * datosMonotributo cuenta solo si trae datos de monotributo (CX-F5-08 F-05): un objeto, o un
+ * array con al menos un objeto, con `categoriaMonotributo` o `impuesto`. {}, [], [{}] o un
+ * primitivo no cuentan. Se aceptan varios elementos.
+ */
+export function tieneMonotributo(v: unknown): boolean {
+  const conDatos = (o: unknown) => isObj(o) && ((o.categoriaMonotributo !== undefined && o.categoriaMonotributo !== null) || (o.impuesto !== undefined && o.impuesto !== null));
+  return Array.isArray(v) ? v.some(conDatos) : conDatos(v);
+}
+
 /** RI: impuesto 30 en estado "AC" en régimen general. Monotributista: datosMonotributo presente. Nunca otra cosa. */
 export function condicionIvaDe(persona: Obj): { condicion: CondicionIvaPadron | null; aviso: string | null } {
   const rg = firstObj(persona.datosRegimenGeneral);
   const ri = list(rg?.impuesto).some((i) => isObj(i) && num(i.idImpuesto) === 30 && limpiarTexto(i.estadoImpuesto) === "AC");
-  const mono = persona.datosMonotributo !== undefined && persona.datosMonotributo !== null;
+  const mono = tieneMonotributo(persona.datosMonotributo);
   if (ri && mono) return { condicion: null, aviso: PADRON_MESSAGES.ivaAmbigua };
   if (ri) return { condicion: "Responsable Inscripto", aviso: null };
   if (mono) return { condicion: "Monotributista", aviso: null };
@@ -137,14 +147,13 @@ export function mapPersona(body: unknown): PadronMapeo {
   if (!persona) return { found: false };
   const dg = firstObj(persona.datosGenerales);
   const errores = erroresDe(persona);
-  if (!dg && errores.length === 0 && !firstObj(persona.datosRegimenGeneral) && persona.datosMonotributo == null) return { found: false };
+  if (!dg && errores.length === 0 && !firstObj(persona.datosRegimenGeneral) && !tieneMonotributo(persona.datosMonotributo)) return { found: false };
 
   const avisos: string[] = [];
-  if (dg) {
-    const estado = limpiarTexto(dg.estadoClave, 60);
-    if (estado === null) avisos.push(PADRON_MESSAGES.sinEstado);
-    else if (estado !== "ACTIVO") avisos.push(PADRON_MESSAGES.estado(estado));
-  }
+  // Sin datosGenerales (solo bloques de error) tampoco hay estado: también se avisa (CX-F5-08 F-03).
+  const estado = dg ? limpiarTexto(dg.estadoClave, 60) : null;
+  if (estado === null) avisos.push(PADRON_MESSAGES.sinEstado);
+  else if (estado !== "ACTIVO") avisos.push(PADRON_MESSAGES.estado(estado));
   avisos.push(...errores);
   const iva = condicionIvaDe(persona);
   if (iva.aviso) avisos.push(iva.aviso);

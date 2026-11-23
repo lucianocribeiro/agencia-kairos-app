@@ -2,7 +2,7 @@
 
 import { CloudDownload, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, InlineMessage, useToast } from "@/components/ui";
 import { editableFields, formatForDisplay, formatForInput, type FieldErrors, type RawValues } from "@/lib/abm/fields";
@@ -14,6 +14,9 @@ import { PADRON_MESSAGES, type PadronStatus } from "@/lib/padron/padron";
 import { callApi } from "./api";
 import { FieldInput } from "./field-input";
 import { RecordTable, type Column, type Filter } from "./record-table";
+
+/** Bloqueados mientras hay una consulta al padrón pendiente: la CUIT y los tres campos que llena. */
+const PADRON_BLOQUEADOS = new Set(["cuit", "razonSocial", "domicilioComercial", "condicionIva"]);
 
 type Editing = { mode: "create" } | { mode: "edit"; record: RecordDTO };
 
@@ -46,7 +49,19 @@ export function MaestroManager({ slug, data, padron }: { slug: MaestroSlug; data
   const [padronError, setPadronError] = useState<string | null>(null);
   const [padronOk, setPadronOk] = useState<string | null>(null);
 
+  // CX-F5-08 F-02: cada consulta lleva la sesión de edición y la CUIT; abrir, cerrar o cambiar de registro la aborta.
+  const sessionRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const cuitRef = useRef("");
+  useEffect(() => {
+    cuitRef.current = typeof raw.cuit === "string" ? raw.cuit : "";
+  }, [raw.cuit]);
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   function resetPadron() {
+    sessionRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
     setConsultando(false);
     setAntes({});
     setAvisos([]);
@@ -109,12 +124,24 @@ export function MaestroManager({ slug, data, padron }: { slug: MaestroSlug; data
   /** «Traer datos de ARCA»: completa Razón social, Domicilio comercial y Condición IVA en el formulario (sin guardar). */
   async function traerDeArca() {
     const cuit = typeof raw.cuit === "string" ? raw.cuit : "";
-    if (!padron?.configured || !isValidCuit(cuit)) return;
+    if (!padron?.configured || !isValidCuit(cuit) || consultando) return;
+    const session = sessionRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
     setConsultando(true);
     setPadronError(null);
     setPadronOk(null);
     setAvisos([]);
-    const res = await callApi("POST", "/api/admin/clientes/padron", { cuit });
+    const res = await callApi("POST", "/api/admin/clientes/padron", { cuit }, controller.signal);
+    // Respuesta vieja (otra sesión de edición, consulta abortada o la CUIT cambió): se ignora en silencio.
+    if (controller.signal.aborted || session !== sessionRef.current || cuitRef.current !== cuit) {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setConsultando(false);
+      }
+      return;
+    }
+    abortRef.current = null;
     setConsultando(false);
     if (!res.ok) {
       setPadronError(res.error ?? "Ocurrió un error. Probá de nuevo.");
@@ -242,7 +269,7 @@ export function MaestroManager({ slug, data, padron }: { slug: MaestroSlug; data
                         error={errors[f.key]}
                         options={data.options[f.key]}
                         labels={data.labels[f.key]}
-                        disabled={saving || (editing.mode === "edit" && f.lockedOnEdit) || !!protegido?.keys.includes(f.key) || !!bloqueado?.keys.includes(f.key)}
+                        disabled={saving || (consultando && PADRON_BLOQUEADOS.has(f.key)) || (editing.mode === "edit" && f.lockedOnEdit) || !!protegido?.keys.includes(f.key) || !!bloqueado?.keys.includes(f.key)}
                         display={editing.mode === "edit" ? display(editing.record, f.key) : undefined}
                       />
                       {f.key in antes && (

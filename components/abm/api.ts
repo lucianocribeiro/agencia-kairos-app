@@ -11,13 +11,14 @@ export interface ApiResult {
 }
 
 /** Llama a una API propia con JSON. Nunca lanza: los errores de red vuelven como status 0. */
-export async function callApi(method: "GET" | "POST" | "PATCH" | "DELETE", url: string, body?: unknown): Promise<ApiResult> {
+export async function callApi(method: "GET" | "POST" | "PATCH" | "DELETE", url: string, body?: unknown, signal?: AbortSignal): Promise<ApiResult> {
   try {
     const res = await fetch(url, {
       method,
       headers: body === undefined ? undefined : { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
       credentials: "same-origin",
+      ...(signal ? { signal } : {}),
     });
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     return {

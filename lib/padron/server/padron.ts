@@ -8,7 +8,7 @@ import { getArcaConfig } from "@/lib/arca/server/config";
 import { parseCuit } from "@/lib/cuit";
 import { PARAMS } from "@/lib/factura/factura";
 import { decodePem } from "@/lib/factura/server/config";
-import { mapPersona, PADRON_MESSAGES, PADRON_REQUEST_KEYS, type PadronDatos, type PadronStatus } from "../padron";
+import { limpiarTexto, mapPersona, PADRON_MESSAGES, PADRON_REQUEST_KEYS, type PadronDatos, type PadronStatus } from "../padron";
 
 /**
  * Padrón de ARCA (F5-05 · CC-F5-18): ws_sr_constancia_inscripcion · getPersona_v2 vía el
@@ -54,29 +54,34 @@ export async function getPadronConfig(): Promise<PadronConfigResult> {
   const cert = decodePem(process.env.AFIP_CERT_B64, "certificate");
   const key = decodePem(process.env.AFIP_KEY_B64, "key");
   if (!cert || !key) return { ok: false, motivo: PADRON_MESSAGES.sinCertificado };
-  const parsed = parseCuit(await cuitDeParametros());
+  let cuitParametros: string;
+  try {
+    cuitParametros = await cuitDeParametros();
+  } catch {
+    // CX-F5-08 F-01: sin Parámetros no hay cuitRepresentada → 503 con el motivo, sin crear el cliente de Afip SDK.
+    return { ok: false, motivo: PADRON_MESSAGES.sinParametros };
+  }
+  const parsed = parseCuit(cuitParametros);
   if (!("digits" in parsed)) return { ok: false, motivo: PADRON_MESSAGES.sinCuitEmpresa };
   return { ok: true, config: { token: arca.token, baseUrl: arca.baseUrl, cert, key, cuitRepresentada: parsed.digits } };
 }
 
 /** Lo único que llega al navegador. Si Parámetros no se puede leer, no configurado con ese motivo. */
 export async function getPadronStatus(): Promise<PadronStatus> {
-  try {
-    const r = await getPadronConfig();
-    return r.ok ? { configured: true, motivo: null } : { configured: false, motivo: r.motivo };
-  } catch {
-    return { configured: false, motivo: PADRON_MESSAGES.sinParametros };
-  }
+  const r = await getPadronConfig();
+  return r.ok ? { configured: true, motivo: null } : { configured: false, motivo: r.motivo };
 }
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Mensaje de un 400 de Afip SDK (data.message o message), solo para compararlo. Nunca se loguea ni se devuelve. */
-function providerMessage(body: unknown): string {
-  if (!isObj(body)) return "";
-  if (isObj(body.data) && typeof body.data.message === "string") return body.data.message;
-  return typeof body.message === "string" ? body.message : "";
+/**
+ * Mensajes de un 400 de Afip SDK (data.message Y message, cada uno saneado), solo para
+ * compararlos (CX-F5-08 F-04). Nunca se loguean ni se devuelven.
+ */
+function providerMessages(body: unknown): string[] {
+  if (!isObj(body)) return [];
+  return [isObj(body.data) ? body.data.message : undefined, body.message].map((m) => limpiarTexto(m, 2000)).filter((m): m is string => m !== null);
 }
 
 /** ARCA: «No existe persona con ese Id» (SOAP fault que Afip SDK devuelve como 400). */
@@ -125,7 +130,7 @@ export class PadronClient {
         },
         {
           retry: true,
-          onBadRequest: (data) => (NO_EXISTE_RE.test(providerMessage(data)) ? new NoFigura() : new AfipSdkError({ kind: "rejected", status: 400, detail: PADRON_MESSAGES.rechazo })),
+          onBadRequest: (data) => (providerMessages(data).some((m) => NO_EXISTE_RE.test(m)) ? new NoFigura() : new AfipSdkError({ kind: "rejected", status: 400, detail: PADRON_MESSAGES.rechazo })),
         },
       );
       return await readJsonCapped(res);

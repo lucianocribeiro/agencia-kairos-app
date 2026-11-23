@@ -301,4 +301,70 @@ describe("Clientes · Traer datos de ARCA (F5-05 · CC-F5-18)", () => {
     await act(async () => button("Cancelar").click());
     expect(container.querySelector("form")).toBeNull();
   });
+
+  describe("consultas viejas (CX-F5-08 F-02)", () => {
+    const ok = () => new Response(JSON.stringify({ ok: true, razonSocial: "NUEVA SA", domicilio: "AV NUEVA 1", condicionIva: "Responsable Inscripto", avisos: ["aviso viejo"] }), { status: 200 });
+    const pendiente = () => {
+      let resolve!: (r: Response) => void;
+      fetchMock.mockReturnValueOnce(new Promise<Response>((r) => (resolve = r)));
+      return (r: Response) => act(async () => resolve(r));
+    };
+    const signal = () => (fetchMock.mock.calls[0][1] as RequestInit).signal as AbortSignal;
+    const dosClientes = [conCliente[0], { id: "recAAAAAAAAAAAAA2", values: { ...conCliente[0].values, nombre: "QA Otro", sigla: "QO", cuit: "30712345671", razonSocial: "Otro SA", condicionIva: "Monotributista" } }];
+
+    it("mientras consulta: CUIT y los tres campos deshabilitados, Guardar también; Cancelar aborta y la respuesta se ignora", async () => {
+      render({ configured: true, motivo: null }, conCliente);
+      await act(async () => (container.querySelector("tbody tr") as HTMLElement).click());
+      const responder = pendiente();
+      await act(async () => arcaButton().click());
+      for (const l of ["CUIT", "Razón social", "Domicilio comercial", "Condición IVA"]) expect(byLabel(l).disabled, l).toBe(true);
+      expect(byLabel("Nombre").disabled).toBe(false);
+      expect(button("Guardar").disabled).toBe(true);
+      expect(button("Cancelar").disabled).toBe(false);
+      await act(async () => button("Cancelar").click());
+      expect(signal().aborted).toBe(true);
+      await responder(ok());
+      await flush();
+      expect(container.querySelector("form")).toBeNull();
+      await act(async () => (container.querySelector("tbody tr") as HTMLElement).click());
+      expect((byLabel("Razón social") as HTMLInputElement).value).toBe("Vieja SA");
+      expect(container.querySelectorAll("[data-antes]")).toHaveLength(0);
+      expect(container.textContent).not.toContain("aviso viejo");
+      expect(arcaButton().disabled).toBe(false);
+    });
+
+    it("abrir otro registro aborta; la respuesta no pisa el nuevo formulario", async () => {
+      render({ configured: true, motivo: null }, dosClientes);
+      const rows = () => [...container.querySelectorAll("tbody tr")] as HTMLElement[];
+      await act(async () => rows().find((r) => r.textContent?.includes("QA Activo"))!.click());
+      const responder = pendiente();
+      await act(async () => arcaButton().click());
+      await act(async () => rows().find((r) => r.textContent?.includes("QA Otro"))!.click());
+      expect(signal().aborted).toBe(true);
+      await responder(ok());
+      await flush();
+      expect((byLabel("Nombre") as HTMLInputElement).value).toBe("QA Otro");
+      expect((byLabel("Razón social") as HTMLInputElement).value).toBe("Otro SA");
+      expect(byLabel("Condición IVA").value).toBe("Monotributista");
+      expect(container.querySelectorAll("[data-antes]")).toHaveLength(0);
+      expect(arcaButton().textContent).toContain("Traer datos de ARCA");
+    });
+
+    it("la CUIT cambió antes de la respuesta → se ignora", async () => {
+      render({ configured: true, motivo: null }, conCliente);
+      await act(async () => (container.querySelector("tbody tr") as HTMLElement).click());
+      const responder = pendiente();
+      await act(async () => arcaButton().click());
+      // El input está deshabilitado; se fuerza el cambio igual para probar la guarda por CUIT.
+      await type(byLabel("CUIT") as HTMLInputElement, "20-12345678-6");
+      await responder(ok());
+      await flush();
+      expect((byLabel("CUIT") as HTMLInputElement).value).toBe("20-12345678-6");
+      expect((byLabel("Razón social") as HTMLInputElement).value).toBe("Vieja SA");
+      expect(byLabel("Condición IVA").value).toBe("Exento");
+      expect(container.querySelectorAll("[data-antes]")).toHaveLength(0);
+      expect(container.textContent).not.toContain("aviso viejo");
+      expect(byLabel("CUIT").disabled).toBe(false);
+    });
+  });
 });

@@ -165,6 +165,28 @@ describe("mapeo de getPersona_v2", () => {
   });
 });
 
+describe("CX-F5-08 · mapeo", () => {
+  it("F-03: solo bloques de error, sin datosGenerales → incluye el aviso sinEstado (200 con nulls)", () => {
+    const m = mapPersona({ personaReturn: { errorConstancia: { error: "La CUIT se encuentra LIMITADA" } } });
+    expect(m).toMatchObject({ found: true, razonSocial: null, domicilio: null, condicionIva: null });
+    if (!m.found) throw new Error("found");
+    expect(m.avisos).toEqual([PADRON_MESSAGES.sinEstado, "ARCA (constancia): La CUIT se encuentra LIMITADA", PADRON_MESSAGES.ivaIndeterminada]);
+  });
+
+  it("F-05: datosMonotributo solo cuenta con datos de monotributo", () => {
+    const sinRi = (dm: unknown) => juridica({ datosRegimenGeneral: undefined, datosMonotributo: dm });
+    for (const dm of [{}, [], [{}], "SI", 1, true, [null, "x"], { otro: 1 }]) expect(mapPersona(sinRi(dm)), JSON.stringify(dm)).toMatchObject({ condicionIva: null, avisos: [PADRON_MESSAGES.ivaIndeterminada] });
+    expect(mapPersona(sinRi({ categoriaMonotributo: { idImpuesto: 20 } }))).toMatchObject({ condicionIva: "Monotributista", avisos: [] });
+    expect(mapPersona(sinRi({ impuesto: { idImpuesto: 20 } }))).toMatchObject({ condicionIva: "Monotributista" });
+    expect(mapPersona(sinRi([{ impuesto: { idImpuesto: 20 } }, { categoriaMonotributo: { idImpuesto: 20 } }]))).toMatchObject({ condicionIva: "Monotributista" });
+    expect(mapPersona(sinRi([{}, { impuesto: { idImpuesto: 20 } }]))).toMatchObject({ condicionIva: "Monotributista" });
+    // Con RI, un datosMonotributo vacío no genera la ambigüedad.
+    expect(mapPersona(juridica({ datosMonotributo: {} }))).toMatchObject({ condicionIva: "Responsable Inscripto", avisos: [] });
+    // Solo un datosMonotributo vacío: no figura.
+    expect(mapPersona({ personaReturn: { datosMonotributo: {} } })).toEqual({ found: false });
+  });
+});
+
 // ── Ruta ───────────────────────────────────────────────────────────────────────
 
 type Reply = { status?: number; body?: unknown } | "network";
@@ -357,6 +379,51 @@ describe("POST /api/admin/clientes/padron", () => {
       expect(responses.join("\n")).not.toContain("proveedor");
       expect(writes()).toHaveLength(0);
     }, 20_000);
+
+    it("F-01: si falla la lectura de Parámetros → 503 sinParametros, cero pedidos a Afip SDK", async () => {
+      fake.fail("list", T.parametros.id);
+      const r = await consultar();
+      expect(r).toMatchObject({ status: 503, json: { error: PADRON_MESSAGES.sinParametros } });
+      expect(r.headers.get("cache-control")).toContain("no-store");
+      expect(requests).toHaveLength(0);
+    });
+
+    it("F-04: «No existe persona» en data.message o en message (el otro sin match) → 404; el texto nunca se devuelve ni loguea", async () => {
+      on("persona", { status: 400, body: { data: { message: "otro error interno" }, message: "No existe persona con ese Id" } });
+      expect(await consultar()).toMatchObject({ status: 404, json: { error: PADRON_MESSAGES.noEncontrada } });
+      on("persona", { status: 400, body: { data: { message: "No\u0007 existe   persona con ese Id" }, message: "otro error interno" } });
+      expect(await consultar()).toMatchObject({ status: 404, json: { error: PADRON_MESSAGES.noEncontrada } });
+      on("persona", { status: 400, body: { data: { message: "otro error interno" }, message: "tampoco" } });
+      expect(await consultar()).toMatchObject({ status: 400, json: { error: PADRON_MESSAGES.rechazo } });
+      const all = [...consoleLines, ...responses].join("\n");
+      expect(all).not.toContain("otro error interno");
+      expect(all).not.toContain("No existe persona");
+    });
+
+    it("ambiente prod siempre: con AFIP_WSFE_ENV = dev y = prod", async () => {
+      for (const v of ["dev", "prod"]) {
+        vi.stubEnv("AFIP_WSFE_ENV", v);
+        requests.length = 0;
+        expect((await consultar()).status).toBe(200);
+        expect(requests.map((q) => q.body.environment)).toEqual(["prod", "prod"]);
+        expect(requests[0].body.wsid).toBe("ws_sr_constancia_inscripcion");
+      }
+    });
+
+    it("no-store también en errores y con JSON inválido", async () => {
+      const casos = [
+        await consultar({ extra: 1 }),
+        await consultar(undefined, {}, "{no es json"),
+        await consultar(undefined, { "content-type": "text/plain" }),
+        await consultar(undefined, { origin: "https://evil.test" }),
+        await (async () => (on("persona", { body: { personaReturn: null } }), consultar()))(),
+        await (async () => (on("auth", { status: 401 }), consultar()))(),
+      ];
+      expect(casos.map((c) => c.status)).toEqual([400, 400, 415, 403, 404, 503]);
+      for (const c of casos) expect(c.headers.get("cache-control")).toContain("no-store");
+      cookieJar.clear();
+      expect((await consultar()).headers.get("cache-control")).toContain("no-store");
+    });
 
     it("token, certificado, clave, TA y bodies nunca en logs ni respuestas; los logs llevan solo {kind, status}", async () => {
       on("persona", { status: 400, body: { message: "detalle secreto del body" } });

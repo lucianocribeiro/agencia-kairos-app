@@ -197,3 +197,108 @@ describe("Cuentas · Moneda bloqueada con movimientos (CC-F2-04 v4)", () => {
     expect(monedaDisabled()).toBe(false);
   });
 });
+
+describe("Clientes · Traer datos de ARCA (F5-05 · CC-F5-18)", () => {
+  const CUIT_OK = "30-71234567-1";
+  const render = (padron?: { configured: boolean; motivo: string | null }, records = DATA.records) => {
+    act(() => root.unmount());
+    root = createRoot(container);
+    act(() =>
+      root.render(
+        <ToastProvider>
+          <MaestroManager slug="clientes" data={{ ...DATA, records }} padron={padron} />
+        </ToastProvider>,
+      ),
+    );
+  };
+  const byLabel = (label: string) => {
+    const l = [...container.querySelectorAll("form label")].find((x) => x.textContent?.replace("*", "").trim() === label) as HTMLLabelElement;
+    return (l.htmlFor ? container.querySelector(`#${CSS.escape(l.htmlFor)}`) : l.querySelector("input,select")) as HTMLInputElement | HTMLSelectElement;
+  };
+  const type = (el: HTMLInputElement, value: string) =>
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  const arcaButton = () => [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("Traer datos de ARCA") || b.textContent?.includes("Consultando ARCA"))!;
+  const conCliente = [
+    {
+      id: "recAAAAAAAAAAAAA1",
+      values: { nombre: "QA Activo", sigla: "QA", estado: "Activo", cuit: "30712345671", condicionIva: "Exento", razonSocial: "Vieja SA", domicilioComercial: "", contacto: null, telefono: null, mail: null, observaciones: null },
+    },
+  ];
+
+  it("sin configurar: el botón está deshabilitado con el motivo; sin la prop (Leads u otro) no hay botón", async () => {
+    render({ configured: false, motivo: "Cargá una CUIT válida en Parámetros «CUIT»." });
+    await act(async () => button("Nuevo cliente").click());
+    expect(arcaButton().disabled).toBe(true);
+    expect(container.textContent).toContain("Cargá una CUIT válida en Parámetros «CUIT».");
+    render(undefined);
+    await act(async () => button("Nuevo cliente").click());
+    expect(arcaButton()).toBeUndefined();
+  });
+
+  it("habilitado solo con una CUIT válida", async () => {
+    render({ configured: true, motivo: null });
+    await act(async () => button("Nuevo cliente").click());
+    expect(arcaButton().disabled).toBe(true);
+    expect(container.textContent).toContain("Ingresá una CUIT válida para consultar ARCA.");
+    await type(byLabel("CUIT") as HTMLInputElement, "30-71234567-0");
+    expect(arcaButton().disabled).toBe(true);
+    await type(byLabel("CUIT") as HTMLInputElement, CUIT_OK);
+    expect(arcaButton().disabled).toBe(false);
+    expect(container.textContent).not.toContain("Ingresá una CUIT válida para consultar ARCA.");
+  });
+
+  it("completa los tres campos con «Antes», muestra avisos, deja editar y no guarda nada hasta Guardar", async () => {
+    render({ configured: true, motivo: null }, conCliente);
+    await act(async () => (container.querySelector("tbody tr") as HTMLElement).click());
+    let resolve!: (r: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((r) => (resolve = r)));
+    await act(async () => arcaButton().click());
+    expect(arcaButton().textContent).toContain("Consultando ARCA…");
+    expect(arcaButton().disabled).toBe(true);
+    expect(button("Guardar").disabled).toBe(true);
+    await act(async () => resolve(new Response(JSON.stringify({ ok: true, razonSocial: "QA CLIENTE SA", domicilio: "AV QA 742 - CABA", condicionIva: "Responsable Inscripto", avisos: ["La CUIT figura en ARCA con estado «INACTIVO»."] }), { status: 200 })));
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/admin/clientes/padron");
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({ cuit: "30-71234567-1" });
+    expect((byLabel("Razón social") as HTMLInputElement).value).toBe("QA CLIENTE SA");
+    expect((byLabel("Domicilio comercial") as HTMLInputElement).value).toBe("AV QA 742 - CABA");
+    expect(byLabel("Condición IVA").value).toBe("Responsable Inscripto");
+    const antes = Object.fromEntries([...container.querySelectorAll("[data-antes]")].map((p) => [p.getAttribute("data-antes"), p.textContent]));
+    expect(antes).toEqual({ razonSocial: "Antes: Vieja SA", domicilioComercial: "Antes: —", condicionIva: "Antes: Exento" });
+    expect(container.textContent).toContain("La CUIT figura en ARCA con estado «INACTIVO».");
+    expect(refresh).not.toHaveBeenCalled();
+    expect(byLabel("Razón social").disabled).toBe(false);
+    await type(byLabel("Razón social") as HTMLInputElement, "QA Cliente S.A.");
+    expect((byLabel("Razón social") as HTMLInputElement).value).toBe("QA Cliente S.A.");
+
+    fetchMock.mockReturnValueOnce(json(200, { ok: true, id: "recAAAAAAAAAAAAA1" }));
+    await act(async () => button("Guardar").click());
+    await flush();
+    const patch = fetchMock.mock.calls[1];
+    expect(patch[0]).toBe("/api/admin/maestros/clientes/recAAAAAAAAAAAAA1");
+    expect(JSON.parse(String((patch[1] as RequestInit).body))).toMatchObject({ razonSocial: "QA Cliente S.A.", domicilioComercial: "AV QA 742 - CABA", condicionIva: "Responsable Inscripto" });
+  });
+
+  it("condición IVA null no pisa el valor; un error se muestra; Cancelar descarta todo", async () => {
+    render({ configured: true, motivo: null }, conCliente);
+    await act(async () => (container.querySelector("tbody tr") as HTMLElement).click());
+    fetchMock.mockReturnValueOnce(json(200, { ok: true, razonSocial: "Vieja SA", domicilio: null, condicionIva: null, avisos: ["No pudimos determinar la condición frente al IVA; completala a mano."] }));
+    await act(async () => arcaButton().click());
+    await flush();
+    expect(byLabel("Condición IVA").value).toBe("Exento");
+    expect(container.querySelectorAll("[data-antes]")).toHaveLength(0);
+    expect(container.textContent).toContain("ARCA no devolvió datos nuevos para este cliente.");
+    expect(container.textContent).toContain("completala a mano");
+    fetchMock.mockReturnValueOnce(json(404, { error: "La CUIT no figura en el padrón de ARCA." }));
+    await act(async () => arcaButton().click());
+    await flush();
+    expect(container.textContent).toContain("La CUIT no figura en el padrón de ARCA.");
+    expect(fetchMock.mock.calls.every((c) => c[0] === "/api/admin/clientes/padron")).toBe(true);
+    await act(async () => button("Cancelar").click());
+    expect(container.querySelector("form")).toBeNull();
+  });
+});

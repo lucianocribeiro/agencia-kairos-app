@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { CloudDownload, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
@@ -8,6 +8,8 @@ import { Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, Inline
 import { editableFields, formatForDisplay, formatForInput, type FieldErrors, type RawValues } from "@/lib/abm/fields";
 import { MAESTRO_SPECS, reglaProtegida, SIN_ESTADO, sociosSumWarning, validateMaestro, type MaestroSlug } from "@/lib/abm/maestros";
 import type { AbmData, RecordDTO } from "@/lib/abm/types";
+import { isValidCuit } from "@/lib/cuit";
+import { PADRON_MESSAGES, type PadronStatus } from "@/lib/padron/padron";
 
 import { callApi } from "./api";
 import { FieldInput } from "./field-input";
@@ -15,12 +17,19 @@ import { RecordTable, type Column, type Filter } from "./record-table";
 
 type Editing = { mode: "create" } | { mode: "edit"; record: RecordDTO };
 
+/** Campos del formulario de Clientes que llena «Traer datos de ARCA», con la clave de la respuesta. */
+const PADRON_CAMPOS = [
+  ["razonSocial", "razonSocial"],
+  ["domicilioComercial", "domicilio"],
+  ["condicionIva", "condicionIva"],
+] as const;
+
 /**
  * ABM de un Maestro, armado a partir de su spec (lib/abm/maestros.ts):
  * lista con búsqueda/filtro por Estado, alta, edición y borrado (si la tabla
  * lo permite y el registro no tiene referencias). El servidor vuelve a validar todo.
  */
-export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmData }) {
+export function MaestroManager({ slug, data, padron }: { slug: MaestroSlug; data: AbmData; padron?: PadronStatus }) {
   const spec = MAESTRO_SPECS[slug];
   const router = useRouter();
   const toast = useToast();
@@ -30,6 +39,20 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Padrón de ARCA (F5-05): solo completa el formulario; nada se guarda hasta «Guardar».
+  const [consultando, setConsultando] = useState(false);
+  const [antes, setAntes] = useState<Record<string, string>>({});
+  const [avisos, setAvisos] = useState<string[]>([]);
+  const [padronError, setPadronError] = useState<string | null>(null);
+  const [padronOk, setPadronOk] = useState<string | null>(null);
+
+  function resetPadron() {
+    setConsultando(false);
+    setAntes({});
+    setAvisos([]);
+    setPadronError(null);
+    setPadronOk(null);
+  }
 
   const fieldByKey = Object.fromEntries(spec.fields.map((f) => [f.key, f]));
   const display = (r: RecordDTO, key: string) => {
@@ -68,6 +91,7 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
     setErrors({});
     setFormError(null);
     setConfirmDelete(false);
+    resetPadron();
     const initial: RawValues = {};
     for (const f of spec.fields) initial[f.key] = target.mode === "edit" ? formatForInput(f, target.record.values[f.key]) : f.kind === "checkbox" ? false : f.kind === "link" ? [] : "";
     setRaw(initial);
@@ -79,6 +103,37 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
     setRaw({});
     setErrors({});
     setFormError(null);
+    resetPadron();
+  }
+
+  /** «Traer datos de ARCA»: completa Razón social, Domicilio comercial y Condición IVA en el formulario (sin guardar). */
+  async function traerDeArca() {
+    const cuit = typeof raw.cuit === "string" ? raw.cuit : "";
+    if (!padron?.configured || !isValidCuit(cuit)) return;
+    setConsultando(true);
+    setPadronError(null);
+    setPadronOk(null);
+    setAvisos([]);
+    const res = await callApi("POST", "/api/admin/clientes/padron", { cuit });
+    setConsultando(false);
+    if (!res.ok) {
+      setPadronError(res.error ?? "Ocurrió un error. Probá de nuevo.");
+      return;
+    }
+    const nuevos: Record<string, string> = {};
+    const previos: Record<string, string> = {};
+    for (const [campo, clave] of PADRON_CAMPOS) {
+      const valor = res.data[clave];
+      if (typeof valor !== "string" || !valor) continue;
+      const actual = typeof raw[campo] === "string" ? (raw[campo] as string) : "";
+      if (valor === actual) continue;
+      nuevos[campo] = valor;
+      previos[campo] = antes[campo] ?? actual;
+    }
+    setRaw((prev) => ({ ...prev, ...nuevos }));
+    setAntes((prev) => ({ ...prev, ...previos }));
+    setAvisos(Array.isArray(res.data.avisos) ? res.data.avisos.filter((a): a is string => typeof a === "string") : []);
+    setPadronOk(Object.keys(nuevos).length > 0 ? PADRON_MESSAGES.completados : PADRON_MESSAGES.sinCambios);
   }
 
   async function submit(event: FormEvent) {
@@ -164,6 +219,17 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
               {formError && <InlineMessage tone="danger">{formError}</InlineMessage>}
               {protegido && <InlineMessage tone="info">{protegido.mensaje}</InlineMessage>}
               {bloqueado && <InlineMessage tone="info">{bloqueado.mensaje}</InlineMessage>}
+              {padronError && <InlineMessage tone="danger">{padronError}</InlineMessage>}
+              {avisos.length > 0 && (
+                <InlineMessage tone="info" title="Avisos de ARCA">
+                  <ul className="flex list-disc flex-col gap-1 pl-4">
+                    {avisos.map((a) => (
+                      <li key={a}>{a}</li>
+                    ))}
+                  </ul>
+                </InlineMessage>
+              )}
+              {padronOk && <InlineMessage tone="success">{padronOk}</InlineMessage>}
               <div className="grid gap-4 md:grid-cols-2">
                 {spec.fields
                   .filter((f) => !f.hideInForm && (f.kind !== "readonly" || editing.mode === "edit"))
@@ -179,11 +245,17 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
                         disabled={saving || (editing.mode === "edit" && f.lockedOnEdit) || !!protegido?.keys.includes(f.key) || !!bloqueado?.keys.includes(f.key)}
                         display={editing.mode === "edit" ? display(editing.record, f.key) : undefined}
                       />
+                      {f.key in antes && (
+                        <p className="mt-1 text-xs text-muted" data-antes={f.key}>
+                          Antes: {antes[f.key] || "—"}
+                        </p>
+                      )}
+                      {padron && f.key === "cuit" && <PadronButton padron={padron} cuit={raw.cuit} consultando={consultando} disabled={saving} onClick={traerDeArca} />}
                     </div>
                   ))}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Button type="submit" disabled={saving}>
+                <Button type="submit" disabled={saving || consultando}>
                   {saving ? "Guardando…" : "Guardar"}
                 </Button>
                 <Button variant="secondary" onClick={close} disabled={saving}>
@@ -220,6 +292,21 @@ export function MaestroManager({ slug, data }: { slug: MaestroSlug; data: AbmDat
         onEdit={(r) => open({ mode: "edit", record: r })}
         rowLabel={(r) => display(r, spec.primaryKey)}
       />
+    </div>
+  );
+}
+
+/** Botón «Traer datos de ARCA» junto al CUIT: habilitado solo con una CUIT válida y el padrón configurado. */
+function PadronButton({ padron, cuit, consultando, disabled, onClick }: { padron: PadronStatus; cuit: unknown; consultando: boolean; disabled: boolean; onClick: () => void }) {
+  const cuitOk = typeof cuit === "string" && isValidCuit(cuit);
+  const motivo = !padron.configured ? padron.motivo : !cuitOk ? PADRON_MESSAGES.cuitInvalida : null;
+  return (
+    <div className="mt-2 flex flex-col items-start gap-1">
+      <Button variant="secondary" size="sm" onClick={onClick} disabled={disabled || consultando || !padron.configured || !cuitOk}>
+        <CloudDownload aria-hidden="true" className="size-4" />
+        {consultando ? PADRON_MESSAGES.consultando : PADRON_MESSAGES.boton}
+      </Button>
+      {motivo && <p className="text-xs text-muted">{motivo}</p>}
     </div>
   );
 }

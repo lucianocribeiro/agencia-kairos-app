@@ -10,7 +10,7 @@ import { formatNumber, isoToDisplayDate } from "@/lib/format";
 import { formatHours } from "@/lib/horas/time";
 import type { FacturaEstado } from "@/lib/factura/factura";
 import { PROFORMA_MESSAGES, type ProformaData } from "@/lib/proforma/proforma";
-import { equivalenteFilas, formatTipoCambio, TC_MESSAGES, tieneUsd } from "@/lib/proforma/tipo-cambio";
+import { filasTotales, formatTipoCambio, TC_MESSAGES, tieneUsd } from "@/lib/proforma/tipo-cambio";
 
 const money = (cents: number | null) => (cents === null ? "" : formatNumber(cents / 100, { decimals: 2 }));
 const valor = (v: number | null) => (v === null ? "" : formatNumber(v, { decimals: 2 }));
@@ -18,11 +18,10 @@ const th = "whitespace-nowrap px-4 py-3 font-medium";
 const td = "px-4 py-2";
 const num = "text-right tabular-nums whitespace-nowrap";
 
-function Tabla({ titulo, nota, head, children }: { titulo: string; nota?: string; head: { label: string; numeric?: boolean }[]; children: React.ReactNode }) {
+function Tabla({ titulo, head, children }: { titulo: string; head: { label: string; numeric?: boolean }[]; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-lg font-semibold text-strong">{titulo}</h2>
-      {nota && <p className="text-sm font-medium text-strong">{nota}</p>}
       <div className="w-full overflow-x-auto rounded-lg border border-line">
         <table className="w-full border-collapse text-left text-sm">
           <thead className="bg-surface text-xs uppercase tracking-wide text-muted">
@@ -114,8 +113,11 @@ export function ProformaView({ clientes, cliente, mes, data, error, factura = nu
             ))}
           </dl>
 
+          {factura && <FacturaArca cliente={{ id: data.cliente.id, nombre: data.cliente.nombre }} mes={data.mes} mesLabel={data.mesLabel} initial={factura} tipoCambio={tcTexto} />}
+
+          {/* CC-F5-23: la tarjeta del TC va debajo de «Factura ARCA» (o en su lugar, si la sección no se pudo cargar). */}
           {pideTc && (
-            <form method="get" action="/reportes/proforma" className="flex flex-col gap-2 rounded-lg border border-line bg-card p-4">
+            <form method="get" aria-label={TC_MESSAGES.label} data-seccion="tipo-cambio" action="/reportes/proforma" className="flex flex-col gap-2 rounded-lg border border-line bg-card p-4">
               <input type="hidden" name="cliente" value={data.cliente.id} />
               <input type="hidden" name="mes" value={data.mes} />
               <div className="flex flex-wrap items-end gap-2">
@@ -143,8 +145,6 @@ export function ProformaView({ clientes, cliente, mes, data, error, factura = nu
             </form>
           )}
 
-          {factura && <FacturaArca cliente={{ id: data.cliente.id, nombre: data.cliente.nombre }} mes={data.mes} mesLabel={data.mesLabel} initial={factura} tipoCambio={tcTexto} />}
-
           {data.vacia ? (
             <InlineMessage tone="info">{PROFORMA_MESSAGES.vacia(data.mesLabel)}</InlineMessage>
           ) : (
@@ -165,26 +165,16 @@ export function ProformaView({ clientes, cliente, mes, data, error, factura = nu
                   </tr>
                 ))}
               </Tabla>
-              <Tabla titulo={`Totales por moneda (${data.alicuotaLabel})`} head={[{ label: "Moneda" }, { label: "Subtotal", numeric: true }, { label: data.alicuotaLabel, numeric: true }, { label: "Total", numeric: true }]}>
-                {data.totales.map((t) => (
-                  <tr key={t.moneda} className="bg-surface font-semibold text-strong">
-                    <td className={cn(td, "sticky left-0 z-10 bg-surface")}>{t.moneda}</td>
-                    <td className={cn(td, num)}>{money(t.subtotal)}</td>
-                    <td className={cn(td, num)}>{money(t.iva)}</td>
-                    <td className={cn(td, num)}>{money(t.total)}</td>
+              <Tabla titulo="Totales por moneda" head={[{ label: "Moneda" }, { label: "Subtotal", numeric: true }, { label: data.alicuotaLabel, numeric: true }, { label: "Total", numeric: true }]}>
+                {filasTotales(data).map((f) => (
+                  <tr key={f.label} className="bg-surface font-semibold text-strong">
+                    <td className={cn(td, "sticky left-0 z-10 bg-surface whitespace-nowrap")}>{f.label}</td>
+                    <td className={cn(td, num)}>{money(f.subtotal)}</td>
+                    <td className={cn(td, num)}>{money(f.iva)}</td>
+                    <td className={cn(td, num)}>{money(f.total)}</td>
                   </tr>
                 ))}
               </Tabla>
-              {cv && (
-                <Tabla titulo="Equivalente en pesos" nota={`Tipo de cambio: ${formatTipoCambio(cv.tipoCambio)}`} head={[{ label: "Concepto" }, { label: "ARS", numeric: true }]}>
-                  {equivalenteFilas(cv, data.alicuotaLabel).map((f) => (
-                    <tr key={f.label} className={cn(f.destacado && "bg-surface font-semibold text-strong")}>
-                      <td className={cn(td, "sticky left-0 z-10", f.destacado ? "bg-surface" : "bg-card")}>{f.label}</td>
-                      <td className={cn(td, num)}>{money(f.cents)}</td>
-                    </tr>
-                  ))}
-                </Tabla>
-              )}
               <Tabla
                 titulo="Detalle de horas"
                 head={[

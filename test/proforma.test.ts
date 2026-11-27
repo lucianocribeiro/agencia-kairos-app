@@ -220,17 +220,21 @@ describe("proforma · tipo de cambio (CC-F5-22)", () => {
     expect("conversion" in sin.json).toBe(false);
   });
 
-  it("página: tc inválido → el mensaje junto al campo y sin conversión; tc válido → «Equivalente en pesos»", async () => {
+  it("página: tc inválido → el mensaje junto al campo y sin conversión; tc válido → fila «Total en pesos (TC …)» en «Totales por moneda»", async () => {
     const { TC_MESSAGES } = await import("@/lib/proforma/tipo-cambio");
     const mala = renderToStaticMarkup(await ProformaPage({ searchParams: Promise.resolve({ cliente: ids.cliente, mes: "2026-10", tc: "1000,00001" }) }));
     expect(mala).toContain(TC_MESSAGES.invalido);
     expect(mala).toContain('aria-invalid="true"');
+    expect(mala).not.toContain("Total en pesos (TC");
     expect(mala).not.toContain("Equivalente en pesos");
-    expect(mala).not.toContain("Tipo de cambio:");
     expect(mala).toContain("QA - Soporte"); // la proforma se muestra igual
     const buena = renderToStaticMarkup(await ProformaPage({ searchParams: Promise.resolve({ cliente: ids.cliente, mes: "2026-10", tc: "1.050,25" }) }));
-    expect(buena).toContain("Equivalente en pesos");
-    expect(buena).toContain("Tipo de cambio: 1.050,25");
+    expect(buena).toContain("Total en pesos (TC 1.050,25)");
+    expect(buena).not.toContain("Equivalente en pesos");
+    expect(buena).toContain(">Totales por moneda</h2>");
+    // La tarjeta del TC va debajo de «Factura ARCA».
+    expect(buena.indexOf('data-seccion="tipo-cambio"')).toBeGreaterThan(buena.indexOf('id="factura-arca"'));
+    expect(buena.indexOf('id="factura-arca"')).toBeGreaterThan(0);
     expect(buena).toContain("162.569,96");
     expect(buena).not.toContain(TC_MESSAGES.invalido);
   });

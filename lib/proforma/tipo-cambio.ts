@@ -114,18 +114,25 @@ export function aplicarTipoCambio(d: ProformaData, tc: number | null): ProformaD
   return { ...d, conversion: convertirAPesos(d.totales, tc, d.alicuota) };
 }
 
+/** Fila de «Totales por moneda» (centavos). */
+export interface FilaTotal {
+  label: string;
+  subtotal: number;
+  iva: number;
+  total: number;
+}
+
 /**
- * Filas del bloque «Equivalente en pesos» (pantalla y PDF salen de acá): con proforma mixta, primero
- * la parte en ARS y la de USD convertida; siempre Neto, IVA y Total.
+ * Filas de «Totales por moneda» (CC-F5-23 · F5-07; pantalla y PDF salen de acá). Una fila por moneda
+ * nativa, como siempre. Con TC válido (`d.conversion`) se agrega una fila en pesos con los valores de
+ * `convertirAPesos` (ningún cálculo nuevo): solo USD → «ARS (TC <tc>)»; mixta → «Total en pesos (TC <tc>)».
  */
-export function equivalenteFilas(cv: ConversionTC, alicuotaLabel: string): { label: string; cents: number; destacado: boolean }[] {
-  const filas: { label: string; cents: number; destacado: boolean }[] = [];
-  if (cv.mixta) {
-    filas.push({ label: "Parte en ARS (neto)", cents: cv.subtotalArs, destacado: false });
-    filas.push({ label: `USD ${formatNumber(cv.subtotalUsd / 100, { decimals: 2 })} a TC ${formatTipoCambio(cv.tipoCambio)} (neto)`, cents: cv.netoArsDesdeUsd, destacado: false });
+export function filasTotales(d: Pick<ProformaData, "totales" | "conversion">): FilaTotal[] {
+  const filas: FilaTotal[] = d.totales.map((t) => ({ label: t.moneda, subtotal: t.subtotal, iva: t.iva, total: t.total }));
+  const cv = d.conversion;
+  if (cv) {
+    const tc = formatTipoCambio(cv.tipoCambio);
+    filas.push({ label: cv.mixta ? `Total en pesos (TC ${tc})` : `ARS (TC ${tc})`, subtotal: cv.neto, iva: cv.iva, total: cv.total });
   }
-  filas.push({ label: "Neto", cents: cv.neto, destacado: true });
-  filas.push({ label: alicuotaLabel, cents: cv.iva, destacado: true });
-  filas.push({ label: "Total", cents: cv.total, destacado: true });
   return filas;
 }

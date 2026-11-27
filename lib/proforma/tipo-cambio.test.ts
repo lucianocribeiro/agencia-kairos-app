@@ -5,7 +5,7 @@ import {
   aplicarTipoCambio,
   convertirAPesos,
   detalleEquivalente,
-  equivalenteFilas,
+  filasTotales,
   formatTipoCambio,
   leerTipoCambio,
   netoArsDesdeUsd,
@@ -172,21 +172,35 @@ describe("conversión (redondeo)", () => {
     expect(convertirAPesos([totales[0]], 1050.25, 0.21)).toMatchObject({ subtotalUsd: 0, netoArsDesdeUsd: 0, neto: 225927, iva: 47445, total: 273372, mixta: false });
   });
 
-  it("filas del bloque «Equivalente en pesos»: mixta con las dos partes; solo USD sin la parte en ARS", () => {
-    const totales: TotalMoneda[] = [
-      { moneda: "ARS", subtotal: 225927, iva: 0, total: 0 },
-      { moneda: "USD", subtotal: 6832, iva: 0, total: 0 },
-    ];
-    expect(equivalenteFilas(convertirAPesos(totales, 1050.25, 0.21), "IVA 21 %").map((f) => [f.label, f.cents])).toEqual([
-      ["Parte en ARS (neto)", 225927],
-      ["USD 68,32 a TC 1.050,25 (neto)", 7175308],
-      ["Neto", 7401235],
-      ["IVA 21 %", 1554259],
-      ["Total", 8955494],
-    ]);
-    expect(equivalenteFilas(convertirAPesos([totales[1]], 1050.25, 0.21), "IVA 21 %").map((f) => f.label)).toEqual(["Neto", "IVA 21 %", "Total"]);
+  it("detalle sugerido con parte en USD", () => {
     expect(detalleEquivalente(6832, 1050.25)).toBe("Equivalente a USD 68,32 a TC 1.050,25");
     expect(detalleEquivalente(123456789, 1234.5678)).toBe("Equivalente a USD 1.234.567,89 a TC 1.234,5678");
+  });
+});
+
+describe("filasTotales · «Totales por moneda» (CC-F5-23 · F5-07)", () => {
+  const ars: TotalMoneda = { moneda: "ARS", subtotal: 225927, iva: 47445, total: 273372 };
+  const usd: TotalMoneda = { moneda: "USD", subtotal: 6832, iva: 1435, total: 8267 };
+  const fila = (label: string, t: { subtotal: number; iva: number; total: number }) => ({ label, subtotal: t.subtotal, iva: t.iva, total: t.total });
+
+  it("sin TC: exactamente las filas nativas (USD, ARS como hoy)", () => {
+    expect(filasTotales({ totales: [ars, usd] })).toEqual([fila("ARS", ars), fila("USD", usd)]);
+    expect(filasTotales({ totales: [usd] })).toEqual([fila("USD", usd)]);
+    expect(filasTotales({ totales: [ars] })).toEqual([fila("ARS", ars)]);
+  });
+
+  it("solo USD con TC: 2 filas, «USD» y «ARS (TC <tc>)» con la conversión compartida", () => {
+    const cv = convertirAPesos([usd], 1050.25, 0.21);
+    expect(filasTotales({ totales: [usd], conversion: cv })).toEqual([fila("USD", usd), { label: "ARS (TC 1.050,25)", subtotal: 7175308, iva: 1506815, total: 8682123 }]);
+    expect(filasTotales({ totales: [usd], conversion: cv })[1]).toEqual(fila("ARS (TC 1.050,25)", { subtotal: cv.neto, iva: cv.iva, total: cv.total }));
+  });
+
+  it("mixta con TC: 3 filas, las nativas ARS y USD y «Total en pesos (TC <tc>)» (ARS + USD × TC)", () => {
+    const cv = convertirAPesos([ars, usd], 1234.5678, 0.21);
+    const filas = filasTotales({ totales: [ars, usd], conversion: cv });
+    expect(filas.map((f) => f.label)).toEqual(["ARS", "USD", "Total en pesos (TC 1.234,5678)"]);
+    expect(filas[2]).toEqual(fila("Total en pesos (TC 1.234,5678)", { subtotal: cv.neto, iva: cv.iva, total: cv.total }));
+    expect(filas[2].subtotal).toBe(ars.subtotal + cv.netoArsDesdeUsd);
   });
 });
 

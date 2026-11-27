@@ -10,6 +10,7 @@ import { formatNumber, isoToDisplayDate } from "@/lib/format";
 import { formatHours } from "@/lib/horas/time";
 import type { FacturaEstado } from "@/lib/factura/factura";
 import { PROFORMA_MESSAGES, type ProformaData } from "@/lib/proforma/proforma";
+import { equivalenteFilas, formatTipoCambio, TC_MESSAGES, tieneUsd } from "@/lib/proforma/tipo-cambio";
 
 const money = (cents: number | null) => (cents === null ? "" : formatNumber(cents / 100, { decimals: 2 }));
 const valor = (v: number | null) => (v === null ? "" : formatNumber(v, { decimals: 2 }));
@@ -17,10 +18,11 @@ const th = "whitespace-nowrap px-4 py-3 font-medium";
 const td = "px-4 py-2";
 const num = "text-right tabular-nums whitespace-nowrap";
 
-function Tabla({ titulo, head, children }: { titulo: string; head: { label: string; numeric?: boolean }[]; children: React.ReactNode }) {
+function Tabla({ titulo, nota, head, children }: { titulo: string; nota?: string; head: { label: string; numeric?: boolean }[]; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-lg font-semibold text-strong">{titulo}</h2>
+      {nota && <p className="text-sm font-medium text-strong">{nota}</p>}
       <div className="w-full overflow-x-auto rounded-lg border border-line">
         <table className="w-full border-collapse text-left text-sm">
           <thead className="bg-surface text-xs uppercase tracking-wide text-muted">
@@ -47,11 +49,17 @@ export interface ProformaViewProps {
   error: string | null;
   /** «Factura ARCA» (CC-F5-10) del cliente + mes; null si no se pudo cargar. */
   factura?: FacturaEstado | null;
+  /** Tipo de cambio tal como vino en `?tc=` (CC-F5-21) y su error, si es inválido. */
+  tc?: string;
+  tcError?: string | null;
 }
 
 /** Proforma de horas (Admin). Server component: el formulario es un GET (cliente y mes). */
-export function ProformaView({ clientes, cliente, mes, data, error, factura = null }: ProformaViewProps) {
-  const pdf = data ? `/api/admin/proforma/pdf?cliente=${encodeURIComponent(data.cliente.id)}&mes=${data.mes}` : null;
+export function ProformaView({ clientes, cliente, mes, data, error, factura = null, tc = "", tcError = null }: ProformaViewProps) {
+  const cv = data?.conversion ?? null;
+  const tcTexto = cv ? formatTipoCambio(cv.tipoCambio) : null;
+  const pdf = data ? `/api/admin/proforma/pdf?cliente=${encodeURIComponent(data.cliente.id)}&mes=${data.mes}${tcTexto ? `&tc=${encodeURIComponent(tcTexto)}` : ""}` : null;
+  const pideTc = data !== null && !data.vacia && tieneUsd(data.totales);
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -106,7 +114,36 @@ export function ProformaView({ clientes, cliente, mes, data, error, factura = nu
             ))}
           </dl>
 
-          {factura && <FacturaArca cliente={{ id: data.cliente.id, nombre: data.cliente.nombre }} mes={data.mes} mesLabel={data.mesLabel} initial={factura} />}
+          {pideTc && (
+            <form method="get" action="/reportes/proforma" className="flex flex-col gap-2 rounded-lg border border-line bg-card p-4">
+              <input type="hidden" name="cliente" value={data.cliente.id} />
+              <input type="hidden" name="mes" value={data.mes} />
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="flex flex-col gap-1 text-sm text-text">
+                  {TC_MESSAGES.label}
+                  <input
+                    name="tc"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    defaultValue={tcTexto ?? tc}
+                    aria-invalid={tcError ? true : undefined}
+                    aria-describedby={tcError ? "proforma-tc-error" : undefined}
+                    className={cn(controlClasses, "w-48 text-right tabular-nums")}
+                  />
+                </label>
+                <button type="submit" className={buttonClasses("secondary", "md")}>
+                  Convertir a pesos
+                </button>
+              </div>
+              {tcError && (
+                <p id="proforma-tc-error" className="text-sm text-danger">
+                  {tcError}
+                </p>
+              )}
+            </form>
+          )}
+
+          {factura && <FacturaArca cliente={{ id: data.cliente.id, nombre: data.cliente.nombre }} mes={data.mes} mesLabel={data.mesLabel} initial={factura} tipoCambio={tcTexto} />}
 
           {data.vacia ? (
             <InlineMessage tone="info">{PROFORMA_MESSAGES.vacia(data.mesLabel)}</InlineMessage>
@@ -138,6 +175,16 @@ export function ProformaView({ clientes, cliente, mes, data, error, factura = nu
                   </tr>
                 ))}
               </Tabla>
+              {cv && (
+                <Tabla titulo="Equivalente en pesos" nota={`Tipo de cambio: ${formatTipoCambio(cv.tipoCambio)}`} head={[{ label: "Concepto" }, { label: "ARS", numeric: true }]}>
+                  {equivalenteFilas(cv, data.alicuotaLabel).map((f) => (
+                    <tr key={f.label} className={cn(f.destacado && "bg-surface font-semibold text-strong")}>
+                      <td className={cn(td, "sticky left-0 z-10", f.destacado ? "bg-surface" : "bg-card")}>{f.label}</td>
+                      <td className={cn(td, num)}>{money(f.cents)}</td>
+                    </tr>
+                  ))}
+                </Tabla>
+              )}
               <Tabla
                 titulo="Detalle de horas"
                 head={[

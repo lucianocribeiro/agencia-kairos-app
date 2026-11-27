@@ -1228,28 +1228,31 @@ describe("CC-F5-21 · tipo de cambio: proformas en USD facturadas en pesos", () 
     expect(d).toMatchObject({ tipoCambio: 1050.25, subtotalUsd: 0, netoArsDesdeUsd: 0, importes: { neto: NETO, iva: IVA, total: TOTAL }, horas: [ids.h1, ids.h2], proyectos: [ids.web] });
   });
 
-  it("PDF de la proforma: con TC suma «Tipo de cambio» y «Equivalente en pesos»; sin TC, idéntico a antes; TC inválido → 400", async () => {
-    const sin = await proformaPdf(null);
-    const con = await proformaPdf(TC);
-    expect([sin.status, con.status]).toEqual([200, 200]);
-    const plano = async (b: Uint8Array) => (await pdfText(b)).pages.flat().join("\n");
-    const tSin = await plano(sin.bytes);
-    const tCon = await plano(con.bytes);
-    expect(tSin).not.toContain("Equivalente en pesos");
-    expect(tSin).not.toContain("Tipo de cambio");
-    expect(tCon).toContain("Tipo de cambio: 1.050,25");
-    expect(tCon).toContain("Equivalente en pesos");
-    // Proforma mixta: todas las horas facturables (ARS 4.728,41 con la Facturada) + USD convertidos.
-    expect(tCon).toContain("Parte en ARS (neto)");
-    expect(tCon).toContain("USD 68,32 a TC 1.050,25 (neto)");
-    expect(tCon).toContain("71.753,08");
-    expect(tCon).toContain("76.481,49"); // 4.728,41 + 71.753,08
-    // El bloque USD de siempre sigue.
-    expect(tCon).toContain("68,32");
-    const bad = await proformaPdf("abc");
-    expect(bad.status).toBe(400);
+  it("PDF de la proforma (CC-F5-23): «Totales por moneda» sin sufijo; sin TC las filas nativas; mixta con TC + «Total en pesos (TC …)»; solo USD con TC + «ARS (TC …)»; TC inválido → 400", async () => {
+    const lineas = async (tc: string | null) => {
+      const r = await proformaPdf(tc);
+      expect(r.status).toBe(200);
+      return (await pdfText(r.bytes)).pages.flat().map((l) => l.replace(/\s+/g, " ").trim());
+    };
+    const ini = (ls: string[]) => ls.slice(ls.indexOf("Totales por moneda"), ls.indexOf("Detalle de horas"));
+    // Proforma mixta: todas las horas facturables (ARS 4.728,41 con la Facturada) y USD 68,32.
+    const sin = await lineas(null);
+    expect(sin).toContain("Totales por moneda");
+    expect(sin.join("\n")).not.toMatch(/Totales por moneda \(|Equivalente en pesos|Tipo de cambio/);
+    expect(ini(sin)).toEqual(["Totales por moneda", "Moneda Subtotal IVA 21 % Total", "ARS 4.728,41 992,97 5.721,38", "USD 68,32 14,35 82,67"]);
+    const mixta = await lineas(TC);
+    // 4.728,41 + 68,32 × 1.050,25 (71.753,08) = 76.481,49; IVA 21 % 16.061,11; total 92.542,60.
+    expect(ini(mixta)).toEqual([...ini(sin), "Total en pesos (TC 1.050,25) 76.481,49 16.061,11 92.542,60"]);
+    expect(mixta.join("\n")).not.toMatch(/Equivalente en pesos|Tipo de cambio:/);
+    expect((await proformaPdf("abc")).status).toBe(400);
+    // Solo USD (las ARS no facturables).
+    for (const id of [ids.h1, ids.h2, ids.hFacturada]) fake.rows(T.horas.id).find((r) => r.id === id)!.fields[Hf.facturable] = false;
+    const soloUsd = await lineas(TC);
+    expect(ini(soloUsd)).toEqual(["Totales por moneda", "Moneda Subtotal IVA 21 % Total", "USD 68,32 14,35 82,67", "ARS (TC 1.050,25) 71.753,08 15.068,15 86.821,23"]);
+    expect(ini(await lineas(null))).toEqual(["Totales por moneda", "Moneda Subtotal IVA 21 % Total", "USD 68,32 14,35 82,67"]);
     // Sin USD: el TC no cambia nada (mismo texto que sin TC).
+    for (const id of [ids.h1, ids.h2]) fake.rows(T.horas.id).find((r) => r.id === id)!.fields[Hf.facturable] = true;
     for (const id of [hU1, hU2]) fake.rows(T.horas.id).find((r) => r.id === id)!.fields[Hf.facturable] = false;
-    expect(await plano((await proformaPdf(TC)).bytes)).toBe(await plano((await proformaPdf(null)).bytes));
+    expect(await lineas(TC)).toEqual(await lineas(null));
   });
 });

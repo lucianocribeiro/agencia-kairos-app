@@ -6,7 +6,7 @@ import { PDFDocument, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf
 import { formatDateTime, formatNumber, isoToDisplayDate } from "@/lib/format";
 import { formatHours } from "@/lib/horas/time";
 import type { ProformaData } from "./proforma";
-import { equivalenteFilas, formatTipoCambio } from "./tipo-cambio";
+import { filasTotales } from "./tipo-cambio";
 
 /**
  * PDF de la proforma (pdf-lib, sin dependencias nativas). A4 vertical, márgenes de 15 mm,
@@ -257,34 +257,19 @@ export async function generarProformaPdf(d: ProformaData, assets: PdfAssets, gen
     d.proyectos.map((p) => [p.codigo, formatHours(p.horas), valor(p.valorHora), p.moneda ?? "", money(p.importe), p.aviso ?? ""]),
   );
 
-  section(`Totales por moneda (${d.alicuotaLabel})`);
+  // CC-F5-23: sin el sufijo de la alícuota en el título; con TC, una fila más en pesos (filasTotales).
+  section("Totales por moneda");
+  const totales = filasTotales(d);
   table(
     [
-      { label: "Moneda", width: 80 },
-      { label: "Subtotal", width: 140, align: "right" },
-      { label: d.alicuotaLabel, width: 140, align: "right" },
-      { label: "Total", width: CW - 360, align: "right" },
+      { label: "Moneda", width: 150 },
+      { label: "Subtotal", width: 115, align: "right" },
+      { label: d.alicuotaLabel, width: 115, align: "right" },
+      { label: "Total", width: CW - 380, align: "right" },
     ],
-    d.totales.map((t) => [t.moneda, money(t.subtotal), money(t.iva), money(t.total)]),
-    { boldRows: new Set(d.totales.map((_, i) => i)) },
+    totales.map((t) => [t.label, money(t.subtotal), money(t.iva), money(t.total)]),
+    { boldRows: new Set(totales.map((_, i) => i)) },
   );
-
-  // CC-F5-21: con TC válido y totales en USD, el equivalente en pesos (sin TC: exactamente lo de siempre).
-  if (d.conversion) {
-    const cv = d.conversion;
-    section("Equivalente en pesos");
-    text(`Tipo de cambio: ${formatTipoCambio(cv.tipoCambio)}`, M, y - 9, 9.5, semi, C.ink);
-    y -= 20;
-    const filas = equivalenteFilas(cv, d.alicuotaLabel);
-    table(
-      [
-        { label: "Concepto", width: CW - 160, wrap: true },
-        { label: "ARS", width: 160, align: "right" },
-      ],
-      filas.map((f) => [f.label, money(f.cents)]),
-      { boldRows: new Set(filas.map((f, i) => (f.destacado ? i : -1)).filter((i) => i >= 0)) },
-    );
-  }
 
   section("Detalle de horas");
   table(

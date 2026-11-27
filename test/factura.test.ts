@@ -1209,6 +1209,25 @@ describe("CC-F5-21 · tipo de cambio: proformas en USD facturadas en pesos", () 
     expect(wsfe.calls("FECAESolicitar")).toHaveLength(1);
   });
 
+  it("CC-F5-22: USD ya Facturada y solo ARS Pendiente → el TC se sigue pidiendo; con TC la parte USD convierte 0, la factura usa solo lo ARS Pendiente y el detalle vuelve al texto sin USD", async () => {
+    for (const id of [hU1, hU2]) fake.rows(T.horas.id).find((r) => r.id === id)!.fields[Hf.estadoFacturacion] = "Facturada";
+    const sin = await estadoTc(null);
+    expect(sin.json).toMatchObject({ elegible: false, motivos: [FACTURA_MESSAGES.faltaTipoCambio], tipoCambio: null });
+    expect((await emitir()).status).toBe(409);
+    expect(wsfe.requests).toHaveLength(0);
+
+    const con = await estadoTc(TC);
+    expect(con.json).toMatchObject({ elegible: true, motivos: [], tipoCambio: 1050.25, importes: { neto: NETO, iva: IVA, total: TOTAL }, conversion: { subtotalArs: NETO, subtotalUsd: 0, netoArsDesdeUsd: 0 } });
+    expect(con.json.detalleSugerido).toBe("Servicios 10/2026: QR - Web");
+
+    const r = await emitir(emitirBody({ tipoCambio: TC }));
+    expect(r.json.estado).toBe("Autorizada");
+    const det = (wsfe.calls("FECAESolicitar")[0].body.params as any).FeCAEReq.FeDetReq.FECAEDetRequest; // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(det).toMatchObject({ MonId: "PES", MonCotiz: 1, ImpNeto: NETO / 100, ImpIVA: IVA / 100, ImpTotal: TOTAL / 100 });
+    const d = parseDatos(rows()[0].fields[F.datos])!;
+    expect(d).toMatchObject({ tipoCambio: 1050.25, subtotalUsd: 0, netoArsDesdeUsd: 0, importes: { neto: NETO, iva: IVA, total: TOTAL }, horas: [ids.h1, ids.h2], proyectos: [ids.web] });
+  });
+
   it("PDF de la proforma: con TC suma «Tipo de cambio» y «Equivalente en pesos»; sin TC, idéntico a antes; TC inválido → 400", async () => {
     const sin = await proformaPdf(null);
     const con = await proformaPdf(TC);

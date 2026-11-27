@@ -10,6 +10,7 @@ import {
   leerTipoCambio,
   netoArsDesdeUsd,
   parseTipoCambio,
+  TC_MAX_LARGO,
   TC_MESSAGES,
 } from "./tipo-cambio";
 
@@ -39,7 +40,6 @@ describe("parseTipoCambio (es-AR, > 0, ≤ 1.000.000, ≤ 4 decimales)", () => {
     ["1234,5678", 1234.5678],
     ["1,23450", 1.2345],
     ["999.999,9999", 999999.9999],
-    ["1 050", 1050], // parseNumberInput saca los espacios
   ])("%s → %s", (txt, n) => {
     expect(parseTipoCambio(txt)).toBe(n);
   });
@@ -62,6 +62,65 @@ describe("parseTipoCambio (es-AR, > 0, ≤ 1.000.000, ≤ 4 decimales)", () => {
     expect(formatTipoCambio(1050.25)).toBe("1.050,25");
     expect(formatTipoCambio(1234.5678)).toBe("1.234,5678");
     expect(formatTipoCambio(1000)).toBe("1.000");
+  });
+});
+
+describe("parseTipoCambio por texto (CC-F5-22 · F5-09-01)", () => {
+  // El valor devuelto es EXACTAMENTE el decimal escrito (sin redondeo silencioso).
+  it.each([
+    ["1,23450", 1.2345],
+    ["1.050,25", 1050.25],
+    ["1000000", 1000000],
+    ["1000000,0000", 1000000],
+    ["1.000.000,0000", 1000000],
+    ["1050.2575", 1050.2575],
+    [",5", 0.5],
+    ["0,0001", 0.0001],
+    ["999999,9999", 999999.9999],
+    ["  1.050,25  ", 1050.25],
+  ])("%s → %s (exacto)", (txt, n) => {
+    expect(parseTipoCambio(txt)).toBe(n);
+    expect(Object.is(parseTipoCambio(txt), n)).toBe(true);
+  });
+
+  it.each([
+    "1000,12345",
+    "1000,00001",
+    "999999,99999",
+    "1000000,0001",
+    "-0",
+    "0",
+    "0,0000",
+    "1e3",
+    "1E3",
+    "١٢٣",
+    "１２３",
+    "1 000",
+    "+5",
+    "-5",
+    "1,",
+    ",",
+    ".5",
+    "1.05",
+    "1,000.5",
+    "Infinity",
+    "NaN",
+    "0x10",
+    "1_000",
+  ])("%s → inválido", (txt) => {
+    expect(parseTipoCambio(txt)).toBeNull();
+  });
+
+  it(`más de ${TC_MAX_LARGO} caracteres → inválido (aunque sea un número válido)`, () => {
+    const de21 = `1,${"0".repeat(19)}`; // 21 caracteres; con ≤ 20 sería 1
+    expect(de21).toHaveLength(21);
+    expect(parseTipoCambio(de21)).toBeNull();
+    expect(parseTipoCambio(de21.slice(0, 20))).toBe(1);
+    expect(parseTipoCambio(" ".repeat(18) + "100")).toBeNull(); // el largo cuenta antes de sacar los bordes
+  });
+
+  it("el bug de la tolerancia: un quinto decimal no se redondea en silencio", () => {
+    for (const t of ["1000,00001", "999999,99999", "123456,00004", "1,00001"]) expect(leerTipoCambio(t)).toEqual({ error: TC_MESSAGES.invalido });
   });
 });
 

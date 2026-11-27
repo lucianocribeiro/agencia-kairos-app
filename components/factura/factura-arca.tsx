@@ -7,13 +7,14 @@ import { Checkbox, ConfirmDialog, InlineMessage, Input } from "@/components/ui";
 import { buttonClasses } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { formatNumber, isoToDisplayDate } from "@/lib/format";
+import { formatTipoCambio } from "@/lib/proforma/tipo-cambio";
 import { DETALLE_MAX, FACTURA_MESSAGES, moneyAr, n8, pv5, type ComprobanteVista, type FacturaEstado } from "@/lib/factura/factura";
 
 export const FACTURA_UI_MESSAGES = {
   titulo: "Factura ARCA",
   activar: "Emitir factura en ARCA para este cliente y mes",
   faltan: "Para emitir la factura en ARCA falta resolver:",
-  difiere: "La factura incluye sólo las horas facturables en Pendiente y en pesos: difiere de la proforma.",
+  difiere: "La factura incluye sólo las horas facturables en Pendiente: difiere de la proforma.",
   emitir: "Emitir factura",
   emitiendo: "Emitiendo…",
   confirmarTitulo: "¿Emitir la factura A en ARCA?",
@@ -54,13 +55,18 @@ export interface FacturaArcaProps {
   mes: string;
   mesLabel: string;
   initial: FacturaEstado;
+  /**
+   * TC válido de la Proforma en es-AR (CC-F5-21), o null. Es un dato, no un importe: el servidor
+   * vuelve a validarlo y calcula todo.
+   */
+  tipoCambio?: string | null;
 }
 
 /**
  * «Factura ARCA» en la Proforma (CC-F5-10). Opcional: la proforma sigue igual. El servidor
  * revalida todo y calcula los importes; acá solo se eligen el vencimiento de pago y el detalle.
  */
-export function FacturaArca({ cliente, mes, mesLabel, initial }: FacturaArcaProps) {
+export function FacturaArca({ cliente, mes, mesLabel, initial, tipoCambio = null }: FacturaArcaProps) {
   const [estado, setEstado] = useState(initial);
   const [activa, setActiva] = useState(false);
   const [vencimiento, setVencimiento] = useState("");
@@ -72,7 +78,8 @@ export function FacturaArca({ cliente, mes, mesLabel, initial }: FacturaArcaProp
 
   async function recargar() {
     try {
-      const res = await fetch(`/api/admin/facturas?cliente=${encodeURIComponent(cliente.id)}&mes=${encodeURIComponent(mes)}`, { cache: "no-store" });
+      const tc = tipoCambio ? `&tc=${encodeURIComponent(tipoCambio)}` : "";
+      const res = await fetch(`/api/admin/facturas?cliente=${encodeURIComponent(cliente.id)}&mes=${encodeURIComponent(mes)}${tc}`, { cache: "no-store" });
       const json = (await res.json()) as FacturaEstado & { ok?: boolean; error?: string };
       if (res.ok) setEstado(json);
     } catch {
@@ -91,7 +98,7 @@ export function FacturaArca({ cliente, mes, mesLabel, initial }: FacturaArcaProp
     setBusy("emitir");
     setError(null);
     try {
-      const { ok, json } = await post("/api/admin/facturas/emitir", { cliente: cliente.id, mes, vencimientoPago: vencimiento, detalle: detalle.trim() });
+      const { ok, json } = await post("/api/admin/facturas/emitir", { cliente: cliente.id, mes, vencimientoPago: vencimiento, detalle: detalle.trim(), ...(tipoCambio ? { tipoCambio } : {}) });
       setConfirmar(false);
       if (!ok) setError(typeof json.error === "string" ? json.error : FACTURA_UI_MESSAGES.error);
       else {
@@ -165,6 +172,12 @@ export function FacturaArca({ cliente, mes, mesLabel, initial }: FacturaArcaProp
                   </div>
                 ))}
               </dl>
+              {estado.conversion && estado.tipoCambio !== null && (
+                <p className="text-sm text-muted">
+                  Incluye USD {moneyAr(estado.conversion.subtotalUsd)} a TC {formatTipoCambio(estado.tipoCambio)} = {pesos(estado.conversion.netoArsDesdeUsd)}
+                  {estado.conversion.subtotalArs > 0 ? ` y ${pesos(estado.conversion.subtotalArs)} en pesos` : ""} (neto).
+                </p>
+              )}
               {estado.difiere && (
                 <InlineMessage tone="info">
                   {FACTURA_UI_MESSAGES.difiere} Proforma: {estado.proformaTotales.map((t) => `${t.moneda} ${moneyAr(t.total)}`).join(" · ")}.
@@ -276,6 +289,12 @@ export function FacturaArca({ cliente, mes, mesLabel, initial }: FacturaArcaProp
           <dd>{mesLabel}</dd>
           <dt className="text-muted">Total</dt>
           <dd className="tabular-nums">{pesos(estado.importes.total)}</dd>
+          {estado.tipoCambio !== null && (
+            <>
+              <dt className="text-muted">Tipo de cambio</dt>
+              <dd className="tabular-nums">{formatTipoCambio(estado.tipoCambio)}</dd>
+            </>
+          )}
           <dt className="text-muted">Vencimiento de pago</dt>
           <dd>{vencimiento ? isoToDisplayDate(vencimiento) : ""}</dd>
         </dl>

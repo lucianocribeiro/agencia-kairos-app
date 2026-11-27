@@ -16,6 +16,7 @@ import { todayInBuenosAires } from "@/lib/horas/dates";
 import { estadoEfectivo } from "@/lib/horas/estado";
 import { calcularProforma, isMesProforma, mesLabel, PARAM_ALICUOTA, parseAlicuota, PROFORMA_MESSAGES, type HoraP, type Moneda, type ProyectoP, type TotalMoneda } from "@/lib/proforma/proforma";
 import { horasDelMesFormula, HORA_FIELDS, PROYECTO_FIELDS } from "@/lib/proforma/server/service";
+import { convertirAPesos, detalleEquivalente, leerTipoCambio, subtotales, tieneUsd } from "@/lib/proforma/tipo-cambio";
 import { claveArca } from "@/lib/ventas-compras/rules";
 import {
   CBTE_TIPO_FACTURA_A,
@@ -159,15 +160,18 @@ interface Contexto {
   mes: string;
   mesLabel: string;
   proformaTotales: TotalMoneda[];
-  /** Factura (solo horas Pendiente, ARS), centavos. */
+  /** Factura (solo horas Pendiente, en pesos; USD convertidas con el TC), centavos. */
   importes: { neto: number; iva: number; total: number };
+  /** TC efectivo (solo si la proforma tiene USD), o null. */
+  tipoCambio: number | null;
+  conversion: { subtotalArs: number; subtotalUsd: number; netoArsDesdeUsd: number } | null;
   horas: string[];
   proyectos: { id: string; codigo: string }[];
   comprobantes: ComprobanteRow[];
   motivos: string[];
 }
 
-async function cargarContexto(clienteId: string, mes: string, config: FacturaConfigLike): Promise<ServiceResult<Contexto>> {
+async function cargarContexto(clienteId: string, mes: string, config: FacturaConfigLike, tcPedido: number | null = null): Promise<ServiceResult<Contexto>> {
   if (!RECORD_ID_RE.test(clienteId)) return fail(404, PROFORMA_MESSAGES.clienteInexistente);
   if (!isMesProforma(mes)) return fail(400, PROFORMA_MESSAGES.mes);
   const client = getAirtableClient();
@@ -220,10 +224,16 @@ async function cargarContexto(clienteId: string, mes: string, config: FacturaCon
   const base = { cliente: clienteP, mes, alicuota, proyectos: proyectosP, colaboradores: new Map<string, string>() };
   const proforma = calcularProforma({ ...base, horas: horasP });
   const pendiente = calcularProforma({ ...base, horas: horasP.filter((h) => h.pendiente) });
+  // CC-F5-21: el TC solo cuenta si la proforma tiene USD (si no, se ignora). Con TC, la factura incluye
+  // las horas Pendiente de las dos monedas, con la parte en USD convertida (convertirAPesos, la misma
+  // cuenta que la pantalla y el PDF). Sin TC, solo ARS (y si hay USD, no es elegible).
+  const tipoCambio = tieneUsd(proforma.totales) ? tcPedido : null;
   const ars = pendiente.totales.find((t) => t.moneda === "ARS");
-  const incluidas = pendiente.detalle.filter((d) => d.moneda === "ARS" && d.importe !== null);
-  const importes = ars ? { neto: ars.subtotal, iva: ars.iva, total: ars.total } : { neto: 0, iva: 0, total: 0 };
-  const proyectosIncluidos = pendiente.proyectos.filter((p) => p.moneda === "ARS" && p.importe !== null).map((p) => ({ id: p.id, codigo: p.codigo }));
+  const conv = tipoCambio !== null ? convertirAPesos(pendiente.totales, tipoCambio, alicuota) : null;
+  const incluyeMoneda = (m: Moneda | null) => m === "ARS" || (conv !== null && m === "USD");
+  const incluidas = pendiente.detalle.filter((d) => incluyeMoneda(d.moneda) && d.importe !== null);
+  const importes = conv ? { neto: conv.neto, iva: conv.iva, total: conv.total } : ars ? { neto: ars.subtotal, iva: ars.iva, total: ars.total } : { neto: 0, iva: 0, total: 0 };
+  const proyectosIncluidos = pendiente.proyectos.filter((p) => incluyeMoneda(p.moneda) && p.importe !== null).map((p) => ({ id: p.id, codigo: p.codigo }));
 
   const activo = comprobantes.find((r) => esActivo(r, config.ambiente)) ?? null;
   const cuitCliente = text(cliente.fields[C.cuit]);
@@ -240,6 +250,8 @@ async function cargarContexto(clienteId: string, mes: string, config: FacturaCon
     alicuota,
     horasPendientes: pendiente.detalle.length,
     netoPendiente: importes.neto,
+    tipoCambio,
+    usdPendiente: subtotales(pendiente.totales).usd,
     activo: activo ? { ambiente: activo.ambiente!, estado: activo.estado! } : null,
     mesLabel: mesLabel(mes),
     configError: config.error,
@@ -261,6 +273,8 @@ async function cargarContexto(clienteId: string, mes: string, config: FacturaCon
       mesLabel: mesLabel(mes),
       proformaTotales: proforma.totales,
       importes,
+      tipoCambio,
+      conversion: conv ? { subtotalArs: conv.subtotalArs, subtotalUsd: conv.subtotalUsd, netoArsDesdeUsd: conv.netoArsDesdeUsd } : null,
       horas: incluidas.map((d) => d.id),
       proyectos: proyectosIncluidos,
       comprobantes,
@@ -315,12 +329,26 @@ export const pendienteDeRegistro = (r: Pick<ComprobanteRow, "estado" | "ambiente
 /** Producción + Autorizada con un snapshot sin autorización completa (CC-F5-12): se revisa a mano, sin «Completar registro». */
 export const datosIncompletos = (r: Pick<ComprobanteRow, "estado" | "ambiente" | "datos">) => r.estado === "Autorizada" && r.ambiente === "Producción" && autorizacionDelSnapshot(r.datos) === null;
 
-export async function cargarEstadoFactura(clienteId: string, mes: string, now = new Date()): Promise<ServiceResult<FacturaEstado>> {
+/** Detalle sugerido: con parte en USD, «Equivalente a USD … a TC …»; si no, los proyectos (CC-F5-10). */
+function detalleDe(d: Contexto): string {
+  if (d.conversion && d.tipoCambio !== null && d.conversion.subtotalUsd > 0) return detalleEquivalente(d.conversion.subtotalUsd, d.tipoCambio);
+  return detalleSugerido(d.proyectos.map((p) => p.codigo), d.mesLabel);
+}
+
+/**
+ * `tc`: el TC ya validado de la Proforma (CC-F5-21), o null. La proforma con la que se compara
+ * («difiere») es la convertida con el mismo TC.
+ */
+export async function cargarEstadoFactura(clienteId: string, mes: string, tc: number | null = null, now = new Date()): Promise<ServiceResult<FacturaEstado>> {
   const config = configLike();
-  const ctx = await cargarContexto(clienteId, mes, config);
+  const ctx = await cargarContexto(clienteId, mes, config, tc);
   if (!ctx.ok) return ctx;
   const d = ctx.data;
   const arsProforma = d.proformaTotales.find((t) => t.moneda === "ARS");
+  const proformaPesos = d.tipoCambio !== null ? convertirAPesos(d.proformaTotales, d.tipoCambio, d.alicuota) : null;
+  const difiere = proformaPesos
+    ? proformaPesos.neto !== d.importes.neto || proformaPesos.total !== d.importes.total
+    : d.proformaTotales.length !== 1 || !arsProforma || arsProforma.subtotal !== d.importes.neto || arsProforma.total !== d.importes.total;
   return {
     ok: true,
     data: {
@@ -330,13 +358,22 @@ export async function cargarEstadoFactura(clienteId: string, mes: string, now = 
       motivos: d.motivos,
       hoy: todayInBuenosAires(now),
       importes: d.importes,
+      tipoCambio: d.tipoCambio,
+      conversion: d.conversion,
       proformaTotales: d.proformaTotales,
-      difiere: d.proformaTotales.length !== 1 || !arsProforma || arsProforma.subtotal !== d.importes.neto || arsProforma.total !== d.importes.total,
+      difiere,
       alicuota: d.alicuota,
-      detalleSugerido: detalleSugerido(d.proyectos.map((p) => p.codigo), d.mesLabel),
+      detalleSugerido: detalleDe(d),
       comprobantes: d.comprobantes.map((r) => vistaComprobante(r, now.getTime())),
     },
   };
+}
+
+/** GET de la pantalla: `tc` opcional como texto (query); inválido → 400. */
+export async function cargarEstadoFacturaQuery(clienteId: string, mes: string, tcRaw: string | null, now = new Date()): Promise<ServiceResult<FacturaEstado>> {
+  const tc = leerTipoCambio(tcRaw);
+  if ("error" in tc) return fail(400, tc.error);
+  return cargarEstadoFactura(clienteId, mes, tc.tc, now);
 }
 
 // ── Escrituras del registro ──────────────────────────────────────────────────
@@ -444,7 +481,7 @@ export async function emitirFactura(user: SessionUser, body: Record<string, unkn
   if (!v.ok) return fail(400, v.error);
   const input = v.data;
 
-  const ctxRes = await cargarContexto(input.cliente, input.mes, { ambiente: config.ambiente, error: null });
+  const ctxRes = await cargarContexto(input.cliente, input.mes, { ambiente: config.ambiente, error: null }, input.tipoCambio);
   if (!ctxRes.ok) return ctxRes;
   const ctx = ctxRes.data;
   if (ctx.motivos.length > 0) return fail(409, `${FACTURA_MESSAGES.noElegible} ${ctx.motivos.join(" ")}`);
@@ -496,6 +533,10 @@ export async function emitirFactura(user: SessionUser, body: Record<string, unkn
     alicuota: ctx.alicuota,
     ivaId,
     importes: ctx.importes,
+    // CC-F5-21: con parte en USD, el TC y la conversión; sin TC, null (factura solo en ARS, como antes).
+    tipoCambio: ctx.tipoCambio,
+    subtotalUsd: ctx.conversion?.subtotalUsd ?? null,
+    netoArsDesdeUsd: ctx.conversion?.netoArsDesdeUsd ?? null,
     horas: ctx.horas,
     proyectos: ctx.proyectos.map((x) => x.id),
     cae: null,

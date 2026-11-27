@@ -8,13 +8,13 @@ import { pdfAssets } from "@/lib/proforma/server/assets";
 import { cargarProforma, nombreArchivoPdf } from "@/lib/proforma/server/service";
 
 /**
- * GET /api/admin/proforma/pdf?cliente=rec…&mes=AAAA-MM · la misma proforma como PDF
+ * GET /api/admin/proforma/pdf?cliente=rec…&mes=AAAA-MM[&tc=1.050,25] · la misma proforma como PDF
  * (adjunto). Sin horas que cuenten → 404 con el mensaje (no hay documento). No-store.
  */
 export const GET = adminRoute(
   async (request) => {
     const q = request.nextUrl.searchParams;
-    const res = await cargarProforma({ cliente: q.get("cliente"), mes: q.get("mes") });
+    const res = await cargarProforma({ cliente: q.get("cliente"), mes: q.get("mes"), tc: q.get("tc") });
     if (!res.ok) return toResponse(res);
     if (res.data.vacia) return NextResponse.json({ error: PROFORMA_MESSAGES.vacia(res.data.mesLabel) }, { status: 404 });
     const bytes = await generarProformaPdf(res.data, await pdfAssets());

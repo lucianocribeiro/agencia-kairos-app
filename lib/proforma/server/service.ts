@@ -6,6 +6,7 @@ import { TABLES } from "@/lib/airtable/schema";
 import type { ServiceResult } from "@/lib/abm/types";
 import { isClienteActivo } from "@/lib/abm/cliente-estado";
 import { addDays, todayInBuenosAires } from "@/lib/horas/dates";
+import { aplicarTipoCambio, leerTipoCambio } from "../tipo-cambio";
 import { calcularProforma, isMesProforma, PARAM_ALICUOTA, parseAlicuota, PROFORMA_MESSAGES, type HoraP, type Moneda, type ProformaData, type ProyectoP } from "../proforma";
 
 /**
@@ -65,6 +66,8 @@ export async function clientesActivos(): Promise<ClienteOpcion[]> {
 export interface ProformaQuery {
   cliente?: string | null;
   mes?: string | null;
+  /** Tipo de cambio es-AR (CC-F5-21), opcional; inválido → 400. Solo convierte si hay USD. */
+  tc?: string | null;
 }
 
 /** Valida los parámetros sin leer la base: { cliente, mes } o un error 400. */
@@ -79,6 +82,8 @@ export async function cargarProforma(q: ProformaQuery, now = new Date()): Promis
   const v = validarQuery(q, now);
   if ("error" in v) return { ok: false, status: 400, error: v.error };
   if (!v.cliente) return { ok: false, status: 400, error: PROFORMA_MESSAGES.cliente };
+  const tc = leerTipoCambio(q.tc);
+  if ("error" in tc) return { ok: false, status: 400, error: tc.error };
   const client = getAirtableClient();
   const PA = TABLES.parametros.fields;
   const [cliente, parametros] = await Promise.all([
@@ -117,23 +122,22 @@ export async function cargarProforma(q: ProformaQuery, now = new Date()): Promis
     mesAFacturar: typeof r.fields[H.mesAFacturar] === "string" ? (r.fields[H.mesAFacturar] as string) : null,
   }));
   const colaboradores = new Map(usuarios.map((r) => [r.id, text(r.fields[TABLES.usuarios.fields.nombre])]));
-  return {
-    ok: true,
-    data: calcularProforma({
-      cliente: {
-        id: cliente.id,
-        nombre: text(cliente.fields[C.nombre]) || "(sin nombre)",
-        sigla: text(cliente.fields[C.sigla]),
-        cuit: text(cliente.fields[C.cuit]) || null,
-        condicionIva: text(cliente.fields[C.condicionIva]) || null,
-      },
-      mes: v.mes,
-      alicuota,
-      proyectos: proyectosP,
-      horas: horasP,
-      colaboradores,
-    }),
-  };
+  const data = calcularProforma({
+    cliente: {
+      id: cliente.id,
+      nombre: text(cliente.fields[C.nombre]) || "(sin nombre)",
+      sigla: text(cliente.fields[C.sigla]),
+      cuit: text(cliente.fields[C.cuit]) || null,
+      condicionIva: text(cliente.fields[C.condicionIva]) || null,
+    },
+    mes: v.mes,
+    alicuota,
+    proyectos: proyectosP,
+    horas: horasP,
+    colaboradores,
+  });
+  // CC-F5-21: con USD y un TC válido, el equivalente en pesos (si no, la proforma de siempre).
+  return { ok: true, data: aplicarTipoCambio(data, tc.tc) };
 }
 
 /** «Proforma_<Sigla>_<AAAAMM>.pdf»; la sigla solo con letras y dígitos (si queda vacía, el ID). */

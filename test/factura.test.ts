@@ -182,7 +182,7 @@ describe("elegibilidad (D1)", () => {
     ["USD en la proforma", () => {
       const usd = fake.seed(T.proyectos.id, { [P.codigo]: "QR - USD", [P.cliente]: [ids.cliente], [P.valorHora]: 50, [P.monedaValorHora]: "USD", [P.estado]: "Activo" });
       fake.seed(T.horas.id, { [Hf.fecha]: "2026-10-09", [Hf.proyecto]: [usd], [Hf.tarea]: "x", [Hf.horaDesde]: t("09:00"), [Hf.horaHasta]: t("10:00"), [Hf.facturable]: true, [Hf.estadoFacturacion]: "Facturada" });
-    }, FACTURA_MESSAGES.soloPesos],
+    }, FACTURA_MESSAGES.faltaTipoCambio],
     ["proyecto sin valor hora", () => {
       const sin = fake.seed(T.proyectos.id, { [P.codigo]: "QR - Sin", [P.cliente]: [ids.cliente], [P.estado]: "Activo" });
       fake.seed(T.horas.id, { [Hf.fecha]: "2026-10-09", [Hf.proyecto]: [sin], [Hf.tarea]: "x", [Hf.horaDesde]: t("09:00"), [Hf.horaHasta]: t("10:00"), [Hf.facturable]: true, [Hf.estadoFacturacion]: "Pagada" });
@@ -234,7 +234,7 @@ describe("elegibilidad (D1)", () => {
     const r = await call(proformaPdfRoute.GET as never, `/api/admin/proforma/pdf?cliente=${ids.cliente}&mes=2026-10`, {}, { method: "GET" });
     expect(r.status).toBe(200);
     expect(r.headers.get("content-type")).toBe("application/pdf");
-    expect((await estado()).json.motivos).toEqual([FACTURA_MESSAGES.soloPesos]);
+    expect((await estado()).json.motivos).toEqual([FACTURA_MESSAGES.faltaTipoCambio]);
   });
 });
 
@@ -1085,5 +1085,171 @@ describe("CC-F5-14 · F-13: la clave se libera de verdad tras un rechazo previo 
       expect(rows()[0].fields[F.venta]).toEqual([fake.rows(T.ventas.id)[0].id]);
       expect((await completar(r.json.id)).status).toBe(409);
     });
+  });
+});
+
+describe("CC-F5-21 · tipo de cambio: proformas en USD facturadas en pesos", () => {
+  // Proyecto USD: 37,33 USD/h. hU1 = 1,5 h → 55,995 → 56,00; hU2 = 0,33 h → 12,3189 → 12,32. Subtotal USD 68,32.
+  // TC 1.050,25 → 68,32 × 1050,25 = 71.753,08. Neto = 2.259,27 (ARS) + 71.753,08 = 74.012,35; IVA 21 % = 15.542,5935 → 15.542,59.
+  const SUB_USD = 6832;
+  const DESDE_USD = 7175308;
+  const NETO_TC = NETO + DESDE_USD;
+  const IVA_TC = 1554259;
+  const TOTAL_TC = NETO_TC + IVA_TC;
+  const TC = "1.050,25";
+  const proformaPdfRoute2 = proformaPdfRoute;
+  let usd: string;
+  let hU1: string;
+  let hU2: string;
+
+  beforeEach(async () => {
+    await login();
+    usd = fake.seed(T.proyectos.id, { [P.codigo]: "QR - USD", [P.cliente]: [ids.cliente], [P.valorHora]: 37.33, [P.monedaValorHora]: "USD", [P.estado]: "Activo" });
+    const h = (fecha: string, desde: string, hasta: string) =>
+      fake.seed(T.horas.id, { [Hf.fecha]: fecha, [Hf.proyecto]: [usd], [Hf.colaborador]: [ids.admin], [Hf.tarea]: `USD ${fecha}`, [Hf.horaDesde]: t(desde), [Hf.horaHasta]: t(hasta), [Hf.facturable]: true });
+    hU1 = h("2026-10-10", "09:00", "10:30");
+    hU2 = h("2026-10-11", "09:00", "09:20");
+  });
+
+  const estadoTc = (tc: string | null) => call(estadoRoute.GET as never, `/api/admin/facturas?cliente=${ids.cliente}&mes=2026-10${tc === null ? "" : `&tc=${encodeURIComponent(tc)}`}`, {}, { method: "GET" });
+  const proformaPdf = (tc: string | null) => call(proformaPdfRoute2.GET as never, `/api/admin/proforma/pdf?cliente=${ids.cliente}&mes=2026-10${tc === null ? "" : `&tc=${encodeURIComponent(tc)}`}`, {}, { method: "GET" });
+
+  it("sin TC → no elegible con «Cargá el tipo de cambio…» (y solo ese motivo)", async () => {
+    const r = await estadoTc(null);
+    expect(r.json).toMatchObject({ elegible: false, motivos: [FACTURA_MESSAGES.faltaTipoCambio], tipoCambio: null, conversion: null });
+    const e = await emitir();
+    expect(e.status).toBe(409);
+    expect(e.json.error).toContain(FACTURA_MESSAGES.faltaTipoCambio);
+    expect(wsfe.requests).toHaveLength(0);
+    expect(rows()).toHaveLength(0);
+  });
+
+  it("solo horas USD pendientes (las ARS ya facturadas) y sin TC → solo el motivo del TC, no «no suman importe»", async () => {
+    for (const id of [ids.h1, ids.h2]) fake.rows(T.horas.id).find((r) => r.id === id)!.fields[Hf.estadoFacturacion] = "Facturada";
+    expect((await estadoTc(null)).json.motivos).toEqual([FACTURA_MESSAGES.faltaTipoCambio]);
+    const r = await estadoTc(TC);
+    expect(r.json).toMatchObject({ elegible: true, importes: { neto: DESDE_USD, iva: 1506815, total: DESDE_USD + 1506815 } }); // 71.753,08 × 0,21 = 15.068,1468 → 15.068,15
+  });
+
+  it("con TC → elegible; importes en pesos de las horas Pendiente de las dos monedas; detalle «Equivalente a USD … a TC …»", async () => {
+    const r = await estadoTc(TC);
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ elegible: true, motivos: [], tipoCambio: 1050.25, importes: { neto: NETO_TC, iva: IVA_TC, total: TOTAL_TC }, conversion: { subtotalArs: NETO, subtotalUsd: SUB_USD, netoArsDesdeUsd: DESDE_USD } });
+    expect(r.json.detalleSugerido).toBe("Equivalente a USD 68,32 a TC 1.050,25");
+    expect(r.json.difiere).toBe(true); // la proforma incluye la hora ARS ya Facturada
+  });
+
+  it("TC inválido en el GET → 400 con el mensaje; TC sin USD en la proforma → se ignora (todo como antes)", async () => {
+    const { TC_MESSAGES } = await import("@/lib/proforma/tipo-cambio");
+    for (const bad of ["0", "abc", "1,23456", "1000001"]) expect(await estadoTc(bad)).toMatchObject({ status: 400, json: { error: TC_MESSAGES.invalido } });
+    for (const id of [hU1, hU2]) fake.rows(T.horas.id).find((r) => r.id === id)!.fields[Hf.facturable] = false;
+    const sinTc = await estadoTc(null);
+    const conTc = await estadoTc(TC);
+    expect(conTc.json).toEqual(sinTc.json);
+    expect(conTc.json).toMatchObject({ tipoCambio: null, conversion: null, importes: { neto: NETO, iva: IVA, total: TOTAL }, detalleSugerido: "Servicios 10/2026: QR - Web" });
+  });
+
+  it("emitir (Homologación) con tipoCambio: WSFE en pesos (PES, 1) con los importes convertidos; snapshot con TC, subtotal USD y su equivalente", async () => {
+    const r = await emitir(emitirBody({ tipoCambio: TC, detalle: "Equivalente a USD 68,32 a TC 1.050,25" }));
+    expect(r.json).toMatchObject({ estado: "Autorizada" });
+    const det = (wsfe.calls("FECAESolicitar")[0].body.params as any).FeCAEReq.FeDetReq.FECAEDetRequest; // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(det).toMatchObject({ MonId: "PES", MonCotiz: 1, ImpNeto: NETO_TC / 100, ImpIVA: IVA_TC / 100, ImpTotal: TOTAL_TC / 100, Iva: { AlicIva: [{ Id: 5, BaseImp: NETO_TC / 100, Importe: IVA_TC / 100 }] } });
+    expect(Math.round(det.ImpTotal * 100)).toBe(Math.round(det.ImpNeto * 100) + Math.round(det.ImpIVA * 100));
+    const rec = rows()[0];
+    expect(rec.fields).toMatchObject({ [F.neto]: NETO_TC / 100, [F.iva]: IVA_TC / 100, [F.total]: TOTAL_TC / 100 });
+    const d = parseDatos(rec.fields[F.datos])!;
+    expect(d).toMatchObject({ tipoCambio: 1050.25, subtotalUsd: SUB_USD, netoArsDesdeUsd: DESDE_USD, importes: { neto: NETO_TC, iva: IVA_TC, total: TOTAL_TC } });
+    expect(d.detalle).toMatchObject({ descripcion: "Equivalente a USD 68,32 a TC 1.050,25", precioUnitario: NETO_TC, subtotal: NETO_TC, subtotalConIva: TOTAL_TC });
+    expect([...d.horas].sort()).toEqual([ids.h1, ids.h2, hU1, hU2].sort());
+    expect([...d.proyectos].sort()).toEqual([ids.web, usd].sort());
+    // Homologación: reglas de siempre (ni Ventas ni Horas, tampoco las USD).
+    expect(fake.calls.filter((c) => (c.tableId === T.ventas.id || c.tableId === T.horas.id) && c.method !== "list")).toHaveLength(0);
+    expect(estadoHora(hU1)).toBeUndefined();
+  });
+
+  it("body estricto: tipoCambio inválido o de otro tipo → 400 sin escribir; importes del navegador → 400; vacío = sin TC (→ 409 con USD)", async () => {
+    const { TC_MESSAGES } = await import("@/lib/proforma/tipo-cambio");
+    for (const bad of ["0", "-5", "1,23456", "x", 1050, true]) expect(await emitir(emitirBody({ tipoCambio: bad }))).toMatchObject({ status: 400, json: { error: TC_MESSAGES.invalido } });
+    expect((await emitir(emitirBody({ tipoCambio: TC, neto: 1 }))).status).toBe(400);
+    expect((await emitir(emitirBody({ tipoCambio: TC, importes: { neto: 1 } }))).status).toBe(400);
+    expect(rows()).toHaveLength(0);
+    expect((await emitir(emitirBody({ tipoCambio: "" }))).status).toBe(409);
+    expect((await emitir(emitirBody({ tipoCambio: null }))).status).toBe(409);
+    expect(wsfe.requests).toHaveLength(0);
+    expect(rows()).toHaveLength(0);
+  });
+
+  it("tipoCambio sin USD en la proforma → se ignora: factura en ARS como antes, snapshot sin TC", async () => {
+    for (const id of [hU1, hU2]) fake.rows(T.horas.id).find((r) => r.id === id)!.fields[Hf.facturable] = false;
+    const r = await emitir(emitirBody({ tipoCambio: TC }));
+    expect(r.json.estado).toBe("Autorizada");
+    const d = parseDatos(rows()[0].fields[F.datos])!;
+    expect(d).toMatchObject({ tipoCambio: null, subtotalUsd: null, netoArsDesdeUsd: null, importes: { neto: NETO, iva: IVA, total: TOTAL }, horas: [ids.h1, ids.h2] });
+  });
+
+  it("Producción: Venta en pesos (Moneda «$», TC 1) con los importes convertidos y TODAS las horas (también las USD) Facturada", async () => {
+    usarProduccion();
+    const r = await emitir(emitirBody({ tipoCambio: TC }));
+    expect(r.json).toMatchObject({ estado: "Autorizada", mensaje: null });
+    const [venta] = fake.rows(T.ventas.id);
+    expect(venta.fields).toMatchObject({ [V.moneda]: "$", [V.tipoCambio]: 1, [V.netoGravIva21]: NETO_TC / 100, [V.netoGravadoTotal]: NETO_TC / 100, [V.iva21]: IVA_TC / 100, [V.totalIva]: IVA_TC / 100, [V.impTotal]: TOTAL_TC / 100 });
+    expect(venta.fields[V.proyecto]).toBeUndefined(); // dos proyectos
+    for (const h of [ids.h1, ids.h2, hU1, hU2]) expect(estadoHora(h)).toBe("Facturada");
+    expect([...(rows()[0].fields[F.horas] as string[])].sort()).toEqual([ids.h1, ids.h2, hU1, hU2].sort());
+  });
+
+  it("Verificar en ARCA compara con el snapshot (ImpTotal en pesos, el convertido)", async () => {
+    wsfe.on("FECAESolicitar", "network");
+    const r = await emitir(emitirBody({ tipoCambio: TC }));
+    expect(r.json.estado).toBe("Incierta");
+    wsfe.autorizarAMano(1, 1, { docNro: Number(CUIT_CLIENTE), impTotal: TOTAL / 100, cbteFch: 20261119 }); // el total sin USD: no coincide
+    expect((await verificar(r.json.id)).json).toMatchObject({ estado: "Incierta", mensaje: FACTURA_MESSAGES.revisarManual });
+    wsfe.autorizarAMano(1, 1, { docNro: Number(CUIT_CLIENTE), impTotal: TOTAL_TC / 100, cbteFch: 20261119 });
+    expect((await verificar(r.json.id)).json).toMatchObject({ estado: "Autorizada" });
+    expect(wsfe.calls("FECAESolicitar")).toHaveLength(1);
+  });
+
+  it("CC-F5-22: USD ya Facturada y solo ARS Pendiente → el TC se sigue pidiendo; con TC la parte USD convierte 0, la factura usa solo lo ARS Pendiente y el detalle vuelve al texto sin USD", async () => {
+    for (const id of [hU1, hU2]) fake.rows(T.horas.id).find((r) => r.id === id)!.fields[Hf.estadoFacturacion] = "Facturada";
+    const sin = await estadoTc(null);
+    expect(sin.json).toMatchObject({ elegible: false, motivos: [FACTURA_MESSAGES.faltaTipoCambio], tipoCambio: null });
+    expect((await emitir()).status).toBe(409);
+    expect(wsfe.requests).toHaveLength(0);
+
+    const con = await estadoTc(TC);
+    expect(con.json).toMatchObject({ elegible: true, motivos: [], tipoCambio: 1050.25, importes: { neto: NETO, iva: IVA, total: TOTAL }, conversion: { subtotalArs: NETO, subtotalUsd: 0, netoArsDesdeUsd: 0 } });
+    expect(con.json.detalleSugerido).toBe("Servicios 10/2026: QR - Web");
+
+    const r = await emitir(emitirBody({ tipoCambio: TC }));
+    expect(r.json.estado).toBe("Autorizada");
+    const det = (wsfe.calls("FECAESolicitar")[0].body.params as any).FeCAEReq.FeDetReq.FECAEDetRequest; // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(det).toMatchObject({ MonId: "PES", MonCotiz: 1, ImpNeto: NETO / 100, ImpIVA: IVA / 100, ImpTotal: TOTAL / 100 });
+    const d = parseDatos(rows()[0].fields[F.datos])!;
+    expect(d).toMatchObject({ tipoCambio: 1050.25, subtotalUsd: 0, netoArsDesdeUsd: 0, importes: { neto: NETO, iva: IVA, total: TOTAL }, horas: [ids.h1, ids.h2], proyectos: [ids.web] });
+  });
+
+  it("PDF de la proforma: con TC suma «Tipo de cambio» y «Equivalente en pesos»; sin TC, idéntico a antes; TC inválido → 400", async () => {
+    const sin = await proformaPdf(null);
+    const con = await proformaPdf(TC);
+    expect([sin.status, con.status]).toEqual([200, 200]);
+    const plano = async (b: Uint8Array) => (await pdfText(b)).pages.flat().join("\n");
+    const tSin = await plano(sin.bytes);
+    const tCon = await plano(con.bytes);
+    expect(tSin).not.toContain("Equivalente en pesos");
+    expect(tSin).not.toContain("Tipo de cambio");
+    expect(tCon).toContain("Tipo de cambio: 1.050,25");
+    expect(tCon).toContain("Equivalente en pesos");
+    // Proforma mixta: todas las horas facturables (ARS 4.728,41 con la Facturada) + USD convertidos.
+    expect(tCon).toContain("Parte en ARS (neto)");
+    expect(tCon).toContain("USD 68,32 a TC 1.050,25 (neto)");
+    expect(tCon).toContain("71.753,08");
+    expect(tCon).toContain("76.481,49"); // 4.728,41 + 71.753,08
+    // El bloque USD de siempre sigue.
+    expect(tCon).toContain("68,32");
+    const bad = await proformaPdf("abc");
+    expect(bad.status).toBe(400);
+    // Sin USD: el TC no cambia nada (mismo texto que sin TC).
+    for (const id of [hU1, hU2]) fake.rows(T.horas.id).find((r) => r.id === id)!.fields[Hf.facturable] = false;
+    expect(await plano((await proformaPdf(TC)).bytes)).toBe(await plano((await proformaPdf(null)).bytes));
   });
 });

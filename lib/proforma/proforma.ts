@@ -7,6 +7,7 @@ import { formatCuit } from "@/lib/cuit";
 import { formatNumber } from "@/lib/format";
 import { recordHours, sumHours } from "@/lib/horas/time";
 import { toCents } from "@/lib/ventas-compras/money";
+import type { ConversionTC } from "./tipo-cambio";
 
 /** Parámetro (Concepto) con la alícuota de IVA de la proforma. */
 export const PARAM_ALICUOTA = "Alícuota IVA (proforma de horas)";
@@ -130,6 +131,11 @@ export interface ProformaData {
   incompleta: boolean;
   /** No hay registros que cuenten. */
   vacia: boolean;
+  /**
+   * Equivalente en pesos con el TC del Admin (CC-F5-21), solo si hay totales en USD y un TC válido
+   * (`aplicarTipoCambio`, lib/proforma/tipo-cambio.ts). Ausente = la proforma de siempre.
+   */
+  conversion?: ConversionTC;
 }
 
 const collator = new Intl.Collator("es", { sensitivity: "base", numeric: true });

@@ -201,6 +201,41 @@ describe("proforma · Admin", () => {
   });
 });
 
+describe("proforma · tipo de cambio (CC-F5-22)", () => {
+  beforeEach(() => loginAs(ids.admin));
+  // ARS 3.074,09 + USD 125,00 × 1.050,25 = 131.281,25 → neto 134.355,34; IVA 21 % = 28.214,6214 → 28.214,62.
+  const conversion = { tipoCambio: 1050.25, subtotalArs: 307409, subtotalUsd: 12500, netoArsDesdeUsd: 13128125, neto: 13435534, iva: 2821462, total: 16256996, mixta: true };
+
+  it("JSON: tc válido → 200 con la conversión; tc inválido → 400 con el mensaje (no-store); sin tc → sin conversión", async () => {
+    const { TC_MESSAGES } = await import("@/lib/proforma/tipo-cambio");
+    const ok = await getJson(`?cliente=${ids.cliente}&mes=2026-10&tc=${encodeURIComponent("1.050,25")}`);
+    expect(ok.status).toBe(200);
+    expect((ok.json as ProformaData).conversion).toEqual(conversion);
+    for (const bad of ["1000,00001", "999999,99999", "1e3", "-0", "１２３", "1 000"]) {
+      const r = await getJson(`?cliente=${ids.cliente}&mes=2026-10&tc=${encodeURIComponent(bad)}`);
+      expect([r.status, r.json.error, r.cc]).toEqual([400, TC_MESSAGES.invalido, "no-store"]);
+    }
+    const sin = await getJson(`?cliente=${ids.cliente}&mes=2026-10`);
+    expect(sin.status).toBe(200);
+    expect("conversion" in sin.json).toBe(false);
+  });
+
+  it("página: tc inválido → el mensaje junto al campo y sin conversión; tc válido → «Equivalente en pesos»", async () => {
+    const { TC_MESSAGES } = await import("@/lib/proforma/tipo-cambio");
+    const mala = renderToStaticMarkup(await ProformaPage({ searchParams: Promise.resolve({ cliente: ids.cliente, mes: "2026-10", tc: "1000,00001" }) }));
+    expect(mala).toContain(TC_MESSAGES.invalido);
+    expect(mala).toContain('aria-invalid="true"');
+    expect(mala).not.toContain("Equivalente en pesos");
+    expect(mala).not.toContain("Tipo de cambio:");
+    expect(mala).toContain("QA - Soporte"); // la proforma se muestra igual
+    const buena = renderToStaticMarkup(await ProformaPage({ searchParams: Promise.resolve({ cliente: ids.cliente, mes: "2026-10", tc: "1.050,25" }) }));
+    expect(buena).toContain("Equivalente en pesos");
+    expect(buena).toContain("Tipo de cambio: 1.050,25");
+    expect(buena).toContain("162.569,96");
+    expect(buena).not.toContain(TC_MESSAGES.invalido);
+  });
+});
+
 describe("proforma · Empleado y sin sesión", () => {
   it("Empleado: 403 en la API y en el PDF, sin leer Horas ni Proyectos; sin sesión: 401", async () => {
     await loginAs(ids.empleado);

@@ -4,7 +4,9 @@
  * y los textos. El servidor (lib/factura/server) lee Airtable y habla con Afip SDK.
  *
  * Reglas fijas:
- * - Solo pesos, solo Factura A a un cliente Responsable Inscripto, una por cliente + mes + ambiente.
+ * - Solo pesos (MonId PES, MonCotiz 1), solo Factura A a un cliente Responsable Inscripto, una por
+ *   cliente + mes + ambiente. Las horas en USD se convierten con el TC que carga el Admin en la
+ *   Proforma (CC-F5-21, `convertirAPesos` de lib/proforma/tipo-cambio.ts).
  * - Importes del servidor con las reglas de la proforma (centavos enteros), solo con las horas
  *   facturables en Pendiente. Nunca importes que mande el navegador.
  * - El PDF se arma siempre desde el snapshot (`FacturaDatos`), nunca desde datos actuales.
@@ -12,6 +14,7 @@
 import { isValidCuit } from "@/lib/cuit";
 import { isIsoDate } from "@/lib/horas/dates";
 import { formatNumber } from "@/lib/format";
+import { leerTipoCambio } from "@/lib/proforma/tipo-cambio";
 
 // ── Constantes de WSFE y de la factura ────────────────────────────────────────
 
@@ -78,7 +81,7 @@ export const PARAMS = {
 // ── Textos ────────────────────────────────────────────────────────────────────
 
 export const FACTURA_MESSAGES = {
-  soloPesos: "La factura en ARCA es sólo en pesos.",
+  faltaTipoCambio: "Cargá el tipo de cambio para convertir los importes en USD.",
   incompleta: "Hay proyectos sin valor hora o moneda: completalos antes de facturar.",
   noResponsableInscripto: "La factura A es sólo para clientes Responsable Inscripto.",
   cuitCliente: "Falta la CUIT del cliente o no es válida.",
@@ -128,8 +131,12 @@ export interface ElegibilidadInput {
   alicuota: number;
   /** Horas facturables en Pendiente del cliente + mes (con o sin valor hora). */
   horasPendientes: number;
-  /** Neto en centavos de las horas pendientes. */
+  /** Neto en pesos (centavos) de las horas pendientes: ARS + USD convertidos si hay TC; sin TC, solo ARS. */
   netoPendiente: number;
+  /** TC válido de la Proforma (CC-F5-21), o null. */
+  tipoCambio: number | null;
+  /** Subtotal USD (centavos) de las horas pendientes; sin TC no se puede convertir. */
+  usdPendiente: number;
   /** Comprobante activo (En proceso / Incierta / Autorizada) de la misma clave, si hay. */
   activo: { ambiente: Ambiente; estado: EstadoComprobante } | null;
   /** «mm/aaaa» */
@@ -155,7 +162,8 @@ export const isFechaIso = (v: string | null | undefined): v is string => isIsoDa
 export function evaluarElegibilidad(i: ElegibilidadInput): string[] {
   const out: string[] = [];
   if (i.configError) out.push(i.configError);
-  if (i.monedas.includes("USD")) out.push(FACTURA_MESSAGES.soloPesos);
+  const faltaTc = i.monedas.includes("USD") && i.tipoCambio === null;
+  if (faltaTc) out.push(FACTURA_MESSAGES.faltaTipoCambio);
   if (i.proformaIncompleta) out.push(FACTURA_MESSAGES.incompleta);
   if (i.cliente.condicionIva !== "Responsable Inscripto") out.push(FACTURA_MESSAGES.noResponsableInscripto);
   if (!has(i.cliente.cuit) || !isValidCuit(i.cliente.cuit)) out.push(FACTURA_MESSAGES.cuitCliente);
@@ -170,7 +178,8 @@ export function evaluarElegibilidad(i: ElegibilidadInput): string[] {
   if (p(PARAMS.puntoVenta) && parsePuntoVenta(p(PARAMS.puntoVenta)) === null) out.push(FACTURA_MESSAGES.parametroInvalido(PARAMS.puntoVenta, "entero de 1 a 99999"));
   if (ivaIdDe(i.alicuota) === null) out.push(FACTURA_MESSAGES.alicuota);
   if (i.horasPendientes === 0) out.push(FACTURA_MESSAGES.sinPendientes(i.mesLabel));
-  else if (i.netoPendiente <= 0) out.push(FACTURA_MESSAGES.sinImporte);
+  // Sin TC, la parte en USD todavía no tiene importe en pesos: el motivo es el TC, no «no suman importe».
+  else if (i.netoPendiente <= 0 && !(faltaTc && i.usdPendiente > 0)) out.push(FACTURA_MESSAGES.sinImporte);
   if (i.activo) out.push(FACTURA_MESSAGES.yaEmitida(i.activo.ambiente, i.activo.estado));
   return out;
 }
@@ -247,8 +256,16 @@ export interface FacturaDatos {
   /** Tasa (0,21) e Id de IVA de WSFE. */
   alicuota: number;
   ivaId: number;
-  /** Centavos. */
+  /** Centavos (pesos). */
   importes: { neto: number; iva: number; total: number };
+  /**
+   * CC-F5-21: TC con que se convirtieron las horas en USD (null = sin parte en USD), el subtotal en USD
+   * (centavos) y su equivalente en pesos (centavos, toCents(subtotalUsd / 100 × TC)). Opcionales: los
+   * snapshots anteriores no los tienen.
+   */
+  tipoCambio?: number | null;
+  subtotalUsd?: number | null;
+  netoArsDesdeUsd?: number | null;
   /** IDs de las horas incluidas (en Homologación quedan solo acá, nunca como link). */
   horas: string[];
   proyectos: string[];
@@ -333,8 +350,12 @@ export interface FacturaEstado {
   motivos: string[];
   /** AAAA-MM-DD (Buenos Aires): fecha de emisión y mínimo del vencimiento de pago. */
   hoy: string;
-  /** Factura (horas Pendiente, ARS), centavos. */
+  /** Factura (horas Pendiente, en pesos; las USD convertidas con el TC), centavos. */
   importes: { neto: number; iva: number; total: number };
+  /** TC con el que se calcularon los importes (CC-F5-21), o null (sin USD o sin TC). */
+  tipoCambio: number | null;
+  /** Desglose de la conversión de la factura (centavos), solo con TC. */
+  conversion: { subtotalArs: number; subtotalUsd: number; netoArsDesdeUsd: number } | null;
   /** Totales de la proforma (todas las horas facturables), centavos. */
   proformaTotales: { moneda: "ARS" | "USD"; subtotal: number; iva: number; total: number }[];
   /** La factura difiere de la proforma (p. ej. horas ya facturadas o en USD). */
@@ -346,7 +367,12 @@ export interface FacturaEstado {
 
 // ── Pedido de emisión ─────────────────────────────────────────────────────────
 
-export const EMITIR_KEYS = ["cliente", "mes", "vencimientoPago", "detalle"] as const;
+/**
+ * Claves del body de emitir. `tipoCambio` (CC-F5-21) es un DATO de entrada (texto es-AR, mismas reglas
+ * que la Proforma), nunca un importe: ausente, null o "" = sin TC; otro tipo o inválido → 400. Si la
+ * proforma no tiene USD se ignora; si tiene USD y falta, la factura no es elegible (409).
+ */
+export const EMITIR_KEYS = ["cliente", "mes", "vencimientoPago", "detalle", "tipoCambio"] as const;
 const RECORD_ID_RE = /^rec[A-Za-z0-9]{14}$/;
 const MES_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -356,6 +382,7 @@ export interface EmitirInput {
   mes: string;
   vencimientoPago: string;
   detalle: string;
+  tipoCambio: number | null;
 }
 
 /** Body estricto (solo esas claves) → input; `hoy` = fecha de emisión. */
@@ -367,7 +394,9 @@ export function validarEmitir(body: Record<string, unknown>, hoy: string): { ok:
   if (typeof vencimientoPago !== "string" || !isIsoDate(vencimientoPago) || vencimientoPago < hoy) return { ok: false, error: FACTURA_MESSAGES.vencimientoPago };
   const texto = typeof detalle === "string" ? detalle.replace(CONTROL, " ").replace(/\s+/g, " ").trim() : "";
   if (!texto || texto.length > DETALLE_MAX) return { ok: false, error: FACTURA_MESSAGES.detalle };
-  return { ok: true, data: { cliente, mes, vencimientoPago, detalle: texto } };
+  const tc = leerTipoCambio(body.tipoCambio);
+  if ("error" in tc) return { ok: false, error: tc.error };
+  return { ok: true, data: { cliente, mes, vencimientoPago, detalle: texto, tipoCambio: tc.tc } };
 }
 
 /** Detalle sugerido: los nombres de los proyectos incluidos, cortado a 200. */
